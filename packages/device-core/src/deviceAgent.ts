@@ -15,6 +15,9 @@ import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue,
 import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
 import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
 import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
+import { resolveEnv } from "./plugins/env.js";
+import { PluginError } from "./plugins/manifest.js";
+import { sourceDir, type Arch } from "./plugins/stage.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import fs from "node:fs";
@@ -180,6 +183,22 @@ function existingAncestor(p: string): string {
     target = parent;
   }
   return target;
+}
+
+/**
+ * Where a staged plugin's own dispatch runs: its own staged directory when
+ * `exec.cwd` is the literal "plugin", or the source `stage.ts` cloned when it
+ * names one — manifest.ts validates it is one of those two, so there is no
+ * third answer. The one owner of that fact: the approval card's location
+ * (`DeviceAgent.pluginDir`, read by mcp-server before the intent exists) and
+ * the bound `executeCommand` enforces are this same call. Nothing is resolved
+ * here — both answers are rooted at `plugin.dir`, which registry.ts
+ * canonicalized once at load.
+ */
+function runDir(plugin: StagedPlugin): string {
+  return plugin.manifest.exec.cwd === "plugin"
+    ? plugin.dir
+    : sourceDir(plugin.dir, process.arch as Arch, plugin.manifest.exec.cwd);
 }
 
 /** A run's diagnosis, kept by handle so a later poll carries it too. */
@@ -886,6 +905,30 @@ export class DeviceAgent {
   }
 
   /**
+   * What a plugin's own `env` declarations resolve against (`resolveEnv`,
+   * `plugins/env.ts`). `secret` and `mint` both refuse by throwing
+   * `PluginError` — no secret store or mint scope is wired to a plugin's env
+   * yet, so a value handed to a plugin from either would be a silent guess
+   * rather than the real thing. `plowApiBase` is likewise unresolved (empty):
+   * nothing staged today declares `${plow_api_base}`, and a manifest that
+   * ever does gets a wrong, silent value rather than a loud refusal — call it
+   * out the day that changes, the same way `port` already refuses without a
+   * daemon.
+   */
+  private pluginEnvContext(plugin: StagedPlugin) {
+    return {
+      pluginHome: plugin.dir,
+      ownerHome: this.ownerHome,
+      port: null,
+      plowApiBase: "",
+      secret: (name: string): string => {
+        throw new PluginError(`no secret store is wired to a plugin's env yet (wanted ${name})`);
+      },
+      mint: null,
+    };
+  }
+
+  /**
    * The `PolicyEngine` rule view (see its constructor doc): an intent whose
    * `process.exec` argv resolves to a staged plugin has that one capability's
    * argv narrowed through `ruleArgv` — a read collapses to `<command>
@@ -948,7 +991,8 @@ export class DeviceAgent {
    * when it disagrees.
    */
   pluginDir(argv: readonly string[]): string | null {
-    return pluginFor(this.plugins, argv[0] ?? "")?.dir ?? null;
+    const plugin = pluginFor(this.plugins, argv[0] ?? "");
+    return plugin === null ? null : runDir(plugin);
   }
 
   /** Every connected account's token, for the provider's fan-out. */
@@ -1023,6 +1067,7 @@ export class DeviceAgent {
     // command's own, unchanged.
     const plugin = pluginFor(this.plugins, argv[0] ?? "");
     let runArgv = argv;
+    let runEnv: Record<string, string> | undefined;
     if (plugin !== null) {
       // The manifest's own belt (`argv.read`/`argv.write`) is checked before
       // anything spawns, the same defense-in-depth shape as `providerRefusal`
@@ -1030,58 +1075,67 @@ export class DeviceAgent {
       // already checked.
       const verdict = classifyArgv(plugin.manifest, argv);
       if (verdict.kind === "refused") return this.execError(intent.intentId, verdict.reason);
-      // No secret store, mint scope, or Plow API base is wired to a plugin's
-      // env yet — nothing on this Mac can answer `resolveEnv`'s `secret`/`mint`
-      // sources today, and faking a base URL would be a silent wrong answer
-      // rather than a loud one. A plugin declaring env is refused rather than
-      // handed a guess; the loud gap is the honest state until that plumbing
-      // exists.
       if (Object.keys(plugin.manifest.env).length > 0) {
-        return this.execError(intent.intentId, `${plugin.manifest.command} needs env this Mac cannot resolve yet`);
+        // Resolved here, never logged and never folded into argv: the values
+        // go into the child's environment below and nowhere else. A `secret`
+        // or `mint` source still refuses by name — this Mac has no secret
+        // store or mint scope wired to a plugin's env yet — but a `fixed`
+        // source (wiki's WIKI_PATH among them) now resolves for real.
+        try {
+          runEnv = await resolveEnv(plugin.manifest, this.pluginEnvContext(plugin));
+        } catch {
+          // The underlying PluginError's own message names the placeholder or
+          // the source kind — safe today (manifest.ts's env values are typed,
+          // no caller text reaches it), but the fixed sentence is what every
+          // other unresolvable-plugin refusal here uses, so a future env
+          // source can't turn this into the one refusal that leaks detail.
+          return this.execError(intent.intentId, `${plugin.manifest.command} needs env this Mac cannot resolve yet`);
+        }
       }
-      // exec.cwd is required on every manifest (manifest.ts) and validated to
-      // be either the literal "plugin" or a declared source's name — but
-      // nothing on this Mac clones a source anywhere yet (stage.ts only ever
-      // stages binaries), so there is no staged directory to resolve a source
-      // name to. Same standard as env just above: refused by name, never a
-      // guessed path.
-      if (plugin.manifest.exec.cwd !== "plugin") {
+      // Where this dispatch runs — `runDir`'s one answer, the same string
+      // `mcp-server`'s tool put on the card before the intent existed. A
+      // source-rooted one is refused by name when that directory was never
+      // staged (a manifest can name a source the installed version of this
+      // Mac never fetched); "plugin" is always there, having just been loaded
+      // from it.
+      const runCwd = runDir(plugin);
+      if (plugin.manifest.exec.cwd !== "plugin" && !fs.existsSync(runCwd)) {
         return this.execError(
           intent.intentId,
           `${plugin.manifest.command} needs a source-rooted cwd this Mac cannot resolve yet`,
         );
       }
+      // The enforcement half of that card: the approved `cwd` must be exactly
+      // the directory the owner was shown, or refuse. Refusing rather than
+      // substituting `runDir`'s answer is the point — the device must never
+      // grant a wider sandbox than the card it showed. Plain equality is
+      // enough because both sides come from `runDir`, rooted at the canonical
+      // `plugin.dir` registry.ts realpath'd at load: a non-canonical spelling
+      // only fails closed instead of passing, never the reverse.
+      if (exec.cwd !== runCwd) {
+        return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
+      }
       // A relative entrypoint that NAMES A STAGED BINARY (manifest.runtime.binaries)
       // is joined under this plugin's OWN bin dir, so PATH never decides which
-      // copy runs (plow-gog's own pattern). Any other relative entry names a
-      // tool reached through the executor's curated PATH instead (e.g. the wiki
-      // plugin's `uv`-installed `wiki`) — joining it under binDir would point at
-      // a file this Mac never staged there, and every invocation would ENOENT.
-      // An absolute entry (e.g. /bin/sh) is a manifest choosing a fixed system
-      // binary and is left alone either way — manifest.ts's own comment on
+      // copy runs (plow-gog's own pattern). A relative entrypoint under a
+      // SOURCE-rooted cwd (wiki's own "wiki") is the source's own install
+      // output — installed by the manifest's own `install` argv into that
+      // source's `.venv/bin` (a `uv sync` project venv's layout) — resolved
+      // there rather than on PATH, so a same-named tool elsewhere on the Mac
+      // never substitutes for what THIS pinned source built. Any other
+      // relative entry (no staged binary, no source-rooted cwd) names a tool
+      // reached through the executor's curated PATH instead. An absolute
+      // entry (e.g. /bin/sh) is a manifest choosing a fixed system binary and
+      // is left alone in every case — manifest.ts's own comment on
       // exec.argv[0] is why: nothing joins under bin/ for that shape.
       const entry = plugin.manifest.exec.argv[0]!;
       const isStagedBinary = plugin.manifest.runtime.binaries.some((b) => b.name === entry);
-      const bin = isStagedBinary ? path.join(plugin.binDir, entry) : entry;
+      const bin = isStagedBinary
+        ? path.join(plugin.binDir, entry)
+        : path.isAbsolute(entry) || plugin.manifest.exec.cwd === "plugin"
+          ? entry
+          : path.join(runCwd, ".venv", "bin", entry);
       runArgv = [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)];
-      // exec.cwd: "plugin" means this plugin's own dispatch runs in its own
-      // staged directory, and nowhere else. `mcp-server`'s tool offers that
-      // directory before the intent is built (`pluginDir`), so the owner
-      // approves a card naming it — this is the enforcement half: the
-      // approved `cwd` must be exactly this, or refuse. Refusing rather than
-      // substituting `plugin.dir` here is the point of this check — the
-      // device must never grant a wider sandbox than the card it showed.
-      // No separate read grant for the binary: the executor already reads
-      // `cwd` recursively to exec anything under it, and `plugin.binDir` is
-      // always a subdirectory of it.
-      // `plugin.dir` is canonicalized once, at load, in registry.ts — the
-      // one owner of that fact. mcp-server's `pluginDir` hands back that
-      // same canonical string unchanged, so plain equality refuses no less
-      // than resolve-and-compare would: a non-canonical spelling only fails
-      // closed instead of passing, never the reverse.
-      if (exec.cwd !== plugin.dir) {
-        return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
-      }
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
@@ -1094,6 +1148,7 @@ export class DeviceAgent {
         network,
         appleEvents,
         waitMs,
+        env: runEnv,
       });
       return this.finishRun(intent.intentId, result, {
         argv,

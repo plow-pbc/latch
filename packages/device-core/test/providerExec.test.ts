@@ -17,12 +17,16 @@ import {
   impliesNetwork,
   loadPlugins,
   MintError,
+  parseManifest,
+  sourceDir,
+  stageBinaries,
+  type Arch,
   type Minter,
   type PolicyDelegate,
   type Provider,
   type StagedPlugin,
 } from "@domo/device-core";
-import { fakePlugin } from "./pluginFixtures.js";
+import { fakePlugin, localGitSource } from "./pluginFixtures.js";
 
 /**
  * Only the tests that SPAWN need macOS — /usr/bin/sandbox-exec exists nowhere
@@ -492,13 +496,12 @@ describe("a staged non-provider plugin through the exec path", () => {
   );
 
   // A manifest may declare exec.cwd as a source name rather than "plugin"
-  // (manifest.ts validates it against runtime.sources), but nothing on this
-  // Mac clones a source anywhere yet — there is no staged directory to
-  // resolve it to. Same standard as env: refused by name, never handed a
-  // guessed path.
-  it("refuses a source-rooted cwd this Mac cannot resolve, before spawning", async () => {
+  // (manifest.ts validates it against runtime.sources) — stage.ts can clone
+  // one, but this Mac never staged THIS plugin's, so there is no directory to
+  // resolve the name to. Refused by name, never handed a guessed path.
+  it("refuses a source-rooted cwd this Mac never staged, before spawning", async () => {
     const root = tmp();
-    const dir = fakePlugin(
+    fakePlugin(
       root,
       {
         name: "sourcey", version: "test", command: "sourcey",
@@ -511,35 +514,142 @@ describe("a staged non-provider plugin through the exec path", () => {
       },
       "#!/bin/sh\necho SHOULD_NOT_RUN\n",
     );
-    fs.mkdirSync(path.join(dir, "runtime", "repo"), { recursive: true });
     const d = device(null, loadPlugins([root]));
     const r = jv(await run(d, ["sourcey", "say", "hi"]));
     expect(r.get("error").str).toContain("sourcey needs a source-rooted cwd this Mac cannot resolve yet");
     expectNeverSpawned(d);
   });
 
-  // No secret store, mint scope, or Plow API base is wired to a plugin's env
-  // yet, so a manifest declaring one is refused by name before anything
-  // spawns — handing a plugin a guessed or fake credential value would be a
-  // silent wrong answer, and this Mac fails loud instead.
-  it("refuses a manifest declaring env this Mac cannot resolve, before spawning", async () => {
-    const root = tmp();
-    fakePlugin(
-      root,
-      {
-        name: "envy", version: "test", command: "envy",
-        runtime: { binaries: [], sources: [] },
-        exec: { cwd: "plugin", argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
-        env: { ENVY_TOKEN: { fixed: "x" } },
-        argv: { read: [["say"]], write: [] },
-      },
-      "#!/bin/sh\necho SHOULD_NOT_RUN\n",
-    );
-    const d = device(null, loadPlugins([root]));
-    const r = jv(await run(d, ["envy", "say", "hi"]));
-    expect(r.get("error").str).toContain("envy needs env this Mac cannot resolve yet");
-    expectNeverSpawned(d);
-  });
+  // A `secret` or `mint` env source still refuses by name before anything
+  // spawns: no secret store or mint scope is wired to a plugin's env yet, and
+  // handing a plugin a guessed or fake credential value would be a silent
+  // wrong answer where this Mac fails loud instead. A `fixed` source no
+  // longer belongs in this refusal — see the resolution test below.
+  it.each(["secret", "mint"] as const)(
+    "refuses a manifest declaring a %s env source this Mac cannot resolve, before spawning",
+    async (kind) => {
+      const root = tmp();
+      fakePlugin(
+        root,
+        {
+          name: "envy", version: "test", command: "envy",
+          runtime: { binaries: [], sources: [] },
+          exec: { cwd: "plugin", argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
+          env: { ENVY_TOKEN: { [kind]: "x" } },
+          argv: { read: [["say"]], write: [] },
+        },
+        "#!/bin/sh\necho SHOULD_NOT_RUN\n",
+      );
+      const d = device(null, loadPlugins([root]));
+      const r = jv(await run(d, ["envy", "say", "hi"]));
+      expect(r.get("error").str).toContain("envy needs env this Mac cannot resolve yet");
+      expectNeverSpawned(d);
+    },
+  );
+
+  // The gap those refusals leave open: a `fixed` env source (wiki's
+  // WIKI_PATH among them) resolves for real and reaches the child's
+  // environment — and ONLY there. Proven without printing the value itself
+  // (providerExec's own token tests use the same shape): the script reports
+  // its length, never its bytes, so a leak into argv, the audit log, or the
+  // response would show up as the wrong length or the value itself, either
+  // of which fails the assertions below.
+  itSpawns(
+    "resolves a fixed env source into the child's environment, and nowhere else",
+    async () => {
+      const FIXED = "not-a-secret-fixed-value";
+      const root = tmp();
+      fakePlugin(
+        root,
+        {
+          name: "envy", version: "test", command: "envy",
+          runtime: { binaries: [], sources: [] },
+          exec: { cwd: "plugin", argv: ["/bin/sh", "-c", 'echo "LEN=${#ENVY_TOKEN}"'] },
+          env: { ENVY_TOKEN: { fixed: FIXED } },
+          argv: { read: [["say"]], write: [] },
+        },
+        "#!/bin/sh\n",
+      );
+      const plugins = loadPlugins([root]);
+      const d = device(null, plugins);
+      const response = await run(d, ["envy", "say", "hi"], 8000, undefined, plugins[0]!.dir);
+      const out = String(jv(response).get("output").str ?? "");
+      expect(out).toContain(`LEN=${FIXED.length}`);
+      expect(out).not.toContain(FIXED);
+      expect(JSON.stringify(response)).not.toContain(FIXED);
+      expect(fs.readFileSync(d.audit.file, "utf8")).not.toContain(FIXED);
+    },
+  );
+});
+
+/**
+ * The wiki shape, end to end: a manifest with no `runtime.binaries` at all —
+ * only a `runtime.sources` entry, cloned at a pinned commit and built by its
+ * own `install` argv (stage.ts) — whose `exec.cwd` names that source (not
+ * "plugin") and whose `exec.argv[0]` is the source's own install output
+ * (a `uv sync`-style project venv's script, here faked by the install step
+ * itself), plus a `fixed` env source built from `${owner_home}` (wiki's own
+ * `WIKI_PATH: "${owner_home}/Plow/wiki"`). Every piece — staging, the
+ * source-rooted cwd, the venv-relative entrypoint, and the env substitution —
+ * only has to be real together for this one to pass; any of them still
+ * refused or unresolved fails it.
+ */
+describe("a source-rooted plugin dispatched from a staged source (the wiki shape)", () => {
+  itSpawns(
+    "stages the source, resolves ${owner_home} into the child's env, and dispatches to the source's own venv entrypoint",
+    async () => {
+      const ownerHome = tmp();
+      const { git, commit } = localGitSource(tmp, {
+        "install.sh":
+          "#!/bin/sh\nmkdir -p .venv/bin\ncat > .venv/bin/wikicli <<'SCRIPT'\n#!/bin/sh\n" +
+          'echo "ARGV=$*"\necho "PATHLEN=${#WIKISH_PATH}"\n' +
+          "SCRIPT\nchmod 755 .venv/bin/wikicli\n",
+      });
+      const root = tmp();
+      const rawManifest = {
+        name: "wikish", version: "test", command: "wikish",
+        runtime: {
+          binaries: [],
+          sources: [{ name: "plow-wikish", git, commit, install: ["./install.sh"] }],
+        },
+        exec: { cwd: "plow-wikish", argv: ["wikicli"] },
+        env: { WIKISH_PATH: { fixed: "${owner_home}/Plow/wikish" } },
+        argv: { read: [["validate"]], write: [["snapshot"]] },
+      };
+      const dir = fakePlugin(root, rawManifest, "#!/bin/sh\n"); // no binaries: no bin/ ever staged
+      const manifest = parseManifest(JSON.stringify(rawManifest));
+      // The real staging code — clone, checkout the pin, run install — not a
+      // fixture shortcut: proof this Mac can actually build the shape wiki
+      // ships, from a source that carries no digest, only a commit.
+      await stageBinaries(manifest, dir, process.arch, tmp(), async () => Buffer.alloc(0));
+      const plugins = loadPlugins([root]);
+      const d = new DeviceAgent(
+        tmp(), "Test Mac", new HeadlessPolicy({ intent: "allow_once" }), null, ownerHome, null, plugins,
+      );
+      // Computed here from `sourceDir` rather than read back off the device,
+      // so this asserts the card's location independently: `pluginDir` is
+      // what mcp-server puts on the approval card before the intent exists,
+      // and for a source-rooted manifest it must name the SOURCE — the
+      // directory the run actually uses — not the plugin's own root.
+      const runCwd = sourceDir(plugins[0]!.dir, process.arch as Arch, "plow-wikish");
+      expect(d.pluginDir(["wikish", "validate"])).toBe(runCwd);
+      const response = await run(d, ["wikish", "validate"], 8000, undefined, runCwd);
+      const out = String(jv(response).get("output").str ?? "");
+      const expectedLen = path.join(ownerHome, "Plow", "wikish").length;
+      // The venv-relative entrypoint resolved and ran (never PATH, never
+      // binDir — this plugin staged neither).
+      expect(out).toContain("ARGV=validate");
+      // ${owner_home} resolved to what THIS device was built with, not the
+      // plugin's own home and not some other Mac's.
+      expect(out).toContain(`PATHLEN=${expectedLen}`);
+      // And it reached the child's environment only: the resolved path
+      // string itself is never in the response or the audit log.
+      const resolved = path.join(ownerHome, "Plow", "wikish");
+      expect(out).not.toContain(resolved);
+      expect(JSON.stringify(response)).not.toContain(resolved);
+      expect(fs.readFileSync(d.audit.file, "utf8")).not.toContain(resolved);
+    },
+  );
 });
 
 /**
