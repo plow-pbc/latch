@@ -124,11 +124,11 @@ describe("where a block by this Mac sends the owner", () => {
   // that plugin's, and Plugins is where turning it back on lives.
   const staged = [
     { manifest: manifest({ permissions: ["calendars"] }) },
-    { manifest: manifest({ permissions: ["photos"] }, "off-one") },
+    { manifest: manifest({ permissions: ["accessibility"] }, "off-one") },
   ];
   it.each([
     { what: "a switch a plugin declares", permission: "calendars", to: "plugins" },
-    { what: "a switch only a disabled plugin declares", permission: "photos", to: "plugins" },
+    { what: "a switch only a disabled plugin declares", permission: "accessibility", to: "plugins" },
     { what: "a switch nobody declares (the built-in skill's Contacts)", permission: "contacts", to: "settings" },
     { what: "no switch at all (a locked file)", permission: null, to: "audit" },
   ])("sends $what to $to", ({ permission, to }) => {

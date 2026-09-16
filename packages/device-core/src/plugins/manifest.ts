@@ -7,7 +7,8 @@
  * because a PluginError reaches the owner directly — the installer's caller,
  * or launch-time stderr — never the audit log or an agent.
  */
-import { PERMISSION_LABELS } from "../hostGate/guardedPaths.js";
+import { CONSENT_FOLDERS } from "../hostGate/folderAccess.js";
+import { QUERYABLE_PERMISSIONS } from "../hostGate/inventory.js";
 
 /**
  * The account connectors this Mac can actually connect — the desktop's
@@ -17,8 +18,25 @@ import { PERMISSION_LABELS } from "../hostGate/guardedPaths.js";
  * "Needs setup" forever with no way out. Refused here, at the boundary.
  */
 const ACCOUNT_IDS: ReadonlySet<string> = new Set(["google"]);
-/** Every macOS switch, off the table that names them — not a second list. */
-const PERMISSION_IDS: ReadonlySet<string> = new Set(Object.keys(PERMISSION_LABELS));
+/**
+ * The switches the Permissions section has a button for — off the lists that
+ * build those rows, not a second list. Full Disk Access is the one literal:
+ * it is a single row built by hand, and everything else comes from the code
+ * that acts on it (`capabilities:act` dispatches a folder through
+ * CONSENT_FOLDERS and the rest through the queryable three).
+ *
+ * The domain is narrower than every switch macOS has. A manifest naming
+ * Reminders or Photos was accepted and rendered with a "Grant Reminders"
+ * button that dispatched to no row and did nothing — a fix offered that
+ * isn't. The rest of these resolve through Full Disk Access when it is on
+ * and have no row of their own when it is off, which reads as permanently
+ * unmet with nothing to press.
+ */
+const PERMISSION_IDS: ReadonlySet<string> = new Set<string>([
+  "full_disk_access",
+  ...CONSENT_FOLDERS.map((f) => f.permission),
+  ...QUERYABLE_PERMISSIONS,
+]);
 
 export class PluginError extends Error {
   constructor(message: string) {
@@ -230,7 +248,7 @@ export function parseManifest(raw: string): PluginManifest {
     });
   const requires: PluginRequires = {
     accounts: idList(req.accounts, "requires.accounts", ACCOUNT_IDS, "an account connector this Mac offers"),
-    permissions: idList(req.permissions, "requires.permissions", PERMISSION_IDS, "a macOS permission this Mac has a switch for"),
+    permissions: idList(req.permissions, "requires.permissions", PERMISSION_IDS, "a macOS permission this Mac has a button for"),
     // Not an id and not INSIDE: a required path is the owner's, outside the
     // plugin's tree by design (`~/Plow/wiki`). It is still the one requirement
     // whose raw text reaches the owner — the Plugins tab renders it as "Create
