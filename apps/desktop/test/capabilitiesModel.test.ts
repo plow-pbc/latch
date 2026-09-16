@@ -1,7 +1,7 @@
 /**
  * The Permissions section's view model: audit rows and the inventory in, rows
- * with counts, a banner and a badge out. Pure, so every rule the tab shows
- * is pinned here — above all what earns the badge and what clears it.
+ * with counts and a banner out. Pure, so every rule the tab shows is pinned
+ * here — above all what earns the owner's attention and what clears it.
  */
 import { describe, expect, it } from "vitest";
 import { JSONValue, jv } from "@domo/protocol";
@@ -116,7 +116,7 @@ describe("capabilitiesView", () => {
     expect(on.sections[0]!.rows[0]).toMatchObject({ status: "granted", action: "none", actionLabel: null });
   });
 
-  it("the badge counts rows that are off AND were hit; a switch nobody hit does not badge", () => {
+  it("the banner counts rows that are off AND were hit; a switch nobody hit does not", () => {
     const view = capabilitiesView(
       input({
         events: [
@@ -128,14 +128,13 @@ describe("capabilitiesView", () => {
       }),
     );
     // Calendars is granted, so its hit is history, not attention.
-    expect(view.badge).toBe(2);
     const rows = view.sections.flatMap((s) => s.rows);
     expect(rows.find((r) => r.key === "full_disk_access")).toMatchObject({ count: 2, needsAttention: true, action: "grant", actionLabel: LABEL_IN_SETTINGS });
     expect(rows.find((r) => r.key === "automation:com.apple.MobileSMS")).toMatchObject({ count: 1, needsAttention: true, status: "denied", action: "open" });
     expect(rows.find((r) => r.key === "calendars")).toMatchObject({ count: 1, needsAttention: false, status: "granted" });
     expect(rows.find((r) => r.key === "accessibility")).toMatchObject({ count: 0, needsAttention: false, action: "grant" });
-    // The banner leads with the badge's number and counts only what those
-    // switches blocked: Calendars' hit is not in it either.
+    // The banner leads with how many switches need attention and counts only
+    // what those blocked: Calendars' hit is not in it either.
     expect(view.banner).toEqual({
       switches: 2,
       count: 3,
@@ -145,21 +144,21 @@ describe("capabilitiesView", () => {
     });
   });
 
-  it("the banner goes quiet with the badge: refusals of a switch granted since are history", () => {
+  it("the banner goes quiet: refusals of a switch granted since are history", () => {
     const events = block("i1", "2026-09-02T06:12:00Z", "calendars");
-    expect(capabilitiesView(input({ events })).badge).toBe(0);
-    expect(capabilitiesView(input({ events })).banner).toBeNull();
+    const view = capabilitiesView(input({ events }));
+    expect(view.sections[0]!.rows.find((r) => r.key === "calendars")!.needsAttention).toBe(false);
+    expect(view.banner).toBeNull();
   });
 
-  it("a row's own dismissal clears that row's requests — line, badge and banner — until a newer block lands", () => {
+  it("a row's own dismissal clears that row's requests — line and banner — until a newer block lands", () => {
     const events = [
       ...block("i1", "2026-09-02T06:12:00Z", "full_disk_access"),
       ...block("i2", "2026-09-02T06:20:00Z", "contacts"),
     ];
     const dismissed = capabilitiesView(input({ events, dismissals: { full_disk_access: "2026-09-02T07:00:00Z" } }));
     expect(dismissed.sections[0]!.rows[0]).toMatchObject({ key: "full_disk_access", count: 0, needsAttention: false });
-    // The other switch's request is untouched, so the badge and banner keep it.
-    expect(dismissed.badge).toBe(1);
+    // The other switch's request is untouched, so the banner keeps it.
     expect(dismissed.banner).toEqual({ switches: 1, count: 1, summary: [{ title: "Contacts", count: 1 }], last: "2026-09-02T06:20:00Z", since: null });
     // The row's own cutoff, for its "Show in Audit": the row's dismissal.
     expect(dismissed.sections[0]!.rows[0]!.since).toBe("2026-09-02T07:00:00Z");
@@ -170,7 +169,7 @@ describe("capabilitiesView", () => {
       }),
     );
     expect(newer.sections[0]!.rows[0]).toMatchObject({ count: 1, needsAttention: true });
-    expect(newer.badge).toBe(2);
+    expect(newer.banner!.switches).toBe(2);
   });
 
   it("the banner counts blocks since it was last dismissed, summarised per switch, newest first", () => {
@@ -218,19 +217,17 @@ describe("capabilitiesView", () => {
     ) as JSONValue[];
     // Allow: the run went on; the device recorded the clearing.
     const allowed = capabilitiesView(input({ events: [...parked, { event: "host_permission_cleared", intentId: "i1", handle: "H1", permission: "files_downloads", ts: "2026-09-02T02:05:00Z" }] }));
-    expect(allowed.badge).toBe(0);
     expect(allowed.banner).toBeNull();
     // …and the folder itself reads as granted: the clearing is the one
     // positive fact there is about a switch macOS never answers a query on.
-    expect(allowed.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ count: 0, status: "granted" });
+    expect(allowed.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ count: 0, status: "granted", needsAttention: false });
     // Don't Allow: cleared, then a refusal under the same handle — one request, the newest.
     const refused = capabilitiesView(input({ events: [
       ...parked,
       { event: "host_permission_cleared", intentId: "i1", handle: "H1", permission: "files_downloads", ts: "2026-09-02T02:05:00Z" },
       { event: "host_permission_blocked", intentId: "i1", handle: "H1", permission: "files_downloads", cause: "macos_permission", confidence: "confirmed", owner_action: "Allow it.", ts: "2026-09-02T02:05:01Z" },
     ] }));
-    expect(refused.badge).toBe(1);
-    expect(refused.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ count: 1, status: "denied" });
+    expect(refused.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ count: 1, status: "denied", needsAttention: true });
     expect(refused.banner?.count).toBe(1);
     // The clearing and the refusal usually share a second (the log writes
     // whole seconds); the order in the log is what decides, so the refusal
@@ -240,7 +237,7 @@ describe("capabilitiesView", () => {
       { event: "host_permission_cleared", intentId: "i1", handle: "H1", permission: "files_downloads", ts: "2026-09-02T02:05:00Z" },
       { event: "host_permission_blocked", intentId: "i1", handle: "H1", permission: "files_downloads", cause: "macos_permission", confidence: "confirmed", owner_action: "Allow it.", ts: "2026-09-02T02:05:00Z" },
     ] }));
-    expect(sameSecond.badge).toBe(1);
+    expect(sameSecond.banner!.switches).toBe(1);
     expect(sameSecond.sections[0]!.rows.find((r) => r.key === "files_downloads")?.count).toBe(1);
   });
 
@@ -250,7 +247,6 @@ describe("capabilitiesView", () => {
     const events = block("i1", "2026-09-02T06:12:00Z", "full_disk_access");
     const seen = capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T06:12:00.800Z" }));
     expect(seen.banner).toBeNull();
-    expect(seen.badge).toBe(0);
     const row = capabilitiesView(input({ events, dismissals: { full_disk_access: "2026-09-02T06:12:00.800Z" } }));
     expect(row.sections[0]!.rows[0]).toMatchObject({ key: "full_disk_access", count: 0 });
   });
@@ -272,7 +268,7 @@ describe("capabilitiesView", () => {
       ["automation", "Automation for another app", "open"],
       ["screen_recording", "Screen & System Audio Recording", "open"],
     ]);
-    expect(view.badge).toBe(2);
+    expect(view.banner!.switches).toBe(2);
   });
 
   it("a folder refused before Full Disk Access was granted is covered now, and shows nowhere", () => {
@@ -287,7 +283,7 @@ describe("capabilitiesView", () => {
     expect(keys).not.toContain("files_desktop");
     // Screen Recording is not under the umbrella, so it still asks for the owner.
     expect(granted.sections[0]!.rows.at(-1)!.key).toBe("screen_recording");
-    expect(granted.badge).toBe(1);
+    expect(granted.banner!.switches).toBe(1);
     // Without Full Disk Access the same refusals are rows in Files and data.
     const off = capabilitiesView(input({ events }));
     expect(off.sections[0]!.rows.filter((r) => r.count > 0).map((r) => r.key)).toEqual(["files_desktop", "files_downloads", "screen_recording"]);
@@ -318,7 +314,7 @@ describe("capabilitiesView", () => {
       }),
     );
     expect(revoked.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ status: "denied", action: "open", needsAttention: true });
-    expect(revoked.badge).toBe(1);
+    expect(revoked.banner!.switches).toBe(1);
     // Dismissing the notice clears the count, not the fact: the switch is
     // still off, and the row keeps saying so, button and all.
     const dismissed = capabilitiesView(
@@ -330,7 +326,7 @@ describe("capabilitiesView", () => {
       }),
     );
     expect(dismissed.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ status: "denied", action: "open", count: 0, needsAttention: false });
-    expect(dismissed.badge).toBe(0);
+    expect(dismissed.banner).toBeNull();
     // A memo with no time (from before times were kept) is outranked by any
     // confirmed block.
     const undated = capabilitiesView(
@@ -361,9 +357,9 @@ describe("capabilitiesView", () => {
     expect(apps.find((r) => r.title === "Mail")).toMatchObject({ status: "not_asked", action: "request", actionLabel: LABEL_VIA_PROMPT });
   });
 
-  it("without an inventory (no device yet) every row is unknown and nothing badges", () => {
+  it("without an inventory (no device yet) every row is unknown and nothing needs attention", () => {
     const view = capabilitiesView(input({ inventory: null }));
-    expect(view.badge).toBe(0);
+    expect(view.banner).toBeNull();
     expect(view.sections[0]!.rows[0]!.status).toBe("unknown");
   });
 });
@@ -446,7 +442,7 @@ describe("groups", () => {
 });
 
 describe("dismissing the banner", () => {
-  it("clears the whole tab: no row lines, no badge, no leftover rows — until a newer block", () => {
+  it("clears the whole tab: no row lines, no banner, no leftover rows — until a newer block", () => {
     const events = [
       ...block("i1", "2026-09-02T02:00:00Z", "full_disk_access"),
       ...block("i2", "2026-09-02T03:00:00Z", "screen_recording"),
@@ -454,7 +450,6 @@ describe("dismissing the banner", () => {
     ];
     const seen = capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T05:00:00Z" }));
     expect(seen.banner).toBeNull();
-    expect(seen.badge).toBe(0);
     expect(seen.sections[0]!.rows.every((r) => r.count === 0)).toBe(true);
     expect(seen.sections[0]!.rows.map((r) => r.key)).not.toContain("screen_recording");
     expect(groupOf(seen.sections[0]!, "folders").expandedByDefault).toBe(false);
@@ -463,7 +458,6 @@ describe("dismissing the banner", () => {
       input({ events: [...events, ...block("i4", "2026-09-02T06:00:00Z", "full_disk_access")], bannerSeenAt: "2026-09-02T05:00:00Z" }),
     );
     expect(again.banner).toEqual({ switches: 1, count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:00:00Z", since: "2026-09-02T05:00:00Z" });
-    expect(again.badge).toBe(1);
     expect(again.sections[0]!.rows.find((r) => r.key === "full_disk_access")).toMatchObject({ count: 1, needsAttention: true });
   });
 });

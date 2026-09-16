@@ -207,7 +207,7 @@ export interface CapabilityRow {
   since: string | null;
   agents: string[];
   requests: BlockedRequest[];
-  /** Counts toward the badge. */
+  /** Counts toward the banner. */
   needsAttention: boolean;
 }
 
@@ -237,7 +237,7 @@ export interface CapabilitySection {
   description: string;
   /** In display order: rows and groups. */
   items: CapabilityItem[];
-  /** Every row, groups flattened — for the badge, the banner, and tests. */
+  /** Every row, groups flattened — for the banner and tests. */
   rows: CapabilityRow[];
 }
 
@@ -246,8 +246,8 @@ export function isGroup(item: CapabilityItem): item is CapabilityGroup {
 }
 
 export interface CapabilitiesBanner {
-  /** The switches still off that were hit — the badge's number, and the
-   *  first thing the banner says. */
+  /** The switches still off that were hit — the first thing the banner
+   *  says. */
   switches: number;
   /** The requests those switches blocked. */
   count: number;
@@ -260,7 +260,6 @@ export interface CapabilitiesBanner {
 }
 
 export interface CapabilitiesView {
-  badge: number;
   banner: CapabilitiesBanner | null;
   sections: CapabilitySection[];
 }
@@ -274,7 +273,7 @@ export interface CapabilitiesInput {
    *  like the banner's dismissal, for one switch. */
   dismissals: Record<string, string>;
   /** When the owner last dismissed the banner. Blocks before it count for
-   *  nothing on the tab: not the banner, not a row's line, not the badge. */
+   *  nothing on the tab: not the banner, not a row's line. */
   bannerSeenAt: string | null;
   /** The three folders, as this Mac last learned them (setup's touch, or
    *  a block); absent means macOS has never been asked. */
@@ -299,7 +298,7 @@ const QUERYABLE: readonly ("contacts" | "calendars" | "accessibility")[] = ["con
 /** Build the tab. */
 export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   // Only blocks newer than the banner's last dismissal count anywhere on the
-  // tab — the rows' lines, the arrows, the badge, the banner itself. The ×
+  // tab — the rows' lines, the arrows, the banner itself. The ×
   // is the owner saying "seen"; after it the tab is clean until the next
   // block, and the Audit tab keeps the history.
   // A row's own Dismiss works the same way for that one switch: its
@@ -493,8 +492,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     },
   ];
 
-  const badge = sections.reduce((n, s) => n + s.rows.filter((r) => r.needsAttention).length, 0);
-  return { badge, banner: banner(sections, input.bannerSeenAt), sections };
+  return { banner: banner(sections, input.bannerSeenAt), sections };
 }
 
 /**
@@ -559,11 +557,10 @@ function group(
 }
 
 /**
- * The strip at the top: the rows the badge counts, and what they blocked.
+ * The strip at the top: the rows that need attention, and what they blocked.
  * Only those rows — a switch granted since its refusals is history, and a
  * banner that still listed it would send the owner to a row that says
- * "Granted". So the banner and the badge always agree: the badge is its
- * first number, and both go quiet together.
+ * "Granted".
  */
 function banner(sections: CapabilitySection[], since: string | null): CapabilitiesBanner | null {
   const hit = sections.flatMap((s) => s.rows.filter((r) => r.needsAttention && r.last !== null));
