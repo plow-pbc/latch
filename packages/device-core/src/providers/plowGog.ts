@@ -79,15 +79,18 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
 const CONFLICT_GATED: ReadonlySet<string> = new Set(["create", "add", "new"]);
 
 /**
- * The calendar writes that take `--send-updates` (create/update/delete and
- * their aliases at 0.36.0). gog's own default is `none`, so an invite to
- * someone outside the account went out silent and the agent said "invite's
- * out" (#421). Attendees live on the event for update/delete, not the argv,
- * and Google emails nobody when there are none — so every write gets `all`
- * unless the agent chose a mode.
+ * Every calendar verb whose `--help` lists `--send-updates`, with its aliases
+ * as that help spells them (re-check the list on a gog bump). gog's own
+ * default is `none`, so an invite to someone outside the account went out
+ * silent and the agent said "invite's out" (#421). Attendees live on the
+ * event for the other verbs, not the argv, and Google emails nobody when
+ * there are none — so every one gets `all` unless the agent chose a mode.
  */
 const NOTIFYING: ReadonlySet<string> = new Set([
-  ...CONFLICT_GATED, "update", "edit", "set", "delete", "rm", "del", "remove",
+  ...CONFLICT_GATED,
+  "update", "edit", "set",
+  "move", "transfer",
+  "delete", "rm", "del", "remove",
 ]);
 
 /** The `--max` a calendar event list gets when the agent names none — per account. */

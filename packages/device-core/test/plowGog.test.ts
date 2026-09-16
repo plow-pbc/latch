@@ -310,6 +310,17 @@ describe("planPlowGog", () => {
       },
     },
     {
+      why: "notifies on a move too, under gog's alias",
+      argv: ["plow-gog", "cal", "transfer", "primary", "e1", "other"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "cal", "transfer", "primary", "e1", "other", "--send-updates", "all"],
+        account: null,
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
       why: "strips --confirm-conflict and carries it as the override",
       argv: [
         "plow-gog", "calendar", "create", "primary", "--summary", "X",
