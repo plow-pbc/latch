@@ -424,6 +424,35 @@ describe("a staged non-provider plugin through the exec path", () => {
     },
   );
 
+  // The `wiki` shape: an entrypoint that is NOT one of the manifest's own
+  // `runtime.binaries` (declares none at all here) — a tool this Mac reaches
+  // through the executor's curated PATH, not something it staged. Joining it
+  // under `binDir` would point at a file that was never staged there and
+  // every invocation would ENOENT; observing the actual spawn (not reading
+  // the code back) is what proves the relative entry was left alone instead.
+  const RELAY_MANIFEST = {
+    name: "relay", version: "test", command: "relay",
+    runtime: { binaries: [], sources: [] },
+    exec: { cwd: "plugin", argv: ["echo", "RELAY"] },
+    env: {}, argv: { read: [["say"]], write: [] },
+  };
+
+  itSpawns(
+    "leaves an entrypoint that names no staged binary relative, so the curated PATH resolves it",
+    async () => {
+      const root = tmp();
+      fakePlugin(root, RELAY_MANIFEST, "#!/bin/sh\n"); // no binaries declared: no bin/ ever staged
+      const d = device(null, loadPlugins([root]));
+      const out = String(jv(await run(d, ["relay", "say", "hi"])).get("output").str ?? "");
+      // /bin/echo, found via the curated PATH (device()'s plugin has no
+      // runtime/<arch>/bin at all, so a binDir join would have ENOENTed).
+      expect(out).toContain("RELAY say hi");
+      const events = d.audit.entries().map((e) => jv(e).get("event").str);
+      expect(events).toContain("exec_start");
+      expect(events).toContain("exec_end");
+    },
+  );
+
   // A manifest may declare exec.cwd as a source name rather than "plugin"
   // (manifest.ts validates it against runtime.sources), but nothing on this
   // Mac clones a source anywhere yet — there is no staged directory to

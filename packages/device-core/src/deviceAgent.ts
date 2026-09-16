@@ -1517,13 +1517,18 @@ export class DeviceAgent {
   ): Promise<JSONValue> {
     const verdict = classifyArgv(plugin.manifest, argv);
     if (verdict.kind === "refused") return this.execError(intent.intentId, verdict.reason);
-    // A relative entrypoint names a binary this Mac staged, joined under its
-    // OWN bin dir so PATH never decides which copy runs (plow-gog's own
-    // pattern). An absolute one (e.g. /bin/sh) is a manifest choosing to run
-    // a fixed system binary and is left alone — manifest.ts's own comment on
+    // A relative entrypoint that NAMES A STAGED BINARY (manifest.runtime.binaries)
+    // is joined under this plugin's OWN bin dir, so PATH never decides which
+    // copy runs (plow-gog's own pattern). Any other relative entry names a
+    // tool reached through the executor's curated PATH instead (e.g. the wiki
+    // plugin's `uv`-installed `wiki`) — joining it under binDir would point at
+    // a file this Mac never staged there, and every invocation would ENOENT.
+    // An absolute entry (e.g. /bin/sh) is a manifest choosing a fixed system
+    // binary and is left alone either way — manifest.ts's own comment on
     // exec.argv[0] is why: nothing joins under bin/ for that shape.
     const entry = plugin.manifest.exec.argv[0]!;
-    const bin = entry.startsWith("/") ? entry : path.join(plugin.binDir, entry);
+    const isStagedBinary = plugin.manifest.runtime.binaries.some((b) => b.name === entry);
+    const bin = isStagedBinary ? path.join(plugin.binDir, entry) : entry;
     // No secret store, mint scope, or Plow API base is wired to a plugin's
     // env yet — nothing on this Mac can answer `resolveEnv`'s `secret`/`mint`
     // sources today, and faking a base URL would be a silent wrong answer
