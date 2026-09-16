@@ -483,11 +483,11 @@ export class DeviceAgent {
         approval,
       );
     }
-    // LAST, so the owner's own file wins. `register` is a Map.set, so whoever
-    // goes last takes the name — and a skill the owner wrote into their own
-    // DOMO_HOME is a deliberate act that a built-in default should not
-    // silently discard. Built-ins are what this Mac ships; these are what its
-    // owner said instead.
+    // The owner's own files, which no later `register` or `unregister` can
+    // touch — the registry itself holds that line (skills.ts), because a
+    // plugin toggle re-runs `syncPluginSkills` long after this call and load
+    // order alone would only have held until then. Built-ins are what this
+    // Mac ships; these are what its owner said instead.
     this.skills.loadDir(path.join(home, "device/skills"));
   }
 

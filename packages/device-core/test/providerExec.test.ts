@@ -96,9 +96,9 @@ function gogPlugin(): StagedPlugin[] {
   return stagedGog('#!/bin/sh\necho "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*"\n');
 }
 
-function device(minter: Minter | null, plugins: StagedPlugin[]): DeviceAgent {
+function device(minter: Minter | null, plugins: StagedPlugin[], home: string = tmp()): DeviceAgent {
   return new DeviceAgent(
-    tmp(),
+    home,
     "Test Mac",
     new HeadlessPolicy({ intent: "allow_once" }),
     null,
@@ -810,5 +810,29 @@ describe("a plugin the owner turned off", () => {
 
     d.setDisabledPlugins([]);
     expect(publishes(d)).toBe(true);
+  });
+
+  /**
+   * Owner skills load last so the owner wins, but a later toggle re-runs the
+   * plugin sync — which used to re-register the built-in over the owner's
+   * file under the same name, and unregister it on the way down. What an
+   * agent is advertised and reads has to be the owner's, at every point in
+   * the cycle.
+   */
+  it("never lets a plugin toggle overwrite a skill the owner wrote under the same name", () => {
+    const home = tmp();
+    fs.mkdirSync(path.join(home, "device/skills"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, "device/skills/gog.md"),
+      `---\nname: ${GOG_SKILL}\ndescription: The owner's own notes.\n---\nDrive it this way.\n`,
+    );
+    const d = device(okMinter(), gogPlugin(), home);
+    const advertised = () => d.skills.manifest().find((s) => s.name === GOG_SKILL)?.description;
+    expect(advertised()).toBe("The owner's own notes.");
+    d.setDisabledPlugins(["gog"]);
+    expect(advertised()).toBe("The owner's own notes.");
+    d.setDisabledPlugins([]);
+    expect(advertised()).toBe("The owner's own notes.");
+    expect(d.skills.skill(GOG_SKILL)?.body).toBe("Drive it this way.");
   });
 });
