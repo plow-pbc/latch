@@ -307,6 +307,67 @@ describe("a provider through the exec path", () => {
 });
 
 /**
+ * A bundled plugin with a manifest but NO provider row — the gap this PR
+ * closes: reachable on the manifest alone, not a second dispatch system
+ * beside providers.
+ */
+describe("a staged non-provider plugin through the exec path", () => {
+  const ECHOER_MANIFEST = {
+    name: "echoer", version: "test", command: "echoer",
+    runtime: {
+      binaries: [{
+        name: "echoer", version: "test",
+        url: { arm64: "https://example.invalid/e-arm64.tar.gz", x64: "https://example.invalid/e-x64.tar.gz" },
+        sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
+      }],
+      sources: [],
+    },
+    exec: { cwd: "plugin", argv: ["echoer", "--quiet"] },
+    env: {}, argv: { read: [["say"]], write: [] },
+    skill: "skill.md",
+  };
+
+  /** A staged echoer plugin whose binary runs `script`, with a skill.md the
+   * manifest names (fakePlugin only stages the binary, not this). */
+  function echoerPlugin(script: string): StagedPlugin[] {
+    const root = tmp();
+    const dir = fakePlugin(root, ECHOER_MANIFEST, script);
+    fs.writeFileSync(
+      path.join(dir, "skill.md"),
+      "---\nname: echoer\ndescription: says things\n---\nSay what the owner asks.\n",
+    );
+    return loadPlugins([root]);
+  }
+
+  it("publishes the plugin's own manifest-declared skill only when it is staged", () => {
+    expect(device(null, echoerPlugin("#!/bin/sh\n")).skills.manifest().map((s) => s.name)).toContain("echoer");
+    expect(device(null, []).skills.manifest().map((s) => s.name)).not.toContain("echoer");
+  });
+
+  it("refuses an argv the manifest does not allow, before spawning", async () => {
+    const d = device(null, echoerPlugin('#!/bin/sh\necho SHOULD_NOT_RUN\n'));
+    const r = jv(await run(d, ["echoer", "shout", "hi"]));
+    expect(r.get("error").str).toContain("echoer allows: say");
+    expectNeverSpawned(d);
+  });
+
+  itSpawns(
+    "dispatches a staged non-provider plugin's command to its manifest entrypoint, and audits it",
+    async () => {
+      const d = device(null, echoerPlugin('#!/bin/sh\necho "ARGV=$*"\n'));
+      const out = String(jv(await run(d, ["echoer", "say", "hello"])).get("output").str ?? "");
+      // The manifest's own belt (`--quiet`) leads the agent's argv, exactly
+      // as plow-gog's does — proof the entrypoint resolved against the
+      // staged tree, not PATH, and ran with the manifest's fixed prefix.
+      expect(out).toContain("ARGV=--quiet say hello");
+      const events = d.audit.entries().map((e) => jv(e).get("event").str);
+      expect(events).toContain("exec_start");
+      expect(events).toContain("exec_end");
+    },
+  );
+});
+
+/**
  * The multi-account provider, end to end through the same exec path.
  *
  * The staged plugin's `gog` stands in for the real one: a script answering canned

@@ -13,7 +13,8 @@
  */
 import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
-import type { StagedPlugin } from "./plugins/registry.js";
+import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
+import { classifyArgv } from "./plugins/argvRules.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import fs from "node:fs";
@@ -53,7 +54,7 @@ import {
 import { readCredentialsState } from "./browser/vaultCredentials.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
-import { SkillRegistry } from "./skills.js";
+import { parseFrontmatter, SkillRegistry } from "./skills.js";
 import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
@@ -397,10 +398,27 @@ export class DeviceAgent {
     registerContactsSkill(this.skills, ownerHome);
     // Registered only when the CLI it documents is actually staged: a skill
     // for a binary this Mac does not have teaches an agent commands the exec
-    // path refuses unconditionally. The SAME predicate that gate uses — two
-    // sites answering one question two ways is what produces that gap — and
-    // driven off the registry, so a provider's name has one spelling.
-    for (const p of PROVIDERS) if (this.plugin(p.plugin) !== null) this.skills.register(p.skill);
+    // path refuses unconditionally. Driven off `this.plugins` itself — the
+    // staged set — rather than a second staged-ness check, so there is one
+    // predicate for "is this really here" and every staged plugin is a
+    // candidate, not just the ones with a PROVIDERS row. A provider is a
+    // specialisation: its plugin publishes the provider's own skill (gog's
+    // orchestration wants its own copy, not the manifest's); any other
+    // staged plugin publishes the skill its OWN manifest declares, if any.
+    for (const staged of this.plugins) {
+      const provider = PROVIDERS.find((p) => p.plugin === staged.manifest.name);
+      if (provider) {
+        this.skills.register(provider.skill);
+        continue;
+      }
+      if (staged.manifest.skill === null) continue;
+      try {
+        const skill = parseFrontmatter(fs.readFileSync(path.join(staged.dir, staged.manifest.skill), "utf8"));
+        if (skill) this.skills.register(skill);
+      } catch {
+        /* unreadable or malformed — publish nothing rather than a broken skill */
+      }
+    }
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -927,6 +945,16 @@ export class DeviceAgent {
       return this.executePlowGog(intent, plugin, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
     }
 
+    // A staged plugin with no PROVIDERS row: reachable on its manifest alone.
+    // `pluginFor` matches on `manifest.command`, the same field a provider's
+    // own command happens to share with the plugin it drives — but that
+    // command was already claimed above, so this only ever resolves a
+    // plugin's own dispatch, never a provider's.
+    const plugin = pluginFor(this.plugins, argv[0] ?? "");
+    if (plugin !== null) {
+      return this.executePlugin(intent, plugin, argv, { readPaths, writePaths, network, appleEvents, waitMs });
+    }
+
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     try {
       const result = await this.executor.run({
@@ -1442,6 +1470,66 @@ export class DeviceAgent {
       if (refusal !== null) return this.execError(intent.intentId, refusal);
     }
     return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
+  }
+
+  /**
+   * A staged plugin driven by its own manifest, with no provider row's
+   * orchestration — the generic exec path an owned CLI (gog, via `plow-gog`)
+   * would otherwise be the only user of.
+   *
+   * The manifest's `argv.read`/`argv.write` are the plugin's own belt: an
+   * argv matching neither is refused before anything spawns, the same
+   * defense-in-depth shape as `providerRefusal` inside `executeCommand` — the
+   * device is the chokepoint regardless of what a caller already checked.
+   */
+  private async executePlugin(
+    intent: Intent,
+    plugin: StagedPlugin,
+    argv: string[],
+    opts: { readPaths: string[]; writePaths: string[]; network: boolean; appleEvents: boolean; waitMs: number },
+  ): Promise<JSONValue> {
+    const verdict = classifyArgv(plugin.manifest, argv);
+    if (verdict.kind === "refused") return this.execError(intent.intentId, verdict.reason);
+    // A relative entrypoint names a binary this Mac staged, joined under its
+    // OWN bin dir so PATH never decides which copy runs (plow-gog's own
+    // pattern). An absolute one (e.g. /bin/sh) is a manifest choosing to run
+    // a fixed system binary and is left alone — manifest.ts's own comment on
+    // exec.argv[0] is why: nothing joins under bin/ for that shape.
+    const entry = plugin.manifest.exec.argv[0]!;
+    const bin = entry.startsWith("/") ? entry : path.join(plugin.binDir, entry);
+    // No secret store, mint scope, or Plow API base is wired to a plugin's
+    // env yet — nothing on this Mac can answer `resolveEnv`'s `secret`/`mint`
+    // sources today, and faking a base URL would be a silent wrong answer
+    // rather than a loud one. A plugin declaring env is refused rather than
+    // handed a guess; the loud gap is the honest state until that plumbing
+    // exists.
+    if (Object.keys(plugin.manifest.env).length > 0) {
+      return this.execError(intent.intentId, `${plugin.manifest.command} needs env this Mac cannot resolve yet`);
+    }
+    this.audit.record("exec_start", { intentId: intent.intentId, argv });
+    try {
+      const result = await this.executor.run({
+        argv: [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)],
+        // The binary must be readable to exec it, and a staged plugin lives
+        // inside the .app bundle, which the profile's home grant does not reach.
+        readPaths: [...opts.readPaths, plugin.binDir],
+        writePaths: opts.writePaths,
+        network: opts.network,
+        appleEvents: opts.appleEvents,
+        waitMs: opts.waitMs,
+      });
+      return this.finishRun(intent.intentId, result, {
+        argv,
+        cwd: undefined,
+        readPaths: opts.readPaths,
+        writePaths: opts.writePaths,
+        automationTarget: opts.appleEvents ? appleEventTarget(argv) : null,
+        sandboxed: true,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.execError(intent.intentId, message);
+    }
   }
 
   /** Read more output from a still-running (or finished) command. */

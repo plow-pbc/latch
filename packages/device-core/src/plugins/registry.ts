@@ -18,6 +18,10 @@ import { binDir, type Arch } from "./stage.js";
 
 export interface StagedPlugin {
   manifest: PluginManifest;
+  /** The plugin's own root directory — where `latch-plugin.json` and a
+   * manifest-declared `skill` path live. Not `binDir`, which is one level
+   * (arch-specific) below it. */
+  dir: string;
   binDir: string;
 }
 
@@ -55,10 +59,22 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
       if (manifest.name !== name) throw new PluginError("plugin directory must be named after its manifest");
       const bin = binDir(dir, arch);
       if (!manifest.runtime.binaries.every((b) => executable(path.join(bin, b.name)))) continue;
-      out.push({ manifest, binDir: bin });
+      out.push({ manifest, dir, binDir: bin });
     }
   }
   return out;
+}
+
+/**
+ * The staged plugin an argv's `argv[0]` names, or null when none matches.
+ *
+ * Matched on `manifest.command` — the same field a provider's `command` row
+ * happens to share with the plugin it drives (gog's manifest command IS
+ * `plow-gog`), so a provider's own command is found here too; the caller
+ * checks `providerFor` first and only reaches this for what that left null.
+ */
+export function pluginFor(plugins: readonly StagedPlugin[], command: string): StagedPlugin | null {
+  return plugins.find((p) => p.manifest.command === command) ?? null;
 }
 
 /**

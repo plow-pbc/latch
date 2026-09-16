@@ -75,7 +75,10 @@ export class SkillRegistry {
   }
 }
 
-function parseFrontmatter(raw: string): Skill | null {
+/** Exported so a caller with a single known file (a plugin-declared skill
+ * path) can parse it without a directory scan — `loadDir` below is for the
+ * `$DOMO_HOME/device/skills/*.md` case, a different source of the same shape. */
+export function parseFrontmatter(raw: string): Skill | null {
   const m = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!m) return null;
   let name = "";
