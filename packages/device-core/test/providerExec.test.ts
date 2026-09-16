@@ -18,6 +18,7 @@ import {
   loadPlugins,
   MintError,
   type Minter,
+  type PolicyDelegate,
   type Provider,
   type StagedPlugin,
 } from "@domo/device-core";
@@ -502,6 +503,91 @@ describe("a staged non-provider plugin through the exec path", () => {
     expect(r.get("error").str).toContain("envy needs env this Mac cannot resolve yet");
     expectNeverSpawned(d);
   });
+});
+
+/**
+ * DESIGN.md's stated contract for a plugin READ: one "always allow" covers
+ * every later query, whatever its tail — the owner approves the pattern, not
+ * the words. `PolicyEngine`'s rule view is what makes that true (see
+ * `deviceAgent.ts`'s `pluginRuleView` and `plugins/argvRules.ts`'s
+ * `ruleArgv`): only the STORED RULE sees the narrowed `<command> <prefix>`
+ * view; the approval count, the audit log and the spawned argv all keep the
+ * real, full argv throughout.
+ */
+describe("a plugin's always-allow rule, narrowed by argv shape", () => {
+  const READ_WRITE_MANIFEST = {
+    name: "kb", version: "test", command: "kb",
+    runtime: {
+      binaries: [{
+        name: "kb-bin", version: "test",
+        url: { arm64: "https://example.invalid/kb-arm64.tar.gz", x64: "https://example.invalid/kb-x64.tar.gz" },
+        sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
+      }],
+      sources: [],
+    },
+    exec: { cwd: "plugin", argv: ["kb-bin"] },
+    env: {}, argv: { read: [["get"]], write: [["put"]] },
+  };
+
+  /** A counting delegate: always answers `always_allow`, and records every
+   * intent it was actually asked to decide — the "was this prompted again?"
+   * oracle, since a rule-answered intent never reaches `decideIntent` at all
+   * (`PolicyEngine.decide`). */
+  function countingAlwaysAllow(): { delegate: PolicyDelegate; asked: () => number } {
+    let count = 0;
+    return { delegate: { decideIntent: async () => { count += 1; return "always_allow"; } }, asked: () => count };
+  }
+
+  function kbDevice(delegate: PolicyDelegate): DeviceAgent {
+    const plugins = loadPlugins([(() => {
+      const root = tmp();
+      fakePlugin(root, READ_WRITE_MANIFEST, '#!/bin/sh\necho "ARGV=$*"\n');
+      return root;
+    })()]);
+    return new DeviceAgent(tmp(), "Test Mac", delegate, null, undefined, null, plugins);
+  }
+
+  itSpawns(
+    "answers a sibling read query from the stored rule without re-prompting, keeping the full argv in the audit and the spawn",
+    async () => {
+      const { delegate, asked } = countingAlwaysAllow();
+      const d = kbDevice(delegate);
+
+      const first = jv(await run(d, ["kb", "get", "alpha"]));
+      expect(String(first.get("output").str ?? "")).toContain("ARGV=get alpha");
+      expect(asked()).toBe(1);
+
+      // A different query under the SAME prefix ("get") must be answered by
+      // the stored rule, never re-asked — and must still run with its OWN
+      // real argv, not the one that was approved first.
+      const second = jv(await run(d, ["kb", "get", "beta"]));
+      expect(String(second.get("output").str ?? "")).toContain("ARGV=get beta");
+      expect(asked()).toBe(1);
+
+      const received = d.audit
+        .entries()
+        .filter((e) => jv(e).get("event").str === "intent_received")
+        .map((e) => (jv(e).get("capabilities").arr ?? []).join(","));
+      expect(received[0]).toContain("get alpha");
+      expect(received[1]).toContain("get beta");
+    },
+  );
+
+  itSpawns(
+    "still re-prompts a write with different arguments — one write's approval never authorises another",
+    async () => {
+      const { delegate, asked } = countingAlwaysAllow();
+      const d = kbDevice(delegate);
+
+      await run(d, ["kb", "put", "alpha"]);
+      expect(asked()).toBe(1);
+
+      // Same prefix ("put"), different tail: a write is never narrowed, so
+      // this must be decided fresh, not answered from the first's rule.
+      await run(d, ["kb", "put", "beta"]);
+      expect(asked()).toBe(2);
+    },
+  );
 });
 
 /**

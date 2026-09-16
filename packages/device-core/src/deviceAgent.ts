@@ -14,7 +14,7 @@
 import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
 import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
-import { classifyArgv } from "./plugins/argvRules.js";
+import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import fs from "node:fs";
@@ -338,7 +338,7 @@ export class DeviceAgent {
     this.ownerHome = ownerHome;
     this.hostProbes = hostProbes ?? nodeProbes({ ownerHome });
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
-    this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
+    this.policy = new PolicyEngine(path.join(home, "device/rules.json"), (i) => this.pluginRuleView(i));
     // Every rule that comes to exist, and every one that stops, is a line in
     // the log. A rule is not always the twin of an `always_allow` decision:
     // an answer that arrived after the approval's deadline denies the request
@@ -883,6 +883,29 @@ export class DeviceAgent {
    */
   private plugin(name: string): StagedPlugin | null {
     return this.plugins.find((p) => p.manifest.name === name) ?? null;
+  }
+
+  /**
+   * The `PolicyEngine` rule view (see its constructor doc): an intent whose
+   * `process.exec` argv resolves to a staged plugin has that one capability's
+   * argv narrowed through `ruleArgv` — a read collapses to `<command>
+   * <prefix>`, so one "always allow" covers every later query regardless of
+   * its tail; a write (or anything that isn't a plugin at all) passes
+   * through unchanged. Always returns a NEW Intent and never mutates the one
+   * it is handed: the object handed in is reused afterwards for the grant,
+   * the approval card, the sandbox profile and the audit log, all of which
+   * must keep the real, full argv — only the rule itself sees the narrowed
+   * view.
+   */
+  private pluginRuleView(intent: Intent): Intent {
+    const cap = intent.capabilities.find((c) => c.kind === "process.exec");
+    const argv = cap?.argv;
+    if (cap === undefined || argv === undefined || argv.length === 0) return intent;
+    const plugin = pluginFor(this.plugins, argv[0] ?? "");
+    if (plugin === null) return intent;
+    const viewed = ruleArgv(plugin.manifest, argv);
+    if (viewed === argv) return intent;
+    return { ...intent, capabilities: intent.capabilities.map((c) => (c === cap ? { ...c, argv: [...viewed] } : c)) };
   }
 
   /**
