@@ -347,8 +347,12 @@ describe("diagnose — the tree, one leaf per case", () => {
         errno: "EPERM",
         ran_sandboxed: true,
         app_process_open: "ok",
+        // What `sandboxGrants` really produces for a read-only intent on a
+        // guarded file: write is true only under an explicitly granted write
+        // root. Setting it true here would be a fixture agreeing with the
+        // code and with no real run.
         sandbox_allows_read: true,
-        sandbox_allows_write: true,
+        sandbox_allows_write: false,
         path: "~/Library/Messages/chat.db",
         tcc_guarded_prefix: "full_disk_access",
         full_disk_access_granted: true,

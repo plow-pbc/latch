@@ -635,8 +635,13 @@ export function diagnose(f: HostFacts): Diagnosis {
         f.tcc_guarded_prefix !== null &&
         COVERED_BY_FULL_DISK_ACCESS.has(f.tcc_guarded_prefix) &&
         f.full_disk_access_granted === true &&
-        f.sandbox_allows_read === true &&
-        f.sandbox_allows_write === true
+        // The profile must allow THE OPERATION the run attempted, not both.
+        // `sandboxGrants` sets write only under an explicitly granted write
+        // root, so a read of a guarded file — the common case, and the one
+        // this branch exists for — arrives with read true and write false.
+        // Demanding both would send it on to the "allows no writes" branch
+        // and answer a read refusal with the wrong cause and remedy.
+        (f.op === "write" ? f.sandbox_allows_write === true : f.sandbox_allows_read === true)
       ) {
         evidence.push(`${APP_DISPLAY_NAME} itself can open ${where}, and Full Disk Access is granted, which covers that location`);
         evidence.push("the run's sandbox profile allows the path too, so the grant did not reach the sandboxed run itself");
