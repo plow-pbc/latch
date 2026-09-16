@@ -40,6 +40,31 @@ export function tarball(tmp: () => string): { file: string; sha256: string } {
 }
 
 /**
+ * A local git repo standing in for a plugin's `runtime.sources[0]` — no
+ * network, ever: `git clone` works against a plain filesystem path exactly
+ * as it does against a URL. Every file is written executable — the fixture
+ * exists to stand in for an install script and the CLI it produces, and git
+ * preserves whatever mode it's given, so this is what a real source's
+ * scripts need without a second per-file annotation. Returns the repo's path
+ * (the manifest's `git`) and its one commit's 40-char sha (the manifest's
+ * `commit`).
+ */
+export function localGitSource(tmp: () => string, files: Record<string, string>): { git: string; commit: string } {
+  const dir = tmp();
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+  git("init", "--quiet");
+  git("config", "user.email", "test@example.invalid");
+  git("config", "user.name", "Test");
+  for (const [name, content] of Object.entries(files)) {
+    fs.writeFileSync(path.join(dir, name), content, { mode: 0o755 });
+  }
+  git("add", "-A");
+  git("commit", "--quiet", "-m", "fixture");
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+  return { git: dir, commit };
+}
+
+/**
  * A plugin directory on disk: its manifest, plus `script` staged as each of
  * its declared binaries. A plugin declaring none (MINIMAL) gets no bin/ at
  * all — per registry.ts, presence for those comes from the manifest alone.

@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { parseManifest, PluginError } from "../src/plugins/manifest.js";
-import { binDir, runPostinstall, stageBinaries, type Arch } from "../src/plugins/stage.js";
-import { DECOY, MINIMAL, tarball, tempDirs } from "./pluginFixtures.js";
+import { binDir, runPostinstall, sourceDir, stageBinaries, type Arch } from "../src/plugins/stage.js";
+import { DECOY, localGitSource, MINIMAL, tarball, tempDirs } from "./pluginFixtures.js";
 
 const ARCH = process.arch as Arch;
 const { tmp, cleanup } = tempDirs("latch-stage-");
@@ -103,6 +103,54 @@ describe("stageBinaries", () => {
       }),
     ).rejects.toThrow("network down");
     expect(fs.existsSync(binDir(pluginDir, ARCH))).toBe(false);
+  });
+});
+
+describe("stageBinaries staging a source", () => {
+  it("clones a source at its pinned commit and runs its install argv, into runtime/<arch>/<source name>", async () => {
+    const { git, commit } = localGitSource(tmp, {
+      "cli.sh": '#!/bin/sh\necho "ARGV=$*"\n',
+      "install.sh": "#!/bin/sh\nmkdir -p .venv/bin\ncp cli.sh .venv/bin/tool\nchmod 755 .venv/bin/tool\n",
+    });
+    const pluginDir = tmp();
+    const manifest = parseManifest(JSON.stringify({
+      ...MINIMAL,
+      exec: { cwd: "repo", argv: ["tool"] },
+      runtime: { binaries: [], sources: [{ name: "repo", git, commit, install: ["./install.sh"] }] },
+    }));
+    await stageBinaries(manifest, pluginDir, ARCH, tmp(), async () => Buffer.alloc(0));
+    const dir = sourceDir(pluginDir, ARCH, "repo");
+    expect(fs.existsSync(path.join(dir, "cli.sh"))).toBe(true);
+    expect(
+      execFileSync(path.join(dir, ".venv", "bin", "tool"), ["a"], { encoding: "utf8" }),
+    ).toBe("ARGV=a\n");
+  });
+
+  it("refuses a source whose install argv fails, leaving no runtime tree", async () => {
+    const { git, commit } = localGitSource(tmp, { "install.sh": "#!/bin/sh\nexit 1\n" });
+    const pluginDir = tmp();
+    const manifest = parseManifest(JSON.stringify({
+      ...MINIMAL,
+      exec: { cwd: "repo", argv: ["tool"] },
+      runtime: { binaries: [], sources: [{ name: "repo", git, commit, install: ["./install.sh"] }] },
+    }));
+    await expect(
+      stageBinaries(manifest, pluginDir, ARCH, tmp(), async () => Buffer.alloc(0)),
+    ).rejects.toThrow("source repo failed to install");
+    expect(fs.existsSync(sourceDir(pluginDir, ARCH, "repo"))).toBe(false);
+  });
+
+  it("refuses a source that fails to clone at its pinned commit, naming only the source", async () => {
+    const pluginDir = tmp();
+    const manifest = parseManifest(JSON.stringify({
+      ...MINIMAL,
+      exec: { cwd: "repo", argv: ["tool"] },
+      runtime: { binaries: [], sources: [{ name: "repo", git: tmp(), commit: "0".repeat(40) }] },
+    }));
+    await expect(
+      stageBinaries(manifest, pluginDir, ARCH, tmp(), async () => Buffer.alloc(0)),
+    ).rejects.toThrow(new PluginError("source repo failed to clone at its pinned commit"));
+    expect(fs.existsSync(sourceDir(pluginDir, ARCH, "repo"))).toBe(false);
   });
 });
 

@@ -1,11 +1,14 @@
 /**
- * Staging a plugin's pinned binaries into `runtime/<arch>/bin`.
+ * Staging a plugin's runtime tree: pinned downloaded archives into
+ * `runtime/<arch>/bin`, and git sources — cloned at a pinned commit, then
+ * built by their own `install` argv — into `runtime/<arch>/<source name>`.
  *
  * ONE code path for a bundled plugin (`scripts/stage-plugins.mjs`, into
- * `vendor/plugins`) and an installed one (into `$DOMO_HOME/plugins`). The
- * archive is kept under `downloads` and re-hashed on every run; the runtime
- * tree is rebuilt from it every time, so a modified staged binary never
- * survives a stage — the property the old per-binary digest pin carried.
+ * `vendor/plugins`) and an installed one (into `$DOMO_HOME/plugins`). A
+ * binary's archive is kept under `downloads` and re-hashed on every run; the
+ * runtime tree is rebuilt from it every time, so a modified staged binary
+ * never survives a stage — the property the old per-binary digest pin
+ * carried. A source is re-cloned fresh on every stage for the same reason.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -24,6 +27,11 @@ export const fetchBytes: FetchBytes = async (url) => {
 
 /** The one directory a child's PATH and the sandbox's reads name. */
 export const binDir = (pluginDir: string, arch: Arch): string => path.join(pluginDir, "runtime", arch, "bin");
+
+/** Where a source lands once cloned: the same "named entry under the arch's
+ *  runtime dir" convention a binary's extracted archive uses. */
+export const sourceDir = (pluginDir: string, arch: Arch, name: string): string =>
+  path.join(pluginDir, "runtime", arch, name);
 
 const digest = (file: string): string => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
@@ -67,9 +75,38 @@ export async function stageBinaries(
       fs.copyFileSync(executable, staged);
       fs.chmodSync(staged, 0o755);
     }
+    for (const s of manifest.runtime.sources) stageSource(s, runtime);
   } catch (err) {
     fs.rmSync(runtime, { recursive: true, force: true });
     throw err;
+  }
+}
+
+/**
+ * A source: cloned at its pinned commit into `runtime/<arch>/<source name>`,
+ * then built in place by its own `install` argv, if it declares one. The
+ * commit hash is the integrity pin; there is no separate digest, same as a
+ * binary's tar member has none once its sha256 has matched. Every refusal
+ * names the source's declared `name` only — never the git url, the commit,
+ * or a command's output, all of which are third-party text.
+ */
+function stageSource(
+  source: { name: string; git: string; commit: string; install?: string[] },
+  runtime: string,
+): void {
+  const into = path.join(runtime, source.name);
+  try {
+    execFileSync("git", ["clone", "--quiet", "--", source.git, into], { stdio: "pipe" });
+    execFileSync("git", ["-C", into, "checkout", "--quiet", source.commit], { stdio: "pipe" });
+  } catch {
+    throw new PluginError(`source ${source.name} failed to clone at its pinned commit`);
+  }
+  if (source.install !== undefined) {
+    try {
+      execFileSync(source.install[0]!, source.install.slice(1), { cwd: into, stdio: "pipe" });
+    } catch {
+      throw new PluginError(`source ${source.name} failed to install`);
+    }
   }
 }
 
