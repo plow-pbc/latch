@@ -2310,7 +2310,7 @@ async function permissionsPane() {
       nodes.push(el("div", { class: "cap-banner" }, [
         icon("warning", { class: "ico cap-banner-icon" }),
         el("div", {}, [
-          // Leads with the badge's number, then what those switches did.
+          // Leads with how many switches need attention, then what they did.
           el("div", { class: "bt", text:
             `${v.banner.switches} capabilit${oneSwitch ? "y needs" : "ies need"} to be allowed. ` +
             `${oneSwitch ? "It" : "They"} blocked ${v.banner.count} request${one ? "" : "s"}, ` +
@@ -3015,7 +3015,7 @@ window.domo.onAuditChanged((change) => {
   if (currentTab === "audit") refreshAudit({ followTop: true, changed: new Set(change?.ids ?? ["*"]) });
 });
 // A block by this Mac is an audit row, and the only kind that moves the
-// Permissions section's badge, lines and banner — main says so only for those,
+// Permissions section's lines and banner — main says so only for those,
 // because refreshing the tab takes the standing permission inventory (a
 // helper process per switch), which every audit line used to trigger.
 window.domo.onCapabilitiesChanged(() => {

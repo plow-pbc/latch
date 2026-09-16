@@ -138,9 +138,14 @@ describe("capabilitiesView", () => {
     expect(statuses.accessibility).toBe("denied");
     // The folders keep no row once it is on, so the map answers for them here.
     expect(statuses.files_downloads).toBe("granted");
-    // Off, the rows go back to their own answer.
+    // Off, each row the umbrella answered for shows its OWN answer again. The
+    // covered set is not uniform, so one blanket expectation would be wrong:
+    // contacts was never asked, calendars really is granted on its own, and a
+    // folder offers "ask" where a queryable offers "request".
     const off = capabilitiesView(input()).sections[0]!.rows;
     expect(off.find((r) => r.key === "contacts")).toMatchObject({ status: "not_asked", action: "request" });
+    expect(off.find((r) => r.key === "calendars")).toMatchObject({ status: "granted" });
+    expect(off.find((r) => r.key === "files_desktop")).toMatchObject({ status: "not_asked", action: "ask" });
   });
 
   it("the banner counts rows that are off AND were hit; a switch nobody hit does not", () => {
