@@ -264,6 +264,22 @@ describe("every tool this Mac can stop says so", () => {
     expect(d.plow_run_applescript).toMatch(/plow_list_skills/);
   });
 
+  // An agent screenshotted Yelp's "You have been blocked" page and told the
+  // owner it could not confirm their review — the block came back as a normal
+  // 200 with no failed_requests, so the screenshot was the only signal, and
+  // nothing on the surface said what to do with it. The owner's own Safari
+  // loaded the page first try. The fact that changes the report lives on the
+  // browser tool; the recipe lives in the skill (Task 2); the script tool
+  // names Safari so the two halves meet.
+  it("the browser tool sends a hard block to the owner's Safari, and the script tool names it", async () => {
+    const d = await descriptions(makeServer());
+    expect(d.plow_browser).toMatch(/hard block/i);
+    expect(d.plow_browser).toMatch(/owner's own Safari/i);
+    expect(d.plow_browser).toMatch(/plow_run_applescript/);
+    expect(d.plow_run_applescript).toMatch(/Safari/);
+    expect(d.plow_run_applescript).toMatch(/bot-walled|blocked as a bot/i);
+  });
+
   it("plow_run_command explains a running result that carries a diagnosis", async () => {
     const d = await descriptions(makeServer());
     expect(d.plow_run_command).toMatch(/still 'running' but carries a 'diagnosis'/);

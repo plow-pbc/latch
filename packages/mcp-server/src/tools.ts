@@ -610,7 +610,10 @@ export const TOOLS: ToolSpec[] = [
     title: "Script an app on the user's Mac",
     description:
       "Run an AppleScript that controls one app on the user's own Mac through Latch — Mail, Finder, " +
-      "Calendar, Notes, Reminders, Messages, System Events — and return what it produces. Use this " +
+      "Calendar, Notes, Reminders, Messages, Safari, System Events — and return what it produces. " +
+      "Safari is also the fallback browser when a plow_browser session is bot-walled: the owner's " +
+      "real browser loads pages the automated one is refused (the camoufox-browsing skill has the " +
+      "recipe). Use this " +
       "for AppleScript rather than plow_run_command with osascript: some apps refuse commands " +
       "from inside the sandbox (-10004), and this tool runs outside it. Name the app the script " +
       "addresses in 'app', by the name it has in `tell application \"…\"`; it is resolved to an " +
@@ -990,7 +993,12 @@ export const TOOLS: ToolSpec[] = [
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page), and 'failed_requests' when the " +
       "page's own requests came back refused — a 401, 403 or 429 there is why an action that " +
-      "reported success changed nothing, so read it before retrying.",
+      "reported success changed nothing, so read it before retrying. " +
+      "A page that says you are blocked and offers nothing to solve — no CAPTCHA, no button, " +
+      "often a plain 200 with no failed_requests at all — is a hard block: the same URL in this " +
+      "browser will not change, and waiting will not help. The owner's own Safari usually loads " +
+      "it; drive it through plow_run_applescript the way the camoufox-browsing skill's Safari " +
+      "section shows, and report the site as blocked only after Safari fails too.",
     inputSchema: {
       type: "object",
       required: ["session", "action"],
