@@ -134,3 +134,32 @@ function permissionMet(inventory: HostInventory | null, id: string): boolean {
 function titleCase(id: string): string {
   return id.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
+
+/**
+ * The tab's badge, with the Capabilities badge's semantics carried over
+ * whole: a plugin counts while a requirement is unmet AND something has
+ * actually hit it. `pluginRows` has already zeroed the count for every other
+ * status, so this is the count of rows the owner is being told about — it
+ * clears when the switch flips, with nobody marking anything done.
+ */
+export function pluginsBadge(rows: readonly PluginRow[]): number {
+  return rows.filter((r) => r.blockedCount > 0).length;
+}
+
+/**
+ * Settings' "Used by" back-reference: which plugins declare each permission.
+ *
+ * Declaring is the fact, so a plugin the owner turned off is still listed —
+ * the inventory answers "what is this switch for on this Mac", and turning a
+ * plugin off does not change what it needs. A switch nothing declares is
+ * absent here, and Settings says so in its own words.
+ */
+export function permissionUsers(
+  plugins: readonly { manifest: PluginManifest }[],
+): Record<string, string[]> {
+  const users: Record<string, string[]> = {};
+  for (const { manifest } of plugins) {
+    for (const id of manifest.requires.permissions) (users[id] ??= []).push(manifest.name);
+  }
+  return users;
+}

@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { parseManifest, type PluginManifest } from "@domo/device-core";
 import { blockedGroups } from "../src/capabilitiesModel.js";
-import { pluginBlockCounts, pluginRows, type PluginsInput } from "../src/pluginsModel.js";
+import { permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge, type PluginsInput } from "../src/pluginsModel.js";
 import { inventory } from "./hostFixtures.js";
 
 const manifest = (requires: object, name = "wiki"): PluginManifest =>
@@ -100,4 +100,23 @@ it("attributes an automation block by its permission, not its bundle id", () => 
   ];
   const plugins = [{ manifest: manifest({ permissions: ["automation"] }) }];
   expect(pluginBlockCounts(blockedGroups(events), plugins)).toEqual({ wiki: 1 });
+});
+
+it("badges only the plugins something has actually hit, and clears when the switch flips", () => {
+  const hit = pluginRows(build({ requires: { permissions: ["contacts"] }, enabled: true, hits: 3 }));
+  expect(pluginsBadge(hit)).toBe(1);
+  // Nothing has hit it: still needs setup, still not on the badge.
+  expect(pluginsBadge(pluginRows(build({ requires: { permissions: ["contacts"] }, enabled: true })))).toBe(0);
+  // The umbrella grant IS the switch flipping — no one marked anything done.
+  const granted = { ...build({ requires: { permissions: ["contacts"] }, enabled: true, hits: 3 }), inventory: inventory({ full_disk_access: { granted: true, probes: [] } }) };
+  expect(pluginsBadge(pluginRows(granted))).toBe(0);
+});
+
+it("names every plugin that declares a permission, off ones included, and omits a switch nobody declares", () => {
+  const plugins = [
+    { manifest: manifest({ permissions: ["contacts", "calendars"] }) },
+    { manifest: manifest({ permissions: ["contacts"] }, "photo") },
+    { manifest: manifest({}, "plain") },
+  ];
+  expect(permissionUsers(plugins)).toEqual({ contacts: ["wiki", "photo"], calendars: ["wiki"] });
 });

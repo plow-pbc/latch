@@ -194,6 +194,15 @@ export interface Settings {
    *  field, which a confirmed block then outranks outright. */
   folderConsentAt?: Record<string, string>;
   /**
+   * Plugins the owner has turned OFF, by name (`plugins/registry.ts`).
+   *
+   * The disabled names rather than the enabled ones, so a plugin that arrives
+   * in a later build is on by default and one that is uninstalled leaves
+   * nothing behind. Off means not staged as far as the device is concerned:
+   * skill unpublished, commands refused (DeviceAgent.setDisabledPlugins).
+   */
+  disabledPlugins?: string[];
+  /**
    * Capabilities rows the owner said "not now" to, keyed by row, with when.
    * A row stays off the tab's badge until a block NEWER than this lands.
    */

@@ -46,6 +46,7 @@ import {
   parsePasswordExport,
   PluginError,
   pluginRoots,
+  PROVIDERS,
   readCredentialsState,
   resolveBrowserRuntime,
   totpCode,
@@ -53,14 +54,15 @@ import {
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission } from "@domo/device-core";
+import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission, StagedPlugin } from "@domo/device-core";
 import { approvalViewModel, CredentialTitles } from "./viewModel.js";
 import { AuditIndex, AuditQuery } from "./auditIndex.js";
 
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
+import { blockedGroups, capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
+import { permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge } from "./pluginsModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -231,6 +233,9 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let connectors: Connectors | null = null;
+/** What `loadPlugins` found at startup — the Plugins tab's inventory, and the
+ *  list the owner's off switch selects from. Empty until whenReady. */
+let stagedPlugins: readonly StagedPlugin[] = [];
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let agentToken: string | null = null;
@@ -1295,6 +1300,8 @@ ipcMain.handle("capabilities:get", async () => {
     inventory,
     view,
     icons: await capabilityIcons(view),
+    // Settings' "Used by" back-reference: which plugins declare each switch.
+    usedBy: permissionUsers(stagedPlugins),
   };
 });
 
@@ -1522,6 +1529,70 @@ ipcMain.handle("capabilities:dismiss", async (_e, rawKey: unknown) => {
 ipcMain.handle("capabilities:bannerSeen", async () => {
   saveSettings(home, { ...loadSettings(home), blockedBannerSeenAt: new Date().toISOString() });
   return capabilitiesNow();
+});
+
+// MARK: The Plugins tab (pluginsModel.ts)
+
+/**
+ * A plugin's one-line description: its skill's, as the registry holds it.
+ * Deliberately not a manifest field — a second place to write the same
+ * sentence is a second place for it to drift — and read off the provider row
+ * rather than the device's live registry, so turning a plugin off (which
+ * unpublishes the skill) does not blank the row that offers to turn it on.
+ */
+function pluginDescription(name: string): string | null {
+  return PROVIDERS.find((p) => p.plugin === name)?.skill.description ?? null;
+}
+
+/** The declared requirement paths that are really there. `~` is the OWNER's
+ *  home, the same one every skill names, not the app's DOMO_HOME. */
+async function availablePaths(declared: readonly string[]): Promise<string[]> {
+  const there = await Promise.all(declared.map((d) =>
+    fs.stat(d.startsWith("~/") ? path.join(os.homedir(), d.slice(2)) : d).then(() => true, () => false)));
+  return declared.filter((_, i) => there[i]);
+}
+
+/** The whole tab, fresh: what is staged, what each plugin still needs, and
+ *  what those unmet requirements have already blocked. */
+async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; badge: number }> {
+  const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
+  const rows = pluginRows({
+    plugins: stagedPlugins.map((p) => ({
+      manifest: p.manifest,
+      enabled: !disabled.has(p.manifest.name),
+      description: pluginDescription(p.manifest.name),
+    })),
+    inventory: device ? await device.hostInventory() : null,
+    // One connector today, and it is connected exactly when an account is.
+    connectedAccounts: (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [],
+    availablePaths: await availablePaths(stagedPlugins.flatMap((p) => p.manifest.requires.paths)),
+    // The log as the live index holds it, folded once — the same grouping the
+    // permission rows read.
+    blocked: pluginBlockCounts(blockedGroups(device ? ensureAuditIndex().events() : []), stagedPlugins),
+  });
+  return { rows, badge: pluginsBadge(rows) };
+}
+
+ipcMain.handle("plugins:get", async () => pluginsNow());
+
+/**
+ * The owner's off switch. Persisted beside the other device settings as the
+ * disabled NAMES — a plugin absent from the list is on, so a plugin that
+ * arrives later is on by default and one that is uninstalled leaves nothing
+ * to clean up. The device is told in the same breath, so the skill and the
+ * exec gate follow without a relaunch.
+ */
+ipcMain.handle("plugins:setEnabled", async (_e, rawName: unknown, rawOn: unknown) => {
+  const name = typeof rawName === "string" ? rawName : "";
+  if (stagedPlugins.some((p) => p.manifest.name === name)) {
+    const settings = loadSettings(home);
+    const disabled = new Set(settings.disabledPlugins ?? []);
+    if (rawOn === true) disabled.delete(name);
+    else disabled.add(name);
+    saveSettings(home, { ...settings, disabledPlugins: [...disabled] });
+    device?.setDisabledPlugins([...disabled]);
+  }
+  return pluginsNow();
 });
 // The floating panel's poll: has the switch it points at landed?
 ipcMain.handle("grant:state", async () => {
@@ -2095,6 +2166,8 @@ app.whenReady().then(async () => {
     if (e instanceof PluginError) console.error(`[plugins] ${e.message}`);
     throw e;
   }
+  // What the Plugins tab lists, and what its off switch selects from.
+  stagedPlugins = plugins;
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -2118,6 +2191,9 @@ app.whenReady().then(async () => {
     // degrades — the same contract as the Full Disk Access tracker.
     nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath, native: nativePermissions() }),
   );
+  // The owner's off switches, as they left them: one call, and the device
+  // publishes exactly the skills it will honour commands for.
+  device.setDisabledPlugins(loadSettings(home).disabledPlugins ?? []);
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,
   // not only in the approvals directory.
