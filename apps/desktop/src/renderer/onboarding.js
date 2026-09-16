@@ -150,8 +150,8 @@ const TRUST_ROWS = [
     glyph: "sliders",
   },
   {
-    title: "A second AI checks the risky stuff",
-    detail: "An independent reviewer catches actions that don't look right.",
+    title: "The Plow gatekeeper reviews every data request",
+    detail: "The Plow adversarial reviewer catches actions that don't look right.",
     glyph: "shieldCheck",
   },
   {
@@ -173,7 +173,7 @@ function privacyScreen() {
   );
   return el("div", { class: "step-inner" }, [
     el("div", { class: "head-center" }, [
-      el("h1", { text: "Privacy" }),
+      el("h1", { text: "Stay in control of how your AI agents use your data" }),
       el("p", {
         class: "subhead",
         text: "Your agents can get things done without giving up control of your data.",
