@@ -615,10 +615,13 @@ ipcMain.handle("ui:getTab", async () => {
     void cloudAgents?.refresh();
     void connectClient?.refreshRoster();
   }
-  // "connect" was this tab's key before the content went to Settings and came
-  // back as "agents". Anyone who left the app on it lands where that content
-  // lives now, rather than silently on the default tab.
-  return tab === "connect" ? "agents" : tab;
+  // Two keys this tab strip has retired. "connect" went to Settings and came
+  // back as "agents"; "capabilities" became "plugins", the switches it listed
+  // now being one of the three kinds of thing a plugin requires. Anyone who
+  // left the app on either lands where that content lives now, rather than
+  // silently on the default tab.
+  const RETIRED = { connect: "agents", capabilities: "plugins" };
+  return RETIRED[tab as keyof typeof RETIRED] ?? tab;
 });
 ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
@@ -1305,7 +1308,7 @@ ipcMain.handle("capabilities:get", async () => {
   };
 });
 
-// MARK: The Capabilities tab (capabilitiesModel.ts)
+// MARK: The permission inventory, in Settings (capabilitiesModel.ts)
 
 /**
  * The icon beside a row or group — macOS's own, never drawn here: the app's
@@ -2247,8 +2250,8 @@ app.whenReady().then(async () => {
   device.audit.events.on("reset", () => {
     if (auditIndex !== null) auditIndex.reset(device?.audit.entries() ?? []);
     auditChanged([], true);
-    // A clear takes the blocks the Capabilities tab counts with it, and a
-    // rotation can age some out: the tab reads the log too, so it re-reads.
+    // A clear takes the blocks the Plugins tab counts with it, and a rotation
+    // can age some out: both panes read the log too, so they re-read.
     notifyRenderer("capabilities:changed");
   });
   // A block by this Mac itself is the owner's to clear, and the owner is
@@ -2258,14 +2261,15 @@ app.whenReady().then(async () => {
     if (entry.event === "host_permission_blocked") noteHostGateBlock(entry.fields);
     if (entry.event === "host_permission_cleared") clearHostGateAttention(entry.fields);
     // The three folders have no query: what a run's dialog was answered
-    // with, or a touch that got through, is what the Capabilities row
-    // has to go on — the same memo the row's own button writes.
+    // with, or a touch that got through, is what the permission row has to
+    // go on — the same memo the row's own button writes.
     if (entry.event === "host_permission_cleared" || entry.event === "host_permission_observed") {
       learnFolderConsent(entry.fields);
     }
-    // Only these lines change what the Capabilities tab shows (its badge, a
-    // row's line, the banner). Every other event used to refresh it too —
-    // the standing inventory, a dozen helper processes, per audit line.
+    // Only these lines change what the Plugins tab and Settings' Permissions
+    // section show (the badge, a row's line, the banner). Every other event
+    // used to refresh them too — the standing inventory, a dozen helper
+    // processes, per audit line.
     if (entry.event.startsWith("host_permission_")) notifyRenderer("capabilities:changed");
   });
   // Usage stats ride the same funnel as the audit log — one source of truth
@@ -2663,12 +2667,11 @@ function clearHostGateAttention(fields: { [k: string]: unknown }): void {
 }
 
 /**
- * The tray item's and the notification's one destination. A block that
- * names a switch lands on the Capabilities tab, where that switch shows
- * what it stopped and the grant flow starts. One that names none — a
- * locked file, a SIP root, POSIX permissions — has no row there (the tab
- * lists switches), so it lands on the Audit tab's Blocked view, where the
- * row carries the sentence that fixes it.
+ * The tray item's and the notification's one destination. A block that names
+ * a switch lands on the Plugins tab, which lists the plugins that switch is
+ * stopping and offers the grant. One that names none — a locked file, a SIP
+ * root, POSIX permissions — is nothing a plugin requires, so it lands on the
+ * Audit tab's Blocked view, where the row carries the sentence that fixes it.
  */
 function showCapabilitiesForHostGate(block?: NonNullable<typeof hostGateAttention>): void {
   const permission = block ? block.permission : (hostGateAttention?.permission ?? null);

@@ -30,9 +30,11 @@
         <button data-tab="audit" class="active">Audit</button>
         <button data-tab="rules">Rules</button>
         <button data-tab="vault">Browser Vault</button>
-        <!-- What this Mac lets agents do, and what that stopped. The count is
-             rows that need a decision (capabilitiesModel.ts), not events. -->
-        <button data-tab="capabilities">Capabilities<span class="tabcount" id="capCount" hidden></span></button>
+        <!-- What this Mac's agents can use, and what is stopping them. The
+             count is plugins something has actually been blocked on
+             (pluginsModel.ts), not events. The full permission inventory is
+             the machine-configuration view, and lives in Settings. -->
+        <button data-tab="plugins">Plugins<span class="tabcount" id="pluginCount" hidden></span></button>
         <button data-tab="settings">Settings</button>
       </div>
     </div>

@@ -520,6 +520,18 @@ textarea.text { min-height: 70px; resize: vertical; }
 /* A group of switches behind one line (Folders, Automation). The head is a
    full-width button in the row grid's clothes; the rows beneath indent past
    the chevron so they read as the group's. */
+/* The Plugins tab's rows. Same rhythm as a switch row, without the icon
+   column macOS fills there: the dot, the name and its lines, the status
+   badge, and the on/off switch. A requirement under it drops the badge. */
+.plugin-row { grid-template-columns: 8px 1fr auto auto; }
+.plugin-req { grid-template-columns: 8px 1fr auto; }
+.plugin-name { display: flex; align-items: center; gap: 8px; }
+.plugin-switch { margin-top: 0; }
+/* Settings holds the permission inventory in a container of its own so it can
+   be drawn and refreshed as one thing; `contents` keeps its cards in the
+   pane's own column, and the last one keeps the gap before what follows. */
+.permissions { display: contents; }
+.settings .permissions .item:last-child { margin-bottom: 16px; }
 .cap-group { border-top: 1px solid var(--border); }
 .cap-group:first-of-type { border-top: 0; }
 /* The head IS a .cap-row (same grid, padding and type), made a button. */
