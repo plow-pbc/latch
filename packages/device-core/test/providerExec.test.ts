@@ -156,6 +156,7 @@ function run(
   argv: string[],
   waitMs = 8000,
   readPaths?: string[],
+  cwd?: string,
 ): Promise<JSONValue> {
   return d.handleIntent(
     makeIntent({
@@ -164,7 +165,11 @@ function run(
       deviceId: d.identity.deviceId,
       request: `run: ${argv.join(" ")}`,
       capabilities: [
-        { kind: "process.exec", argv },
+        // `cwd` stands in for what `mcp-server` resolves before the intent
+        // exists (`DeviceAgent.pluginDir`) for a staged plugin's own
+        // dispatch — this device now refuses rather than substitutes when
+        // it is missing or disagrees with the plugin's directory.
+        { kind: "process.exec", argv, cwd },
         // The SAME predicate `mcp-server` uses, not a second reading of it —
         // `needsToken` alone answers true for `/bin/echo`, which would have
         // approved network for an ordinary command here.
@@ -415,7 +420,12 @@ describe("a staged non-provider plugin through the exec path", () => {
     async () => {
       const plugins = echoerPlugin('#!/bin/sh\necho "ARGV=$*"\necho "CWD=$(pwd)"\n');
       const d = device(null, plugins);
-      const out = String(jv(await run(d, ["echoer", "say", "hello"])).get("output").str ?? "");
+      // The approved cwd stands in for what `mcp-server` would have resolved
+      // and offered before the intent existed — this device enforces it
+      // rather than substituting its own, so the test supplies it too.
+      const out = String(
+        jv(await run(d, ["echoer", "say", "hello"], 8000, undefined, plugins[0]!.dir)).get("output").str ?? "",
+      );
       // The manifest's own belt (`--quiet`) leads the agent's argv, exactly
       // as plow-gog's does — proof the entrypoint resolved against the
       // staged tree, not PATH, and ran with the manifest's fixed prefix.
@@ -432,6 +442,24 @@ describe("a staged non-provider plugin through the exec path", () => {
       expect(events).toContain("exec_end");
     },
   );
+
+  // The security property this pins: this device must never grant a wider
+  // sandbox than the capability the owner approved. `mcp-server` always
+  // offers the plugin's own directory as `cwd` (mcpServer.test.ts covers
+  // that), but this device is the chokepoint and cannot rely on that — an
+  // intent built some other way (a replay, a future caller) with a missing
+  // or disagreeing `cwd` must be refused, never silently run in
+  // `plugin.dir` regardless of what was approved.
+  it("refuses to run when the approved cwd disagrees with the plugin's own directory, rather than substituting it", async () => {
+    const plugins = echoerPlugin('#!/bin/sh\necho SHOULD_NOT_RUN\n');
+    const d = device(null, plugins);
+    const elsewhere = tmp();
+
+    const r = jv(await run(d, ["echoer", "say", "hello"], 8000, undefined, elsewhere));
+
+    expect(r.get("error").str).toContain("approved cwd does not match this plugin's own directory");
+    expectNeverSpawned(d);
+  });
 
   // The `wiki` shape: an entrypoint that is NOT one of the manifest's own
   // `runtime.binaries` (declares none at all here) — a tool this Mac reaches
@@ -450,9 +478,9 @@ describe("a staged non-provider plugin through the exec path", () => {
     "leaves an entrypoint that names no staged binary relative, so the curated PATH resolves it",
     async () => {
       const root = tmp();
-      fakePlugin(root, RELAY_MANIFEST, "#!/bin/sh\n"); // no binaries declared: no bin/ ever staged
+      const dir = fakePlugin(root, RELAY_MANIFEST, "#!/bin/sh\n"); // no binaries declared: no bin/ ever staged
       const d = device(null, loadPlugins([root]));
-      const out = String(jv(await run(d, ["relay", "say", "hi"])).get("output").str ?? "");
+      const out = String(jv(await run(d, ["relay", "say", "hi"], 8000, undefined, dir)).get("output").str ?? "");
       // /bin/echo, found via the curated PATH (device()'s plugin has no
       // runtime/<arch>/bin at all, so a binDir join would have ENOENTed).
       expect(out).toContain("RELAY say hi");
@@ -546,29 +574,27 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
     return { delegate: { decideIntent: async () => { count += 1; return "always_allow"; } }, asked: () => count };
   }
 
-  function kbDevice(delegate: PolicyDelegate): DeviceAgent {
-    const plugins = loadPlugins([(() => {
-      const root = tmp();
-      fakePlugin(root, READ_WRITE_MANIFEST, '#!/bin/sh\necho "ARGV=$*"\n');
-      return root;
-    })()]);
-    return new DeviceAgent(tmp(), "Test Mac", delegate, null, undefined, null, plugins);
+  function kbDevice(delegate: PolicyDelegate): { device: DeviceAgent; dir: string } {
+    const root = tmp();
+    const dir = fakePlugin(root, READ_WRITE_MANIFEST, '#!/bin/sh\necho "ARGV=$*"\n');
+    const plugins = loadPlugins([root]);
+    return { device: new DeviceAgent(tmp(), "Test Mac", delegate, null, undefined, null, plugins), dir };
   }
 
   itSpawns(
     "answers a sibling read query from the stored rule without re-prompting, keeping the full argv in the audit and the spawn",
     async () => {
       const { delegate, asked } = countingAlwaysAllow();
-      const d = kbDevice(delegate);
+      const { device: d, dir } = kbDevice(delegate);
 
-      const first = jv(await run(d, ["kb", "get", "alpha"]));
+      const first = jv(await run(d, ["kb", "get", "alpha"], 8000, undefined, dir));
       expect(String(first.get("output").str ?? "")).toContain("ARGV=get alpha");
       expect(asked()).toBe(1);
 
       // A different query under the SAME prefix ("get") must be answered by
       // the stored rule, never re-asked — and must still run with its OWN
       // real argv, not the one that was approved first.
-      const second = jv(await run(d, ["kb", "get", "beta"]));
+      const second = jv(await run(d, ["kb", "get", "beta"], 8000, undefined, dir));
       expect(String(second.get("output").str ?? "")).toContain("ARGV=get beta");
       expect(asked()).toBe(1);
 
@@ -585,14 +611,14 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
     "still re-prompts a write with different arguments — one write's approval never authorises another",
     async () => {
       const { delegate, asked } = countingAlwaysAllow();
-      const d = kbDevice(delegate);
+      const { device: d, dir } = kbDevice(delegate);
 
-      await run(d, ["kb", "put", "alpha"]);
+      await run(d, ["kb", "put", "alpha"], 8000, undefined, dir);
       expect(asked()).toBe(1);
 
       // Same prefix ("put"), different tail: a write is never narrowed, so
       // this must be decided fresh, not answered from the first's rule.
-      await run(d, ["kb", "put", "beta"]);
+      await run(d, ["kb", "put", "beta"], 8000, undefined, dir);
       expect(asked()).toBe(2);
     },
   );
@@ -601,10 +627,9 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
     "still re-prompts a read carrying different read_paths — the rule key covers the whole capability set, not just the narrowed argv",
     async () => {
       const { delegate, asked } = countingAlwaysAllow();
-      const d = kbDevice(delegate);
+      const { device: d, dir } = kbDevice(delegate);
 
-
-      await run(d, ["kb", "get", "alpha"], 8000, ["/tmp/a"]);
+      await run(d, ["kb", "get", "alpha"], 8000, ["/tmp/a"], dir);
       expect(asked()).toBe(1);
 
       // Same argv prefix ("get"), so the narrowed rule view sees an identical
@@ -615,7 +640,7 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
       // (not just the narrowed argv) is what keeps that true. This is
       // intentional — the fix for the over-prompt this guards is narrowing
       // WHAT the rule covers, never narrowing the key itself.
-      await run(d, ["kb", "get", "alpha"], 8000, ["/tmp/b"]);
+      await run(d, ["kb", "get", "alpha"], 8000, ["/tmp/b"], dir);
       expect(asked()).toBe(2);
     },
   );

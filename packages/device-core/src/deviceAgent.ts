@@ -11,7 +11,7 @@
  * key to pin. That is provenance, not confinement — DESIGN.md §4 *The intent
  * object* owns where an intent's contents go.
  */
-import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
+import { AlwaysAllowRule, canonicalize, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
 import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
 import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
@@ -937,6 +937,20 @@ export class DeviceAgent {
     return verdict.kind === "refused" ? verdict.reason : null;
   }
 
+  /**
+   * The directory a staged non-provider plugin's own dispatch runs in, or
+   * null when argv doesn't name one — this Mac's own answer, never the
+   * caller's (see `pluginRefusal`). The mcp-server tool resolves this BEFORE
+   * the intent exists so the approval card can show the true run location
+   * as the `process.exec` capability's `cwd`, the same way it shows any
+   * other bound. `executeCommand` below then enforces that the approved
+   * `cwd` is exactly this, refusing rather than substituting one of its own
+   * when it disagrees.
+   */
+  pluginDir(argv: readonly string[]): string | null {
+    return pluginFor(this.plugins, argv[0] ?? "")?.dir ?? null;
+  }
+
   /** Every connected account's token, for the provider's fan-out. */
   private async mintAllFor(provider: Provider): Promise<MintedAccounts> {
     if (this.minter === null) throw MintError.unpaired();
@@ -1002,13 +1016,13 @@ export class DeviceAgent {
     // own command happens to share with the plugin it drives — but that
     // command was already claimed above, so this only ever resolves a
     // plugin's own dispatch, never a provider's. One execution lifecycle
-    // covers both shapes below: a plugin only ever changes WHAT gets run and
-    // WHERE (`runArgv`/`runCwd`) and refuses before either is decided; the
-    // audit, the executor call and the error handling are the ordinary
+    // covers both shapes below: a plugin only ever changes WHAT gets run
+    // (`runArgv`) and refuses before it is decided, including when the
+    // approved `cwd` disagrees with this plugin's own directory (below) —
+    // the audit, the executor call and the error handling are the ordinary
     // command's own, unchanged.
     const plugin = pluginFor(this.plugins, argv[0] ?? "");
     let runArgv = argv;
-    let runCwd = exec.cwd;
     if (plugin !== null) {
       // The manifest's own belt (`argv.read`/`argv.write`) is checked before
       // anything spawns, the same defense-in-depth shape as `providerRefusal`
@@ -1050,19 +1064,26 @@ export class DeviceAgent {
       const isStagedBinary = plugin.manifest.runtime.binaries.some((b) => b.name === entry);
       const bin = isStagedBinary ? path.join(plugin.binDir, entry) : entry;
       runArgv = [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)];
-      // exec.cwd: "plugin" resolves to the plugin's own staged directory, not
-      // any caller-supplied cwd (refused pre-intent by `pluginRefusal`) or the
-      // executor's own scratch dir. No separate read grant for the binary:
-      // the executor already reads `cwd` recursively to exec anything under
-      // it, and `plugin.binDir` is always a subdirectory of it.
-      runCwd = plugin.dir;
+      // exec.cwd: "plugin" means this plugin's own dispatch runs in its own
+      // staged directory, and nowhere else. `mcp-server`'s tool resolves and
+      // offers that directory before the intent is built (`pluginDir`), so
+      // the owner approves a card naming it — this is the enforcement half:
+      // the approved `cwd` must be exactly this, or refuse. Refusing rather
+      // than substituting `plugin.dir` here is the point of this check —
+      // the device must never grant a wider sandbox than the card it showed.
+      // No separate read grant for the binary: the executor already reads
+      // `cwd` recursively to exec anything under it, and `plugin.binDir` is
+      // always a subdirectory of it.
+      if (exec.cwd === undefined || canonicalize(exec.cwd) !== canonicalize(plugin.dir)) {
+        return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
+      }
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     try {
       const result = await this.executor.run({
         argv: runArgv,
-        cwd: runCwd,
+        cwd: exec.cwd,
         readPaths,
         writePaths,
         network,
@@ -1071,7 +1092,7 @@ export class DeviceAgent {
       });
       return this.finishRun(intent.intentId, result, {
         argv,
-        cwd: runCwd,
+        cwd: exec.cwd,
         readPaths,
         writePaths,
         automationTarget: appleEvents ? appleEventTarget(argv) : null,

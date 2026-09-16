@@ -1027,6 +1027,40 @@ describe("review findings", () => {
       expect(events(device)).not.toContain("exec_start");
     });
 
+    // The security finding this pins: the sandbox must never grant more than
+    // the card disclosed. Before this, a staged plugin's own directory was
+    // substituted at execution time and never shown to the approver at all —
+    // the card said `Run: echoer say` with no directory, while the sandbox
+    // then granted a recursive read over `plugin.dir`. Now `mcp-server`
+    // resolves that directory itself, before the intent is built, and puts
+    // it in the very capability the approver is shown — same as any other
+    // `cwd` (capability.ts's `capabilityDisplay`).
+    it("offers the plugin's own directory as the approved cwd, so the card shows the true run location", async () => {
+      const root = tempDir();
+      stagePlugin(root);
+      let cwd: string | undefined;
+      const device = new DeviceAgent(
+        tempDir(),
+        "Test Mac",
+        {
+          async decideIntent(intent) {
+            cwd = intent.capabilities.find((c) => c.kind === "process.exec")?.cwd;
+            return "deny" as const;
+          },
+        },
+        null,
+        undefined,
+        null,
+        loadPlugins([root]),
+      );
+      const server = createDomoMcpServer(device, {});
+      cleanups.push(() => server.close());
+
+      await callTool(server, "plow_run_command", { argv: ["echoer", "say"] }, AGENT);
+
+      expect(cwd).toBe(canonicalize(path.join(root, "echoer")));
+    });
+
     it.skipIf(!ON_MAC)("a staged plugin with no cwd argument still runs normally", async () => {
       const root = tempDir();
       stagePlugin(root);

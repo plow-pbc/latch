@@ -481,11 +481,21 @@ export const TOOLS: ToolSpec[] = [
       // when it isn't a provider's own command — pluginFor matches on
       // manifest.command, which for a provider-driven plugin (gog) IS the
       // provider's own command, and that path is providerRefusal's above.
+      // The device, not the caller, supplies the plugin's own directory
+      // below (`pluginDir`) — that is the one true cwd for this run, so a
+      // caller-supplied one is still refused unconditionally rather than
+      // compared against it.
       const rawCwd = a.get("cwd").str;
       if (provider === null) {
         const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd ?? undefined);
         if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
       }
+      // Resolved here, before the intent is built, so the approval card
+      // shows the owner the true run location (`Run: <argv> (in <dir>)`)
+      // instead of nothing — the device then refuses at execution if the
+      // approved cwd ever disagrees with this, rather than substituting its
+      // own answer for whatever was approved (deviceAgent.ts's executeCommand).
+      const pluginDir = provider === null ? ctx.device.pluginDir(argv) : null;
 
       // Resolve every declared or provider-derived path before it becomes the
       // bound the human approves and the sandbox enforces.
@@ -534,7 +544,11 @@ export const TOOLS: ToolSpec[] = [
       // security property — without changing what succeeds. `cwd` itself is
       // still resolved above and used to make relative provider file args
       // absolute; only the capability (and therefore the card) never sees it.
-      const execCwd = provider === null ? cwd : undefined;
+      // A staged plugin's own cwd is never the caller's `cwd` (refused
+      // above) — it is always this plugin's own directory, resolved through
+      // the same `resolved()` every other path in this call goes through so
+      // the card shows a true physical path.
+      const execCwd = provider !== null ? undefined : pluginDir !== null ? await resolved(pluginDir) : cwd;
       const capabilities: Capability[] = [
         { kind: "process.exec", argv, cwd: execCwd },
         // A provider implies network. Its whole purpose is to reach
