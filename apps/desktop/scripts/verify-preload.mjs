@@ -2189,9 +2189,10 @@ app.whenReady().then(async () => {
     await waitFor(win, `${activeTab} !== ${JSON.stringify(before)}`, `${channel} to land`);
     return win.webContents.executeJavaScript(activeTab);
   };
+  // Audit first: the probe is on Settings already, and the wait is for a move.
   const blockLanding = {
-    namesASwitch: await landing("ui:showCapabilities"),
     namesNoSwitch: await landing("ui:showAuditBlocked"),
+    namesASwitch: await landing("ui:showCapabilities"),
   };
 
   // The floating grant panel (fdaGrantFlow.ts) comes up through the same
