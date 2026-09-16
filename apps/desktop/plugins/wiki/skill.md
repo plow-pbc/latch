@@ -17,12 +17,15 @@ and the `wiki` command directly.
 
 Through Latch, read and write pages with `plow_read_file` / `plow_write_file`
 (file operations inside `~/Plow` need no approval). Run the CLI with
-`plow_run_command`. Latch sandboxes the command, so one that writes must declare
-`write_paths`, or it fails with EPERM:
+`plow_run_command`. The plugin sets `WIKI_PATH` for you, so never pass
+`--wiki` — Latch's allowlist only recognizes the subcommand at the front of
+the tail, and a `--wiki <path>` flag there is refused outright. Latch
+sandboxes the command, so one that writes must declare `write_paths`, or it
+fails with EPERM:
 
-- `plow_run_command(argv=["wiki", "--wiki", "~/Plow/wiki", "validate"])`
-- `plow_run_command(argv=["wiki", "--wiki", "~/Plow/wiki", "index"], write_paths=["~/Plow/wiki"])`
-- `plow_run_command(argv=["wiki", "--wiki", "~/Plow/wiki", "snapshot", "--author", "<your agent name>"], write_paths=["~/Plow/wiki", "~/Plow/wiki.git"])`
+- `plow_run_command(argv=["wiki", "validate"])`
+- `plow_run_command(argv=["wiki", "index"], write_paths=["~/Plow/wiki"])`
+- `plow_run_command(argv=["wiki", "snapshot", "--author", "<your agent name>"], write_paths=["~/Plow/wiki", "~/Plow/wiki.git"])`
 
 A command that runs long returns `pending` with a handle: poll
 `plow_get_result(handle)` until it is ready, then call `plow_get_output` with
