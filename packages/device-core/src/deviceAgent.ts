@@ -16,7 +16,6 @@ import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./provid
 import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
 import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
 import { resolveEnv } from "./plugins/env.js";
-import { PluginError } from "./plugins/manifest.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import fs from "node:fs";
@@ -888,30 +887,6 @@ export class DeviceAgent {
   }
 
   /**
-   * What a plugin's own `env` declarations resolve against (`resolveEnv`,
-   * `plugins/env.ts`). `secret` and `mint` both refuse by throwing
-   * `PluginError` — no secret store or mint scope is wired to a plugin's env
-   * yet, so a value handed to a plugin from either would be a silent guess
-   * rather than the real thing. `plowApiBase` is likewise unresolved (empty):
-   * nothing staged today declares `${plow_api_base}`, and a manifest that
-   * ever does gets a wrong, silent value rather than a loud refusal — call it
-   * out the day that changes, the same way `port` already refuses without a
-   * daemon.
-   */
-  private pluginEnvContext(plugin: StagedPlugin) {
-    return {
-      pluginHome: plugin.dir,
-      ownerHome: this.ownerHome,
-      port: null,
-      plowApiBase: "",
-      secret: (name: string): string => {
-        throw new PluginError(`no secret store is wired to a plugin's env yet (wanted ${name})`);
-      },
-      mint: null,
-    };
-  }
-
-  /**
    * The `PolicyEngine` rule view (see its constructor doc): an intent whose
    * `process.exec` argv resolves to a staged plugin has that one capability's
    * argv narrowed through `ruleArgv` — a read collapses to `<command>
@@ -949,11 +924,9 @@ export class DeviceAgent {
    *
    * `cwd` is a caller-supplied `plow_run_command` argument — a plugin's own
    * dispatch always execs in the plugin's own directory and never reads it,
-   * so folding it into the
-   * capability would show the owner an approval card asserting a run
-   * location that could never happen. Refused by name, same as a manifest
-   * declaring env this Mac cannot resolve (below): a silent drop would leave
-   * the caller believing it chose a cwd it didn't.
+   * so folding it into the capability would show the owner an approval card
+   * asserting a run location that could never happen. Refused by name: a
+   * silent drop would leave the caller believing it chose a cwd it didn't.
    */
   pluginRefusal(argv: readonly string[], cwd?: string): string | null {
     const plugin = pluginFor(this.plugins, argv[0] ?? "");
@@ -1075,43 +1048,10 @@ export class DeviceAgent {
       if (exec.cwd !== plugin.dir) {
         return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
       }
-      // Resolved only once the run is otherwise authorized (argv shape and
-      // cwd above): a `mint` source, once wired, does privileged work.
-      if (Object.keys(plugin.manifest.env).length > 0) {
-        // Resolved here, never logged and never folded into argv: the values
-        // go into the child's environment below and nowhere else. A `secret`
-        // or `mint` source still refuses by name — this Mac has no secret
-        // store or mint scope wired to a plugin's env yet — but a `fixed`
-        // source (wiki's WIKI_PATH among them) now resolves for real.
-        try {
-          runEnv = await resolveEnv(plugin.manifest, this.pluginEnvContext(plugin));
-        } catch (error) {
-          // Only a PluginError is an env this Mac cannot resolve — the one
-          // thing `resolveEnv`, `substitute`, and `pluginEnvContext`'s own
-          // `secret`/`mint` throw today. Anything else is a real bug in this
-          // Mac's own code, and swallowing it here would report it as an
-          // unresolvable manifest instead of surfacing it to fail loudly. It
-          // still fails loud, but never with the bug's own message: that
-          // message could name a resolved local filesystem path, and the MCP
-          // tool handler's generic catch would hand it straight to the
-          // calling agent. The detail goes to the audit log, which only the
-          // owner reads; the agent gets the same detail-free shape every
-          // other unresolvable-plugin refusal here uses.
-          if (!(error instanceof PluginError)) {
-            this.audit.record("exec_error", {
-              intentId: intent.intentId,
-              error: `${plugin.manifest.command} env resolution bug: ${error instanceof Error ? error.message : String(error)}`,
-            });
-            throw new Error(`${plugin.manifest.command} failed to resolve its env`);
-          }
-          // The underlying PluginError's own message names the placeholder or
-          // the source kind — safe today (manifest.ts's env values are typed,
-          // no caller text reaches it), but the fixed sentence is what every
-          // other unresolvable-plugin refusal here uses, so a future env
-          // source can't turn this into the one refusal that leaks detail.
-          return this.execError(intent.intentId, `${plugin.manifest.command} needs env this Mac cannot resolve yet`);
-        }
-      }
+      // Resolved here, never logged and never folded into argv: the values go
+      // into the child's environment below and nowhere else. `${owner_home}`
+      // is the owner's real home (wiki's WIKI_PATH), not the instance's.
+      runEnv = resolveEnv(plugin.manifest, { pluginHome: plugin.dir, ownerHome: this.ownerHome });
       // A relative entrypoint that NAMES A STAGED BINARY (manifest.runtime.binaries)
       // is joined under this plugin's OWN bin dir, so PATH never decides which
       // copy runs (plow-gog's own pattern). Any other relative entry names a

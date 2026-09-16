@@ -14,7 +14,7 @@ export class PluginError extends Error {
   }
 }
 
-export type EnvSource = { fixed: string } | { secret: string } | { mint: string };
+export type EnvSource = { fixed: string };
 
 export interface PluginManifest {
   name: string; // ^[a-z][a-z0-9-]{0,31}$
@@ -147,10 +147,9 @@ export function parseManifest(raw: string): PluginManifest {
   const env: Record<string, EnvSource> = {};
   for (const [key, value] of Object.entries(typedObj(m.env, "env"))) {
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) fail("env names must be UPPER_SNAKE_CASE");
-    const v = obj(value);
-    const kinds = (["fixed", "secret", "mint"] as const).filter((k) => typeof v[k] === "string");
-    if (kinds.length !== 1) fail(`env value ${key} must be one of fixed, secret or mint`);
-    env[key] = { [kinds[0]]: v[kinds[0]] } as EnvSource;
+    const fixed = obj(value).fixed;
+    if (typeof fixed !== "string") fail(`env value ${key} needs a fixed string`);
+    env[key] = { fixed };
   }
 
   const argv = typedObj(m.argv, "argv");
