@@ -94,6 +94,16 @@ describe("loadPlugins", () => {
     warn.mockRestore();
   });
 
+  it("across roots, the higher-priority root's plugin keeps a command a lower root's plugin also declares", () => {
+    const first = tmp(); const second = tmp();
+    fakePlugin(first, { ...MINIMAL, name: "fixa" }, SCRIPT);
+    fakePlugin(second, { ...MINIMAL, name: "fixb" }, SCRIPT);
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const loaded = loadPlugins([first, second]);
+    expect(loaded.map((p) => p.manifest.name)).toEqual(["fixa"]);
+    warn.mockRestore();
+  });
+
   it("refuses a manifest whose name is not its directory", () => {
     const root = tmp();
     fakePlugin(root, MINIMAL, SCRIPT);

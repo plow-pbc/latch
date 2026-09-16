@@ -1553,9 +1553,12 @@ export class DeviceAgent {
       const result = await this.executor.run({
         argv: [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)],
         cwd,
-        // The binary must be readable to exec it, and a staged plugin lives
-        // inside the .app bundle, which the profile's home grant does not reach.
-        readPaths: [...opts.readPaths, plugin.binDir],
+        // No separate grant for the binary: `executor.run` already reads
+        // `cwd` recursively (it must be readable to exec anything under it),
+        // `cwd` is `plugin.dir` above, and `plugin.binDir` is always a
+        // subdirectory of it (stage.ts's own `binDir`) — the profile's home
+        // grant doesn't reach the .app bundle, but `cwd`'s grant does.
+        readPaths: opts.readPaths,
         writePaths: opts.writePaths,
         network: opts.network,
         appleEvents: opts.appleEvents,
