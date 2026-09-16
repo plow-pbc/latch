@@ -103,6 +103,7 @@ export function parseManifest(raw: string): PluginManifest {
     const bin = obj(b);
     const bname = typedString(bin.name, "binary name") ?? "";
     if (!SLUG.test(bname)) fail("binary name must be lowercase letters, digits and dashes");
+    if (bname === "bin") fail('binary name must not be "bin" — runtime/<arch>/bin is reserved');
     const url = obj(bin.url);
     const sha256 = obj(bin.sha256);
     for (const arch of ARCHES) {
@@ -127,16 +128,24 @@ export function parseManifest(raw: string): PluginManifest {
     const src = obj(s);
     const sname = typedString(src.name, "source name") ?? "";
     if (!SLUG.test(sname)) fail("source name must be lowercase letters, digits and dashes");
+    if (sname === "bin") fail('source name must not be "bin" — runtime/<arch>/bin is reserved');
     // A leading dash would read as a git option when cloned; the installer
     // also passes `--`, this is the layer under it.
     if (typeof src.git !== "string" || !src.git || src.git.startsWith("-")) fail(`source ${sname} needs a git url`);
     if (typeof src.commit !== "string" || !/^[0-9a-f]{40}$/.test(src.commit)) {
       fail(`source ${sname} needs a 40-character commit`);
     }
-    if (src.install !== undefined && !isStrings(src.install)) fail(`source ${sname} install must be an argv array`);
+    if (src.install !== undefined && (!isStrings(src.install) || src.install.length === 0)) {
+      fail(`source ${sname} install must be a non-empty argv array`);
+    }
     return { name: sname, git: src.git, commit: src.commit, ...(src.install ? { install: src.install as string[] } : {}) };
   });
   unique(sources.map((s) => s.name), "source");
+  // A binary is extracted into `runtime/<arch>/<name>` before its executable
+  // is copied to `bin/`, and a source is cloned into that same
+  // `runtime/<arch>/<name>` directly — the same namespace, so the two lists
+  // must not collide with each other either, not just within themselves.
+  unique([...binaries.map((b) => b.name), ...sources.map((s) => s.name)], "binary/source");
 
   const exec = obj(m.exec);
   if (typeof exec.cwd !== "string" || !isStrings(exec.argv) || exec.argv.length === 0) {

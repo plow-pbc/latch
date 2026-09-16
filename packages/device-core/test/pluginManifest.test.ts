@@ -46,6 +46,18 @@ describe("parseManifest", () => {
     ["two binaries with one name", withPatch({ runtime: { binaries: [1, 2].map(() => ({ name: "b", url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } })), sources: [] } }), "binary names must be unique"],
     ["a source git url that reads as a git option", withPatch({ runtime: { binaries: [], sources: [{ name: "s", git: "--upload-pack=x", commit: "a".repeat(40) }] } }), "source s needs a git url"],
     ["two sources with one name", withPatch({ runtime: { binaries: [], sources: [1, 2].map(() => ({ name: "s", git: "https://x/s", commit: "a".repeat(40) })) } }), "source names must be unique"],
+    // Both stage into the identical runtime/<arch>/<name> namespace bin/
+    // itself lives in — a binary named "bin" would land tar's extracted
+    // contents there, and a source named "bin" would let `git clone` write
+    // an untrusted repo's ENTIRE contents straight into the one directory a
+    // child's PATH and the sandbox's reads trust.
+    ["a binary named \"bin\"", withPatch({ runtime: { binaries: [{ name: "bin", url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }], sources: [] } }), 'binary name must not be "bin" — runtime/<arch>/bin is reserved'],
+    ["a source named \"bin\"", withPatch({ runtime: { binaries: [], sources: [{ name: "bin", git: "https://x/s", commit: "a".repeat(40) }] } }), 'source name must not be "bin" — runtime/<arch>/bin is reserved'],
+    ["a binary and a source sharing one name", withPatch({ runtime: {
+      binaries: [{ name: "shared", url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }],
+      sources: [{ name: "shared", git: "https://x/s", commit: "a".repeat(40) }],
+    } }), "binary/source names must be unique"],
+    ["a source with an empty install argv", withPatch({ runtime: { binaries: [], sources: [{ name: "s", git: "https://x/s", commit: "a".repeat(40), install: [] }] } }), "source s install must be a non-empty argv array"],
     ["an exec.cwd that is not a runtime entry", withPatch({ exec: { cwd: "../..", argv: ["x"] } }), "exec.cwd must be plugin or a source name"],
     ["an exec.argv[0] that climbs out of the staged bin", withPatch({ exec: { cwd: "plugin", argv: ["../../../etc/passwd"] } }), "exec.argv[0] must not contain a .. segment"],
     ["a skill path outside the repo", withPatch({ skill: "/etc/passwd" }), "skill must be a path inside the plugin"],
