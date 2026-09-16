@@ -57,15 +57,15 @@ exactly the approved capabilities**".
   same reason writes and network do: an Apple event is a side effect — a sent message — that a
   15-minute kill must not truncate, so such a run is never reaped and keeps the housekeeping writes.)
 
-- **`(allow ipc-sysv-sem)`** — every child may create and operate SysV semaphores. Added for the
-  wiki plugin: a PyInstaller onefile binary on macOS syncs its bootloader with the Python child
-  through one, and `semctl` under `(deny default)` failed before Python started. Semaphores only:
-  seatbelt gates the operations rather than creation (`shmget`, `msgget` and `semget` all return an
-  id under any profile), and attaching SysV shared memory, sending on a message queue, and removing
-  either stay denied. SBPL has no filter for this
-  operation, so the grant is the host's whole SysV semaphore namespace, not the child's own sets: a
-  child can reach a semaphore an unrelated process created. Accepted, like `signal (target
-  children)` above it.
+- **`(allow ipc-sysv-sem)`, for a staged plugin's own binary only** — a PyInstaller onefile binary on
+  macOS (the wiki plugin) syncs its bootloader with the Python child through a SysV semaphore, and
+  `semctl` under `(deny default)` failed before Python started. The rule is emitted only when the
+  dispatch runs a plugin's own hash-pinned binary (`sysvSemaphores` on `Executor.run`); an ordinary
+  approved command never gets it. Semaphores only: seatbelt gates the operations rather than
+  creation (`shmget`, `msgget` and `semget` all return an id under any profile), and attaching SysV
+  shared memory, sending on a message queue, and removing either stay denied. SBPL has no filter for
+  this operation, so for that one binary the grant is the host's whole SysV semaphore namespace, not
+  its own sets.
 
 - **the declared-read loop** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.

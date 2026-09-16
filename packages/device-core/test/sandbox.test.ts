@@ -72,22 +72,27 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
 
   // A PyInstaller onefile binary (the wiki plugin) coordinates its bootloader
   // and the Python child through a SysV semaphore; `semctl` is what the
-  // profile used to deny, so a create-set-remove round trip is the behavior
-  // that has to hold, not just `semget` — seatbelt gates the operations, not
-  // creation, so every `*get` returns an id under any profile. The grant is
-  // semaphores ONLY: a shared-memory segment and a message queue made OUTSIDE
-  // the sandbox (removal is gated too, so the child could never clean up its
-  // own) must still refuse attach and send inside it, so a future
-  // `ipc-sysv-*` generalization fails here.
+  // profile denies, so a create-set-remove round trip is the behavior that
+  // has to hold when `sysvSemaphores` is on, and must still be refused when
+  // it is off, which is every ordinary command. Seatbelt gates the
+  // operations, not creation — every `*get` returns an id under any profile
+  // — so all three objects are made OUTSIDE the sandbox (removal is gated
+  // too, and a child that cannot remove what it made leaks it into the
+  // host's namespace) and removed there afterwards. The grant is semaphores
+  // ONLY: shared memory must still refuse attach and the queue must still
+  // refuse send, so a future `ipc-sysv-*` generalization fails here.
   const perl = (script: string): string =>
     execFileSync("/usr/bin/perl", ["-e", script], { encoding: "utf8" }).trim();
-  it("lets a child use a SysV semaphore, and still refuses shared memory and message queues", async () => {
-    const [shm, queue] = perl(
-      'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT); print shmget(IPC_PRIVATE, 4096, 0600|IPC_CREAT), " ", msgget(IPC_PRIVATE, 0600|IPC_CREAT)',
+  it.each([
+    { sysvSemaphores: true, semaphore: "SEM_OK" },
+    { sysvSemaphores: false, semaphore: "SEM_DENIED" },
+  ])("sysvSemaphores=$sysvSemaphores: $semaphore, and shared memory and message queues refused either way", async ({ sysvSemaphores, semaphore }) => {
+    const [sem, shm, queue] = perl(
+      'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT); print semget(IPC_PRIVATE, 1, 0600|IPC_CREAT), " ", shmget(IPC_PRIVATE, 4096, 0600|IPC_CREAT), " ", msgget(IPC_PRIVATE, 0600|IPC_CREAT)',
     ).split(" ");
     cleanups.push(() => {
       perl(
-        `use IPC::SysV qw(IPC_RMID); my @failed; shmctl(${shm}, IPC_RMID, 0) or push @failed, "shmctl: $!"; msgctl(${queue}, IPC_RMID, 0) or push @failed, "msgctl: $!"; die "@failed" if @failed`,
+        `use IPC::SysV qw(IPC_RMID); my @failed; semctl(${sem}, 0, IPC_RMID, 0) or push @failed, "semctl: $!"; shmctl(${shm}, IPC_RMID, 0) or push @failed, "shmctl: $!"; msgctl(${queue}, IPC_RMID, 0) or push @failed, "msgctl: $!"; die "@failed" if @failed`,
       );
     });
     const executor = new Executor(tempDir());
@@ -95,7 +100,7 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
       argv: [
         "/usr/bin/perl",
         "-e",
-        'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT IPC_RMID SETVAL); my $id = semget(IPC_PRIVATE, 1, 0600|IPC_CREAT); defined $id or die "semget: $!"; semctl($id, 0, SETVAL, 1) or die "semctl: $!"; semctl($id, 0, IPC_RMID, 0); print "SEM_OK\n"; ' +
+        `use IPC::SysV qw(SETVAL); print semctl(${sem}, 0, SETVAL, 1) ? "SEM_OK\n" : "SEM_DENIED\n"; ` +
           `my $b; shmread(${shm}, $b, 0, 4) and die "shm attach succeeded"; print "SHM_DENIED\n"; ` +
           `msgsnd(${queue}, pack("l! a*", 1, "x"), 0) and die "msgsnd succeeded"; print "MSG_DENIED\n"`,
       ],
@@ -103,10 +108,11 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
       writePaths: [],
       network: false,
       appleEvents: false,
+      sysvSemaphores,
       waitMs: 10_000,
     });
     expect(result.exitCode).toBe(0);
-    expect(result.output.toString()).toContain("SEM_OK");
+    expect(result.output.toString()).toContain(semaphore);
     expect(result.output.toString()).toContain("SHM_DENIED");
     expect(result.output.toString()).toContain("MSG_DENIED");
   });

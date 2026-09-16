@@ -1023,6 +1023,7 @@ export class DeviceAgent {
     const plugin = pluginFor(this.plugins, argv[0] ?? "");
     let runArgv = argv;
     let runEnv: Record<string, string> | undefined;
+    let runSysvSemaphores = false;
     if (plugin !== null) {
       // The manifest's own belt (`argv.read`/`argv.write`) is checked before
       // anything spawns, the same defense-in-depth shape as `providerRefusal`
@@ -1063,6 +1064,9 @@ export class DeviceAgent {
       const isStagedBinary = plugin.manifest.runtime.binaries.some((b) => b.name === entry);
       const bin = isStagedBinary ? path.join(plugin.binDir, entry) : entry;
       runArgv = [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)];
+      // The plugin's own hash-pinned binary, and nothing else — see the
+      // executor option for why.
+      runSysvSemaphores = isStagedBinary;
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
@@ -1074,6 +1078,7 @@ export class DeviceAgent {
         writePaths,
         network,
         appleEvents,
+        sysvSemaphores: runSysvSemaphores,
         waitMs,
         env: runEnv,
       });
