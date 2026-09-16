@@ -584,11 +584,18 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     fs.writeFileSync(file, "x");
     const inner = scriptedProbes({ openAsApp: { [file]: "hung" }, fullDiskAccess: false });
     // The probe answers only after the run has ended, so its verdict is
-    // always about a run that is gone — the case, not a 400ms guess at it.
+    // always about a run that is gone — the case, not a 400ms guess at it —
+    // and records that it ran, so a run that ends inside wait_ms cannot pass
+    // the test by skipping the case.
     let d!: DeviceAgent;
+    let probed = false;
     const slow: HostProbes = {
       ...inner,
-      openAsApp: async (p) => { await untilEvent(d, "exec_end"); return inner.openAsApp(p); },
+      openAsApp: async (p) => {
+        probed = true;
+        await untilEvent(d, "exec_end");
+        return inner.openAsApp(p);
+      },
     };
     d = device(home, slow);
     const response = jv(
@@ -599,6 +606,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     );
     // The call answers with where the run is now: over, cleanly.
     expect(response.get("status").str).toBe("completed");
+    expect(probed).toBe(true);
     expect(response.get("exit_code").int).toBe(0);
     expect(response.get("diagnosis").isNull).toBe(true);
     const polled = jv(await d.getOutput(response.get("handle").str!));

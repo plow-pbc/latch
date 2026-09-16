@@ -389,7 +389,7 @@ describe("agent identity", () => {
 });
 
 describe("the deferred-result contract (§4.3)", () => {
-  /** A budget short enough that a slow approval always outruns it. */
+  /** A budget short enough that an approval still outstanding always outruns it. */
   const SHORT = 40;
 
   async function deferredRead(delegate: PolicyDelegate, auth: RelayAuth = AGENT, budgetMs = SHORT) {
