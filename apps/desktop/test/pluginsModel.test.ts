@@ -4,10 +4,13 @@
  * and that the hit count rides alongside `needs-setup` rather than being a
  * status of its own.
  */
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseManifest, type PluginManifest } from "@domo/device-core";
 import { blockedGroups } from "../src/capabilitiesModel.js";
-import { permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge, type PluginsInput } from "../src/pluginsModel.js";
+import { blockDestination, permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge, type PluginsInput } from "../src/pluginsModel.js";
 import { inventory } from "./hostFixtures.js";
 
 const manifest = (requires: object, name = "wiki"): PluginManifest =>
@@ -119,4 +122,46 @@ it("names every plugin that declares a permission, off ones included, and omits 
     { manifest: manifest({}, "plain") },
   ];
   expect(permissionUsers(plugins)).toEqual({ contacts: ["wiki", "photo"], calendars: ["wiki"] });
+});
+
+describe("where a block by this Mac sends the owner", () => {
+  // The off one is still declared: a switch a disabled plugin needs is still
+  // that plugin's, and Plugins is where turning it back on lives.
+  const staged = [
+    { manifest: manifest({ permissions: ["calendars"] }) },
+    { manifest: manifest({ permissions: ["photos"] }, "off-one") },
+  ];
+  it.each([
+    { what: "a switch a plugin declares", permission: "calendars", to: "plugins" },
+    { what: "a switch only a disabled plugin declares", permission: "photos", to: "plugins" },
+    { what: "a switch nobody declares (the built-in skill's Contacts)", permission: "contacts", to: "settings" },
+    { what: "no switch at all (a locked file)", permission: null, to: "audit" },
+  ])("sends $what to $to", ({ permission, to }) => {
+    expect(blockDestination(permission, staged)).toBe(to);
+  });
+});
+
+/**
+ * The shipped manifests, read off disk through the real parser: the readiness
+ * graph is only as good as what a manifest declares, and a plugin that
+ * declares nothing reads Ready on a Mac it cannot work on. gog mints Google
+ * credentials on every non-help call, so a disconnected owner must be told.
+ */
+describe("the shipped plugins", () => {
+  const shipped = (name: string): PluginManifest =>
+    parseManifest(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", name, "latch-plugin.json"), "utf8"));
+
+  it.each([
+    { connected: [] as string[], status: "needs-setup", unmet: [{ kind: "account", id: "google", action: "Connect Google" }] },
+    { connected: ["google"], status: "ready", unmet: [] },
+  ])("reads gog as $status with connected accounts $connected", ({ connected, status, unmet }) => {
+    const [row] = pluginRows({
+      plugins: [{ manifest: shipped("gog"), enabled: true }],
+      inventory: inventory(),
+      connectedAccounts: connected,
+      availablePaths: [],
+      blocked: {},
+    });
+    expect(row).toMatchObject({ name: "gog", status, unmet });
+  });
 });
