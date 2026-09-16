@@ -908,6 +908,94 @@ describe("review findings", () => {
       expect(decided).toBe(false);
       expect(events(device)).not.toContain("exec_start");
     });
+
+    // executePlugin (deviceAgent.ts) always execs in the plugin's own
+    // directory — a caller-supplied cwd is never read. Folding it into the
+    // capability anyway would show the owner an approval card claiming the
+    // run happens somewhere it never will. Refused by name, same as env
+    // above, rather than silently dropped: a silent drop would let an agent
+    // believe it chose a cwd it didn't.
+    it("refuses a caller-supplied cwd for a plugin before an intent is ever built", async () => {
+      const root = tempDir();
+      stagePlugin(root);
+      let decided = false;
+      const home = tempDir();
+      const device = new DeviceAgent(
+        home,
+        "Test Mac",
+        {
+          async decideIntent() {
+            decided = true;
+            return "allow_once" as const;
+          },
+        },
+        null,
+        undefined,
+        null,
+        loadPlugins([root]),
+      );
+      const server = createDomoMcpServer(device, {});
+      cleanups.push(() => server.close());
+
+      const { isError, payload } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["echoer", "say"], cwd: home },
+        AGENT,
+      );
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("cwd");
+      expect(decided).toBe(false);
+      expect(events(device)).not.toContain("exec_start");
+    });
+
+    it.skipIf(!ON_MAC)("a staged plugin with no cwd argument still runs normally", async () => {
+      const root = tempDir();
+      stagePlugin(root);
+      const home = tempDir();
+      const device = new DeviceAgent(
+        home,
+        "Test Mac",
+        { async decideIntent() { return "allow_once" as const; } },
+        null,
+        undefined,
+        null,
+        loadPlugins([root]),
+      );
+      const server = createDomoMcpServer(device, {});
+      cleanups.push(() => server.close());
+
+      const { isError } = await callTool(server, "plow_run_command", { argv: ["echoer", "say"] }, AGENT);
+
+      expect(isError).toBe(false);
+      expect(events(device)).toContain("exec_start");
+    });
+
+    it.skipIf(!ON_MAC)("a non-plugin command's cwd is unaffected", async () => {
+      const home = tempDir();
+      const device = new DeviceAgent(
+        home,
+        "Test Mac",
+        { async decideIntent() { return "allow_once" as const; } },
+        null,
+        undefined,
+        null,
+        [],
+      );
+      const server = createDomoMcpServer(device, {});
+      cleanups.push(() => server.close());
+
+      const { isError } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["/bin/pwd"], cwd: home },
+        AGENT,
+      );
+
+      expect(isError).toBe(false);
+      expect(events(device)).toContain("exec_start");
+    });
   });
 });
 

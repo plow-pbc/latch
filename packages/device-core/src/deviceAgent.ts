@@ -895,10 +895,19 @@ export class DeviceAgent {
    * owner is never shown an approval card for an invocation `executePlugin`
    * would then refuse at execution time. This device checks again there
    * regardless: it is the chokepoint and cannot rely on the caller.
+   *
+   * `cwd` is a caller-supplied `plow_run_command` argument, never the
+   * plugin's own `manifest.exec.cwd` — `executePlugin` always execs in the
+   * plugin's own directory and never reads it, so folding it into the
+   * capability would show the owner an approval card asserting a run
+   * location that could never happen. Refused by name, same as a manifest
+   * declaring env this Mac cannot resolve (below): a silent drop would leave
+   * the caller believing it chose a cwd it didn't.
    */
-  pluginRefusal(argv: readonly string[]): string | null {
+  pluginRefusal(argv: readonly string[], cwd?: string): string | null {
     const plugin = pluginFor(this.plugins, argv[0] ?? "");
     if (plugin === null) return null;
+    if (cwd !== undefined) return "cwd is refused for a plugin; it always runs in its own directory";
     const verdict = classifyArgv(plugin.manifest, argv);
     return verdict.kind === "refused" ? verdict.reason : null;
   }
