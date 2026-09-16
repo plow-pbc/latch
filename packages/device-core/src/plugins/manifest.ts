@@ -56,7 +56,7 @@ function fail(message: string): never {
   throw new PluginError(message);
 }
 const isInside = (v: unknown): v is string => typeof v === "string" && INSIDE.test(v);
-/** One name per binary: a duplicate would make `runtime/<name>` ambiguous. */
+/** One name per binary: a duplicate would make `runtime/<arch>/bin/<name>` ambiguous. */
 function unique(names: string[], what: string): void {
   if (new Set(names).size !== names.length) fail(`${what} names must be unique`);
 }

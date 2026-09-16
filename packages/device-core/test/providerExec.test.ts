@@ -512,10 +512,10 @@ describe("a staged non-provider plugin through the exec path", () => {
    * leaving the owner nothing to debug from.
    *
    * Nothing throws a plain `Error` out of `resolveEnv` today — `substitute`,
-   * `secret` and `mint` all throw `PluginError` — so that bug is injected.
-   * `pluginEnvContext` reads `plugin.dir` inside the same `try`, which is
-   * where a path-resolution bug would actually live and what would actually
-   * put a local path in the message, so that is where it goes in.
+   * `secret` and `mint` all throw `PluginError` — so that bug is injected
+   * into `pluginEnvContext`, the one place inside that `try` that reads this
+   * Mac's own paths: where a path-resolution bug would actually live and
+   * what would actually put a local path in the message.
    */
   const SENTINEL = "/Users/somebody/Library/Application-Support/Plow-Latch/staged/envy";
 
@@ -555,15 +555,15 @@ describe("a staged non-provider plugin through the exec path", () => {
       "#!/bin/sh\necho SHOULD_NOT_RUN\n",
     );
     const plugins = loadPlugins([root]);
-    const cwd = plugins[0]!.dir; // read before the sabotage below makes it throw
+    const cwd = plugins[0]!.dir;
+    const d = device(null, plugins);
     if (row.breakEnvResolution) {
-      Object.defineProperty(plugins[0]!, "dir", {
-        get(): string {
+      Object.defineProperty(d, "pluginEnvContext", {
+        value: (): never => {
           throw new Error(`ENOENT: no such file or directory, scandir '${SENTINEL}'`);
         },
       });
     }
-    const d = device(null, plugins);
     // A refusal comes back as a response and a bug rethrows, but both reach
     // the agent through mcp-server's one tool handler, so both are the same
     // leak surface — read as one string either way.
@@ -589,36 +589,41 @@ describe("a staged non-provider plugin through the exec path", () => {
   });
 
   // The gap those refusals leave open: a `fixed` env source (wiki's
-  // WIKI_PATH among them) resolves for real and reaches the child's
-  // environment — and ONLY there. Proven without printing the value itself
-  // (providerExec's own token tests use the same shape): the script reports
-  // its length, never its bytes, so a leak into argv, the audit log, or the
-  // response would show up as the wrong length or the value itself, either
-  // of which fails the assertions below.
+  // WIKI_PATH among them) resolves for real — `${owner_home}` to the home
+  // THIS device was built with, not the plugin's own directory and not some
+  // other Mac's — and reaches the child's environment, and ONLY there.
+  // Proven end to end through the real DeviceAgent, without printing the
+  // value itself (providerExec's own token tests use the same shape): the
+  // script reports its length, never its bytes, so a leak into argv, the
+  // audit log, or the response would show up as the wrong length or the
+  // value itself, either of which fails the assertions below.
   itSpawns(
-    "resolves a fixed env source into the child's environment, and nowhere else",
+    "resolves a fixed env source, ${owner_home} included, into the child's environment and nowhere else",
     async () => {
-      const FIXED = "not-a-secret-fixed-value";
+      const ownerHome = tmp();
+      const resolved = path.join(ownerHome, "Plow", "wikish");
       const root = tmp();
       fakePlugin(
         root,
         {
           name: "envy", version: "test", command: "envy",
           runtime: { binaries: [] },
-          exec: { argv: ["/bin/sh", "-c", 'echo "LEN=${#ENVY_TOKEN}"'] },
-          env: { ENVY_TOKEN: { fixed: FIXED } },
+          exec: { argv: ["/bin/sh", "-c", 'echo "LEN=${#ENVY_PATH}"'] },
+          env: { ENVY_PATH: { fixed: "${owner_home}/Plow/wikish" } },
           argv: { read: [["say"]], write: [] },
         },
         "#!/bin/sh\n",
       );
       const plugins = loadPlugins([root]);
-      const d = device(null, plugins);
+      const d = new DeviceAgent(
+        tmp(), "Test Mac", new HeadlessPolicy({ intent: "allow_once" }), null, ownerHome, null, plugins,
+      );
       const response = await run(d, ["envy", "say", "hi"], 8000, undefined, plugins[0]!.dir);
       const out = String(jv(response).get("output").str ?? "");
-      expect(out).toContain(`LEN=${FIXED.length}`);
-      expect(out).not.toContain(FIXED);
-      expect(JSON.stringify(response)).not.toContain(FIXED);
-      expect(fs.readFileSync(d.audit.file, "utf8")).not.toContain(FIXED);
+      expect(out).toContain(`LEN=${resolved.length}`);
+      expect(out).not.toContain(resolved);
+      expect(JSON.stringify(response)).not.toContain(resolved);
+      expect(fs.readFileSync(d.audit.file, "utf8")).not.toContain(resolved);
     },
   );
 });

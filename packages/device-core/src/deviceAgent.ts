@@ -1057,6 +1057,26 @@ export class DeviceAgent {
       // already checked.
       const verdict = classifyArgv(plugin.manifest, argv);
       if (verdict.kind === "refused") return this.execError(intent.intentId, verdict.reason);
+      // A plugin's own dispatch runs in its own staged directory, and nowhere
+      // else. `mcp-server`'s tool offers that directory before the intent is
+      // built (`pluginDir`), so the owner approves a card naming it — this is
+      // the enforcement half: the approved `cwd` must be exactly this, or
+      // refuse. Refusing rather than substituting `plugin.dir` here is the
+      // point of this check — the device must never grant a wider sandbox
+      // than the card it showed.
+      // No separate read grant for the binary: the executor already reads
+      // `cwd` recursively to exec anything under it, and `plugin.binDir` is
+      // always a subdirectory of it.
+      // `plugin.dir` is canonicalized once, at load, in registry.ts — the
+      // one owner of that fact. mcp-server's `pluginDir` hands back that
+      // same canonical string unchanged, so plain equality refuses no less
+      // than resolve-and-compare would: a non-canonical spelling only fails
+      // closed instead of passing, never the reverse.
+      if (exec.cwd !== plugin.dir) {
+        return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
+      }
+      // Resolved only once the run is otherwise authorized (argv shape and
+      // cwd above): a `mint` source, once wired, does privileged work.
       if (Object.keys(plugin.manifest.env).length > 0) {
         // Resolved here, never logged and never folded into argv: the values
         // go into the child's environment below and nowhere else. A `secret`
@@ -1103,24 +1123,6 @@ export class DeviceAgent {
       const isStagedBinary = plugin.manifest.runtime.binaries.some((b) => b.name === entry);
       const bin = isStagedBinary ? path.join(plugin.binDir, entry) : entry;
       runArgv = [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)];
-      // A plugin's own dispatch runs in its own staged directory, and nowhere
-      // else. `mcp-server`'s tool offers that directory before the intent is
-      // built (`pluginDir`), so the owner approves a card naming it — this is
-      // the enforcement half: the approved `cwd` must be exactly this, or
-      // refuse. Refusing rather than substituting `plugin.dir` here is the
-      // point of this check — the device must never grant a wider sandbox
-      // than the card it showed.
-      // No separate read grant for the binary: the executor already reads
-      // `cwd` recursively to exec anything under it, and `plugin.binDir` is
-      // always a subdirectory of it.
-      // `plugin.dir` is canonicalized once, at load, in registry.ts — the
-      // one owner of that fact. mcp-server's `pluginDir` hands back that
-      // same canonical string unchanged, so plain equality refuses no less
-      // than resolve-and-compare would: a non-canonical spelling only fails
-      // closed instead of passing, never the reverse.
-      if (exec.cwd !== plugin.dir) {
-        return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
-      }
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
