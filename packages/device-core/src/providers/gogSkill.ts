@@ -105,6 +105,11 @@ All-day (date-only) events skip the check.
 \`--account\` and \`--confirm-conflict\` are plow-gog's own arguments and never
 reach Google; everything else is the CLI's ordinary grammar.
 
+**Attendees are notified.** A calendar create, update or delete runs with
+\`--send-updates all\` unless you pass your own mode, so an invite you add is
+actually sent. A video call needs \`--with-meet\` — without it the event has no
+link to join, so do not call it a video call.
+
 ## What you can reach
 
 Most of Gmail and Calendar. **Drive, Docs, Sheets and the rest of the CLI are

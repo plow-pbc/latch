@@ -78,6 +78,18 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
  */
 const CONFLICT_GATED: ReadonlySet<string> = new Set(["create", "add", "new"]);
 
+/**
+ * The calendar writes that take `--send-updates` (create/update/delete and
+ * their aliases at 0.36.0). gog's own default is `none`, so an invite to
+ * someone outside the account went out silent and the agent said "invite's
+ * out" (#421). Attendees live on the event for update/delete, not the argv,
+ * and Google emails nobody when there are none — so every write gets `all`
+ * unless the agent chose a mode.
+ */
+const NOTIFYING: ReadonlySet<string> = new Set([
+  ...CONFLICT_GATED, "update", "edit", "set", "delete", "rm", "del", "remove",
+]);
+
 /** The `--max` a calendar event list gets when the agent names none — per account. */
 export const CALENDAR_EVENTS_MAX = "100";
 
@@ -233,6 +245,9 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
     return { kind: "refused", reason: "this command runs on one account: --account takes one email here" };
   }
 
+  if (group === "calendar" && verb !== undefined && NOTIFYING.has(verb) && flagValue(stripped, "send-updates") === null) {
+    gogArgv.push("--send-updates", "all");
+  }
   let conflictCheck: { from: string; to: string } | null = null;
   if (group === "calendar" && verb !== undefined && CONFLICT_GATED.has(verb)) {
     const from = flagValue(stripped, "from");

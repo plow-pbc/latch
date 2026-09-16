@@ -239,6 +239,7 @@ describe("planPlowGog", () => {
         gogArgv: [
           "plow-gog", "calendar", "create", "primary", "--summary", "X",
           "--from", "2026-08-28T10:00:00-07:00", "--to", "2026-08-28T11:00:00-07:00",
+          "--send-updates", "all",
         ],
         account: null,
         confirmConflict: false,
@@ -253,7 +254,7 @@ describe("planPlowGog", () => {
       argv: ["plow-gog", "calendar", "update", "primary", "e1", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
       expected: {
         kind: "single",
-        gogArgv: ["plow-gog", "calendar", "update", "primary", "e1", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
+        gogArgv: ["plow-gog", "calendar", "update", "primary", "e1", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z", "--send-updates", "all"],
         account: null,
         confirmConflict: false,
         conflictCheck: null,
@@ -264,7 +265,7 @@ describe("planPlowGog", () => {
       argv: ["plow-gog", "calendar", "create", "primary", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
       expected: {
         kind: "single",
-        gogArgv: ["plow-gog", "calendar", "create", "primary", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
+        gogArgv: ["plow-gog", "calendar", "create", "primary", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z", "--send-updates", "all"],
         account: null,
         confirmConflict: false,
         conflictCheck: { from: "2026-08-28T10:00:00Z", to: "2026-08-28T11:00:00Z" },
@@ -275,7 +276,7 @@ describe("planPlowGog", () => {
       argv: ["plow-gog", "calendar", "create", "primary", "--summary", "X", "--from", "2026-08-28", "--to", "2026-08-29"],
       expected: {
         kind: "single",
-        gogArgv: ["plow-gog", "calendar", "create", "primary", "--summary", "X", "--from", "2026-08-28", "--to", "2026-08-29"],
+        gogArgv: ["plow-gog", "calendar", "create", "primary", "--summary", "X", "--from", "2026-08-28", "--to", "2026-08-29", "--send-updates", "all"],
         account: null,
         confirmConflict: false,
         conflictCheck: null,
@@ -286,7 +287,23 @@ describe("planPlowGog", () => {
       argv: ["plow-gog", "calendar", "delete", "primary", "e1"],
       expected: {
         kind: "single",
-        gogArgv: ["plow-gog", "calendar", "delete", "primary", "e1"],
+        gogArgv: ["plow-gog", "calendar", "delete", "primary", "e1", "--send-updates", "all"],
+        account: null,
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
+      // gog's own default is `none`: an invite to someone outside the account
+      // went out silent, and a "video call" had no video (#421). Attendees
+      // are on the event for update/delete, not the argv, and Google emails
+      // nobody when there are none — so every write gets `all` unless the
+      // agent chose.
+      why: "keeps the agent's own --send-updates on a calendar write",
+      argv: ["plow-gog", "cal", "rm", "primary", "e1", "--send-updates=none"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "cal", "rm", "primary", "e1", "--send-updates=none"],
         account: null,
         confirmConflict: false,
         conflictCheck: null,
@@ -303,6 +320,7 @@ describe("planPlowGog", () => {
         gogArgv: [
           "plow-gog", "calendar", "create", "primary", "--summary", "X",
           "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
+          "--send-updates", "all",
         ],
         account: null,
         confirmConflict: true,
