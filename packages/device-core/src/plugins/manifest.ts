@@ -227,8 +227,11 @@ export function parseManifest(raw: string): PluginManifest {
     paths: strList(req.paths, "requires.paths").map((e) => {
       if (!e) fail("requires.paths entries must not be empty");
       // eslint-disable-next-line no-control-regex
-      if (/[\u0000-\u001f\u007f]/.test(e)) fail("requires.paths entries must not contain control characters");
-      // Rooted at the owner's home or the filesystem: a bare relative segment
+      if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(e)) fail("requires.paths entries must not contain control characters");
+      // The set is wider than C0 on purpose: NEL, LINE SEPARATOR and PARAGRAPH
+    // SEPARATOR break a line in text layout as surely as \n does, so blocking
+    // only \n would leave the same forged second line one character away.
+    // Rooted at the owner's home or the filesystem: a bare relative segment
       // has no base to resolve against, and `..` names a path by where it is
       // NOT. Every other path field in this parser is shape-checked; this one
       // differs only in being allowed outside the plugin's tree.
