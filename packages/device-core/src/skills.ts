@@ -84,7 +84,7 @@ export function parseFrontmatter(raw: string): Skill | null {
   let name = "";
   let description = "";
   for (const line of m[1].split("\n")) {
-    const kv = line.match(/^(name|description):\s*(.*)$/);
+    const kv = line.match(/^(name|description):(.*)$/);
     if (kv) {
       if (kv[1] === "name") name = kv[2].trim();
       else description = kv[2].trim();
