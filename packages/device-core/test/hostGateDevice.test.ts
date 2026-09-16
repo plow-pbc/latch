@@ -64,6 +64,11 @@ function intentFor(d: DeviceAgent, request: string, capabilities: Capability[]):
 }
 
 const events = (d: DeviceAgent) => d.audit.entries().map((e) => jv(e as JSONValue).get("event").str);
+/** The audit log carries `event` — bounded, for a run that ends on its own clock. */
+const untilEvent = async (d: DeviceAgent, event: string) => {
+  const done = Date.now() + 5_000;
+  while (!events(d).includes(event) && Date.now() < done) await new Promise((r) => setTimeout(r, 50));
+};
 const lastBlocked = (d: DeviceAgent) =>
   jv([...d.audit.entries()].reverse().find((e) => jv(e as JSONValue).get("event").str === "host_permission_blocked") ?? null);
 
@@ -564,8 +569,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
       fs.closeSync(fd);
     }
     // Once, and only once: the exit finds nothing left to clear.
-    const done = Date.now() + 5_000;
-    while (!events(d).includes("exec_end") && Date.now() < done) await new Promise((r) => setTimeout(r, 50));
+    await untilEvent(d, "exec_end");
     expect(events(d).filter((e) => e === "host_permission_cleared")).toHaveLength(1);
   });
 
@@ -579,11 +583,14 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const file = path.join(home, "Desktop", "notes.txt");
     fs.writeFileSync(file, "x");
     const inner = scriptedProbes({ openAsApp: { [file]: "hung" }, fullDiskAccess: false });
+    // The probe answers only after the run has ended, so its verdict is
+    // always about a run that is gone — the case, not a 400ms guess at it.
+    let d!: DeviceAgent;
     const slow: HostProbes = {
       ...inner,
-      openAsApp: async (p) => { await new Promise((r) => setTimeout(r, 400)); return inner.openAsApp(p); },
+      openAsApp: async (p) => { await untilEvent(d, "exec_end"); return inner.openAsApp(p); },
     };
-    const d = device(home, slow);
+    d = device(home, slow);
     const response = jv(
       await d.handleIntent(
         intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; cat ${JSON.stringify(file)}`], cwd: home }, { kind: "fs.read", paths: [file] }]),
