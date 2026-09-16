@@ -402,11 +402,14 @@ describe("a queued dialog is answered by a rule stored ahead of it", () => {
     fs.rmSync(rulesDir, { recursive: true, force: true });
   });
 
+  /** Poll a predicate for up to ~200ms — real I/O sits between a request and its dialog. */
+  const until = async (ready: () => boolean) => {
+    for (let i = 0; i < 200 && !ready(); i++) await new Promise((r) => setTimeout(r, 1));
+  };
+
   /** The first dialog is on screen. Its opening awaits the Plow-folder
    * confinement check, which is real file-system I/O, so wait rather than tick. */
-  const firstShown = async (shown: string[]) => {
-    for (let i = 0; i < 200 && shown.length === 0; i++) await new Promise((r) => setTimeout(r, 1));
-  };
+  const firstShown = (shown: string[]) => until(() => shown.length > 0);
 
   /** The intent a second agent call makes: same bound, so the same rule key. */
   const twin = () => intent();
@@ -468,14 +471,14 @@ describe("a queued dialog is answered by a rule stored ahead of it", () => {
     };
     /** The human answers the dialog on screen — once there is one. */
     const release = async () => {
-      for (let i = 0; i < 200 && open.length === 0; i++) await new Promise((r) => setTimeout(r, 1));
+      await until(() => open.length > 0);
       const answer = open.shift();
       if (!answer) throw new Error("no dialog to answer");
       answer();
     };
     /** `n` requests are in line (or on screen): their confinement I/O is done. */
     const queued = async (n: number) => {
-      for (let i = 0; i < 200 && arrived < n; i++) await new Promise((r) => setTimeout(r, 1));
+      await until(() => arrived >= n);
       expect(arrived).toBe(n);
     };
     return { d, shown, release, queued };
