@@ -577,6 +577,11 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   color: var(--success-text);
 }
 
+/* Privacy opens on the verified line; it leads the screen instead of trailing a code. */
+.step-inner > .waiting-status.verified {
+  margin: 0 0 22px;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
