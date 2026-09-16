@@ -1550,9 +1550,12 @@ function pluginDescription(name: string): string | null {
 /** The declared requirement paths that are really there. `~` is the OWNER's
  *  home, the same one every skill names, not the app's DOMO_HOME. */
 async function availablePaths(declared: readonly string[]): Promise<string[]> {
-  const there = await Promise.all(declared.map((d) =>
+  // Deduped first: two plugins requiring the same path is the normal case,
+  // and the caller reads the result as a set either way.
+  const unique = [...new Set(declared)];
+  const there = await Promise.all(unique.map((d) =>
     fs.stat(d.startsWith("~/") ? path.join(os.homedir(), d.slice(2)) : d).then(() => true, () => false)));
-  return declared.filter((_, i) => there[i]);
+  return unique.filter((_, i) => there[i]);
 }
 
 /** The whole tab, fresh: what is staged, what each plugin still needs, and
