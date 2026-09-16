@@ -163,9 +163,16 @@ describe("capabilitiesView", () => {
     expect(rows.find((r) => r.key === "calendars")).toMatchObject({ status: "granted" });
     // The folders keep their rows, so the owner still has a switch to flip.
     expect(rows.map((r) => r.key)).toContain("files_downloads");
-    // And the map the Plugins tab reads never says granted on the grant alone.
-    expect(view.fdaInherited).toBe(false);
-    expect(permissionStatuses(view).contacts).toBe("not_asked");
+    // One definition of the switch, and it is effective access. A plugin may
+    // require full_disk_access DIRECTLY, so this status is a readiness answer
+    // too — "denied" is what keeps such a plugin off Ready (pluginsModel's
+    // table covers a not-granted permission reading needs-setup).
+    const statuses = permissionStatuses(view);
+    expect(statuses.full_disk_access).toBe("denied");
+    expect(statuses.contacts).toBe("not_asked");
+    // And the row says why, so "denied" beside a System Settings list that
+    // shows it granted is not a contradiction the owner has to resolve alone.
+    expect(rows.find((r) => r.key === "full_disk_access")!.detail).toContain("cannot inherit");
   });
 
   it("the banner counts rows that are off AND were hit; a switch nobody hit does not", () => {

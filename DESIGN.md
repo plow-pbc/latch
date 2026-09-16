@@ -394,7 +394,8 @@ the first access *is* the request. So the grants are asked for **while the
 owner is at the Mac**. Setup's "Data & permissions" step offers Full Disk
 Access through the drag-to-grant flow; after that the **Permissions section**
 (`apps/desktop/src/capabilitiesModel.ts`) is the one home for every switch:
-Full Disk Access (and, only while it is off, the three folders it covers),
+Full Disk Access (and, until it is granted AND a sandboxed child inherits
+it, the three folders it covers),
 Contacts, Calendars and Accessibility, Automation consent per app agents are
 asked to drive, and a section for anything a block named that the tab has
 no button for. Beside each row sits what it stopped — the audit log's blocks

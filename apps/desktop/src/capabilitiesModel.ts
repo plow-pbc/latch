@@ -262,10 +262,6 @@ export interface CapabilitiesBanner {
 export interface CapabilitiesView {
   banner: CapabilitiesBanner | null;
   sections: CapabilitySection[];
-  /** Full Disk Access is granted AND a child of this app inherits it. Only
-   *  then are the folder rows dropped, so only then does a row-less folder
-   *  mean "covered" rather than "unknown". */
-  fdaInherited: boolean;
 }
 
 export interface CapabilitiesInput {
@@ -360,8 +356,15 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     row(
       "full_disk_access",
       PERMISSION_TITLES.full_disk_access!,
-      fda === null ? "unknown" : fda ? "granted" : "denied",
-      "Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted.",
+      fda === null ? "unknown" : inherited ? "granted" : "denied",
+      // Granted-but-not-inherited reads "denied" deliberately, and says why:
+      // a plugin requires this switch directly, so the row's status IS a
+      // readiness answer, and a grant a child cannot use is not access. The
+      // repair is the same pane the denied row already opens — re-adding this
+      // app is what re-establishes attribution after a signature change.
+      fda === true && !inherited
+        ? "Granted to this app, but a sandboxed run cannot inherit it — remove Plow Latch from the list and add it again."
+        : "Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted.",
       "grant",
     ),
   );
@@ -512,7 +515,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     },
   ];
 
-  return { banner: banner(sections, input.bannerSeenAt), sections, fdaInherited: inherited };
+  return { banner: banner(sections, input.bannerSeenAt), sections };
 }
 
 /**
@@ -529,7 +532,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
 export function permissionStatuses(view: CapabilitiesView): Record<string, RowStatus> {
   const statuses: Record<string, RowStatus> = {};
   for (const section of view.sections) for (const r of section.rows) statuses[r.key] = r.status;
-  if (view.fdaInherited) {
+  if (statuses.full_disk_access === "granted") {
     for (const id of COVERED_BY_FULL_DISK_ACCESS) statuses[id] ??= "granted";
   }
   return statuses;
