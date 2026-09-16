@@ -12,17 +12,6 @@ binary bundles its own interpreter, so the owner's Mac needs no Python, `uv`
 or virtualenv. `WIKI_PATH` is set from `${owner_home}` at dispatch, so the
 CLI never needs a `--wiki` flag (which the allowlist refuses anyway).
 
-## NOT YET SHIPPABLE — the pin is a placeholder
-
-`plow-wiki` publishes no release artifacts today. Until
-https://github.com/plow-pbc/plow-wiki/issues/21 lands a tag-triggered build
-of both architectures, both `url`s point at a release that does not exist
-and both `sha256`s are all zeros. That is deliberate: the manifest parses,
-so the skill and allowlist tests run, but `just stage-plugins wiki` (and so
-`just release`) fails loudly at the download rather than shipping a plugin
-that cannot run. Do not relax the two-architecture requirement to work
-around this, and do not point the `x64` slot at an `arm64` archive.
-
 ## Commands
 
 | Command | Does |
@@ -41,7 +30,8 @@ per the manifest's `argv` allowlist (`init`/`index`/`snapshot` in
 ## Updating the pin
 
 1. In `latch-plugin.json` set `version`, the version segment of both `url`s,
-   and both `sha256` values, taken from the release's published digests. A
+   and both `sha256` values, taken from the release's `checksums.txt`
+   (https://github.com/plow-pbc/plow-wiki/releases). A
    stale url downloads the old release and fails the sha check — the pin is
    the sha, the url is where it comes from.
 2. Run `just stage-plugins wiki`.
