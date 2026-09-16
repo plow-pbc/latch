@@ -18,7 +18,7 @@
  * remedy, and the remedy does not change with the count.
  */
 import type { PluginManifest } from "@domo/device-core";
-import { PERMISSION_TITLES, type RowStatus } from "./capabilitiesModel.js";
+import type { PermissionReadiness } from "./capabilitiesModel.js";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
@@ -51,12 +51,14 @@ export interface PluginRow {
 
 export interface PluginsInput {
   plugins: { manifest: PluginManifest; enabled: boolean; description?: string | null }[];
-  /** Every switch's status, as `capabilitiesModel.permissionStatuses` reads
-   *  it — folder memos, the audit fold and the Full Disk Access umbrella
-   *  already in. Not re-derived here: a second opinion about a status is how
-   *  a switch Settings already knows is granted reads "Needs setup" on this
-   *  tab. An id it has no answer for is unmet, which is the honest answer. */
-  permissionStatus: Record<string, RowStatus>;
+  /** Every switch's status AND its repair, as `permissionStatuses` reads them
+   *  — folder memos, the audit fold and the Full Disk Access umbrella already
+   *  in. Neither is re-derived here: a second opinion about a status is how a
+   *  switch Settings knows is granted reads "Needs setup" on this tab, and a
+   *  second opinion about the remedy is how this tab came to say "Grant Full
+   *  Disk Access" for a grant that is already there. An id it has no answer
+   *  for is unmet, which is the honest answer. */
+  permissionStatus: Record<string, PermissionReadiness>;
   /** Connector ids the owner has connected, e.g. "google". */
   connectedAccounts: string[];
   /** The declared paths that exist, spelled as the manifest spells them.
@@ -73,7 +75,9 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
     const { accounts: needAccounts, permissions, paths: needPaths } = manifest.requires;
     const unmet: UnmetRequirement[] = [
       ...needAccounts.filter((id) => !accounts.has(id)).map((id) => ({ kind: "account" as const, id, action: `Connect ${titleCase(id)}` })),
-      ...permissions.filter((id) => input.permissionStatus[id] !== "granted").map((id) => ({ kind: "permission" as const, id, action: `Grant ${PERMISSION_TITLES[id] ?? titleCase(id)}` })),
+      ...permissions
+        .filter((id) => input.permissionStatus[id]?.status !== "granted")
+        .map((id) => ({ kind: "permission" as const, id, action: input.permissionStatus[id]?.repair ?? `Grant ${titleCase(id)}` })),
       ...needPaths.filter((p) => !paths.has(p)).map((id) => ({ kind: "path" as const, id, action: `Create ${id}` })),
     ];
     // Off wins: a disabled plugin's unmet requirements are not the owner's
