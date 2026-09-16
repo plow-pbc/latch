@@ -73,7 +73,13 @@ export class SkillRegistry {
       .map(({ name, description }) => ({ name, description }));
   }
 
-  /** Load owner-authored skills from $DOMO_HOME/device/skills/*.md. */
+  /**
+   * Load owner-authored skills from $DOMO_HOME/device/skills/*.md.
+   *
+   * Sampled once, at construction, so `owned` has the same lifetime as the
+   * skills it names: a file deleted while the app runs does not free its name
+   * until restart, exactly as its content would not change.
+   */
   loadDir(dir: string): void {
     let files: string[];
     try {
