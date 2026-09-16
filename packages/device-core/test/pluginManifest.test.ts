@@ -34,6 +34,16 @@ describe("parseManifest", () => {
     expect(m.hooks).toEqual({ postinstall: "hooks/post.sh" });
   });
 
+  it("defaults requires to empty arrays when the manifest omits it", () => {
+    const m = parseManifest(JSON.stringify(MINIMAL));
+    expect(m.requires).toEqual({ accounts: [] });
+  });
+
+  it("keeps a declared account requirement", () => {
+    const requires = { accounts: ["google"] };
+    expect(parseManifest(withPatch({ requires })).requires).toEqual(requires);
+  });
+
   it.each([
     ["not JSON", "{", "manifest is not valid JSON"],
     ["a bad name", withPatch({ name: "Bad Name" }), "manifest name must be lowercase letters, digits and dashes"],
@@ -68,6 +78,9 @@ describe("parseManifest", () => {
     ["an argv.write that is not an array", withPatch({ argv: { read: [["query"]], write: "nope" } }), "argv.write must be an array"],
     ["a daemon that is not an object", withPatch({ daemon: "nope" }), "daemon must be an object"],
     ["a non-string top-level version", withPatch({ version: true }), "manifest version must be a string"],
+    ["a requires that is not an object", withPatch({ requires: "nope" }), "requires must be an object"],
+    ["a non-array requires.accounts", withPatch({ requires: { accounts: "google" } }), "requires.accounts must be an array"],
+    ["an account id no connector answers to", withPatch({ requires: { accounts: ["Google Drive"] } }), "requires.accounts entries must name an account connector this Mac offers"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
   });

@@ -506,7 +506,7 @@ export function diagnose(f: HostFacts): Diagnosis {
     // The event was delivered and the app refused the DATA: that is the
     // service's own privacy permission for this app — Contacts for
     // Contacts.app — which macOS does not prompt for on a scripted read.
-    // The Capabilities tab's row for it is what asks.
+    // The Permissions section's row for it is what asks.
     if (f.stderr_hint === "scripted_data_not_permitted" && f.service_permission !== null) {
       const service = f.service_permission;
       evidence.push(`${target} answered the script with a permissions error (-54): the app is refused ${PERMISSION_LABELS[service]} data`);
@@ -706,9 +706,9 @@ export function ownerAction(
       }
       const label = PERMISSION_LABELS[permission];
       if (permission === "contacts" || permission === "calendars") {
-        // Asked for in the app itself (the Capabilities tab raises the
-        // dialog); the pane is where a refusal is undone.
-        return `In the ${app} app's Capabilities tab, allow ${label} — or in System Settings > Privacy & Security > ${label}, allow ${app}.`;
+        // Asked for in the app itself (Settings' Permissions section raises
+        // the dialog); the pane is where a refusal is undone.
+        return `In the ${app} app's Settings > Permissions, allow ${label} — or in System Settings > Privacy & Security > ${label}, allow ${app}.`;
       }
       const umbrella = COVERED_BY_FULL_DISK_ACCESS.has(permission)
         ? ` Granting ${app} Full Disk Access instead covers this and every other folder at once.`

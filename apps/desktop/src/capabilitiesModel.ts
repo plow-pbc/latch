@@ -1,14 +1,14 @@
 /**
- * The Capabilities tab's view model — pure, like viewModel.ts, so the tab's
- * whole logic is unit-testable without Electron.
+ * Settings' Permissions section's view model — pure, like viewModel.ts, so
+ * the section's whole logic is unit-testable without Electron.
  *
- * The tab answers one question: what does this Mac let agents do right now,
+ * It answers one question: what does this Mac let agents do right now,
  * and what has that stopped? Every row is a switch (a macOS permission, or
  * Automation consent for one app) from the standing inventory; the counts
  * beside a row come from the audit log's `host_permission_blocked` rows,
  * grouped by the permission they name and joined to their `intent_received`
  * for the agent and the goal. A row exists because a switch exists; it
- * NEEDS ATTENTION — and counts toward the tab's badge — only while the
+ * NEEDS ATTENTION — and shows in the banner — only while the
  * switch is off and something has hit it, and the owner has not said "not
  * now" since the last hit. Status comes from the live inventory, so a row
  * stops needing attention the moment the switch is flipped, with nobody
@@ -198,6 +198,10 @@ export interface CapabilityRow {
   statusText: string;
   /** What the switch is for. Empty where the section's line says it all. */
   detail: string;
+  /** What to DO about this row being off, when the remedy is not just the
+   *  button — and null once it is on. Owned here because the same status can
+   *  have two different repairs, which a line in the renderer cannot know. */
+  hint: string | null;
   action: RowAction;
   actionLabel: string | null;
   count: number;
@@ -207,7 +211,7 @@ export interface CapabilityRow {
   since: string | null;
   agents: string[];
   requests: BlockedRequest[];
-  /** Counts toward the badge. */
+  /** Counts toward the banner. */
   needsAttention: boolean;
 }
 
@@ -237,7 +241,7 @@ export interface CapabilitySection {
   description: string;
   /** In display order: rows and groups. */
   items: CapabilityItem[];
-  /** Every row, groups flattened — for the badge, the banner, and tests. */
+  /** Every row, groups flattened — for the banner and tests. */
   rows: CapabilityRow[];
 }
 
@@ -246,8 +250,8 @@ export function isGroup(item: CapabilityItem): item is CapabilityGroup {
 }
 
 export interface CapabilitiesBanner {
-  /** The switches still off that were hit — the badge's number, and the
-   *  first thing the banner says. */
+  /** The switches still off that were hit — the first thing the banner
+   *  says. */
   switches: number;
   /** The requests those switches blocked. */
   count: number;
@@ -260,7 +264,6 @@ export interface CapabilitiesBanner {
 }
 
 export interface CapabilitiesView {
-  badge: number;
   banner: CapabilitiesBanner | null;
   sections: CapabilitySection[];
 }
@@ -274,7 +277,7 @@ export interface CapabilitiesInput {
    *  like the banner's dismissal, for one switch. */
   dismissals: Record<string, string>;
   /** When the owner last dismissed the banner. Blocks before it count for
-   *  nothing on the tab: not the banner, not a row's line, not the badge. */
+   *  nothing on the tab: not the banner, not a row's line. */
   bannerSeenAt: string | null;
   /** The three folders, as this Mac last learned them (setup's touch, or
    *  a block); absent means macOS has never been asked. */
@@ -299,7 +302,7 @@ const QUERYABLE: readonly ("contacts" | "calendars" | "accessibility")[] = ["con
 /** Build the tab. */
 export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   // Only blocks newer than the banner's last dismissal count anywhere on the
-  // tab — the rows' lines, the arrows, the badge, the banner itself. The ×
+  // tab — the rows' lines, the arrows, the banner itself. The ×
   // is the owner saying "seen"; after it the tab is clean until the next
   // block, and the Audit tab keeps the history.
   // A row's own Dismiss works the same way for that one switch: its
@@ -315,6 +318,12 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   );
   const inv = input.inventory;
   const fda = inv?.full_disk_access.granted ?? null;
+  // Full Disk Access only answers for a plugin if a CHILD of this app really
+  // inherits it, which is exactly what `child_attribution` measures — it reads
+  // a protected file through a real child. Granted-but-broken (a signature
+  // change between builds is the usual cause) means the grant is on the app
+  // and useless to the run, so the umbrella must not open on `granted` alone.
+  const inherited = fda === true && inv?.child_attribution.status === "ok";
 
   const row = (
     key: string,
@@ -322,6 +331,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     status: RowStatus,
     detail: string,
     action: RowAction,
+    hint: string | null = null,
   ): CapabilityRow => {
     const g = groups.get(key);
     const off = status !== "granted";
@@ -331,6 +341,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       status,
       statusText: statusWords(status),
       detail,
+      hint: off ? hint : null,
       action: off ? action : "none",
       actionLabel: off ? actionLabel(action) : null,
       count: g?.count ?? 0,
@@ -351,12 +362,21 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     row(
       "full_disk_access",
       PERMISSION_TITLES.full_disk_access!,
-      fda === null ? "unknown" : fda ? "granted" : "denied",
+      fda === null ? "unknown" : inherited ? "granted" : "denied",
       "Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted.",
       "grant",
+      // The repair, which is NOT the same in the two off states and so cannot
+      // be one hardcoded line in the renderer: a fresh grant needs a relaunch,
+      // a grant a child cannot inherit needs the app removed and re-added.
+      // Granted-but-not-inherited reads "denied" deliberately — a plugin may
+      // require this switch directly, so the status is a readiness answer, and
+      // a grant a child cannot use is not access.
+      fda === true && !inherited
+        ? "Granted to this app, but a sandboxed run cannot inherit it — remove Plow Latch from the list and add it again."
+        : "Quit and reopen after granting.",
     ),
   );
-  if (fda !== true) {
+  if (!inherited) {
     const folders: CapabilityRow[] = [];
     // What the log says the folders answered, newest last: a confirmed
     // refusal, or a run let through the dialog / a touch that got through
@@ -421,7 +441,17 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   }
   const queryable = new Map(inv?.permissions.map((p) => [p.permission, p.status]) ?? []);
   for (const permission of QUERYABLE) {
-    const status = (queryable.get(permission) ?? "unknown") as RowStatus;
+    // Full Disk Access covers Contacts and Calendars exactly as it covers the
+    // folders above. What a run reads is the store's FILES — the contacts
+    // skill opens AddressBook-v22.abcddb with sqlite3 — and a child of this
+    // app inherits its Full Disk Access, which `inherited` above has already
+    // confirmed against the inventory. The switch this row otherwise reads is
+    // CNContactStore's / EKEventStore's authorization, which nothing on this
+    // Mac calls for data. A red row here while the Plugins tab said Ready was
+    // the section refusing something that works. Accessibility is not under
+    // the umbrella and keeps its own answer.
+    const covered = inherited && COVERED_BY_FULL_DISK_ACCESS.has(permission);
+    const status = covered ? "granted" : ((queryable.get(permission) ?? "unknown") as RowStatus);
     const detail =
       permission === "contacts"
         ? "Reading and updating your address book, and associating contact names with Messages."
@@ -470,7 +500,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     // A folder (or any other switch Full Disk Access covers) that was refused
     // before Full Disk Access was granted is in good shape now: the umbrella
     // answers for it, so there is nothing for the owner to flip.
-    if (fda === true && COVERED_BY_FULL_DISK_ACCESS.has(g.key as HostPermission)) continue;
+    if (inherited && COVERED_BY_FULL_DISK_ACCESS.has(g.key as HostPermission)) continue;
     if (g.key === "automation" && fda !== null) {
       // An Automation block for an app the tab does not list.
       yourself.push(row(g.key, "Automation for another app", "denied", "An app the list above does not offer.", "open"));
@@ -493,8 +523,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     },
   ];
 
-  const badge = sections.reduce((n, s) => n + s.rows.filter((r) => r.needsAttention).length, 0);
-  return { badge, banner: banner(sections, input.bannerSeenAt), sections };
+  return { banner: banner(sections, input.bannerSeenAt), sections };
 }
 
 /** The later of two timestamps, either possibly absent. */
@@ -540,11 +569,10 @@ function group(
 }
 
 /**
- * The strip at the top: the rows the badge counts, and what they blocked.
+ * The strip at the top: the rows that need attention, and what they blocked.
  * Only those rows — a switch granted since its refusals is history, and a
  * banner that still listed it would send the owner to a row that says
- * "Granted". So the banner and the badge always agree: the badge is its
- * first number, and both go quiet together.
+ * "Granted".
  */
 function banner(sections: CapabilitySection[], since: string | null): CapabilitiesBanner | null {
   const hit = sections.flatMap((s) => s.rows.filter((r) => r.needsAttention && r.last !== null));

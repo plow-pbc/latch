@@ -55,7 +55,7 @@ import {
 import { readCredentialsState } from "./browser/vaultCredentials.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
-import { parseFrontmatter, SkillRegistry } from "./skills.js";
+import { parseFrontmatter, type Skill, SkillRegistry } from "./skills.js";
 import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
@@ -260,6 +260,8 @@ export class DeviceAgent {
   readonly executor: Executor;
   /** Owner-published skills (how-to guides), surfaced via plow_list_skills/plow_read_skill. */
   readonly skills: SkillRegistry;
+  /** Staged plugins the owner has turned off — see `setDisabledPlugins`. */
+  private disabledPlugins = new Set<string>();
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
   /** Exposed so the approval UI can resolve credential item titles locally. */
@@ -397,29 +399,6 @@ export class DeviceAgent {
     ensurePlowFolder(ownerHome);
     registerPlowFolderSkill(this.skills, ownerHome);
     registerContactsSkill(this.skills, ownerHome);
-    // Registered only when the CLI it documents is actually staged: a skill
-    // for a binary this Mac does not have teaches an agent commands the exec
-    // path refuses unconditionally. Driven off `this.plugins` itself — the
-    // staged set — rather than a second staged-ness check, so there is one
-    // predicate for "is this really here" and every staged plugin is a
-    // candidate, not just the ones with a PROVIDERS row. A provider is a
-    // specialisation: its plugin publishes the provider's own skill (gog's
-    // orchestration wants its own copy, not the manifest's); any other
-    // staged plugin publishes the skill its OWN manifest declares, if any.
-    for (const staged of this.plugins) {
-      const provider = PROVIDERS.find((p) => p.plugin === staged.manifest.name);
-      if (provider) {
-        this.skills.register(provider.skill);
-        continue;
-      }
-      if (staged.manifest.skill === null) continue;
-      try {
-        const skill = parseFrontmatter(fs.readFileSync(path.join(staged.dir, staged.manifest.skill), "utf8"));
-        if (skill) this.skills.register(skill);
-      } catch {
-        /* unreadable or malformed — publish nothing rather than a broken skill */
-      }
-    }
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -500,12 +479,9 @@ export class DeviceAgent {
         approval,
       );
     }
-    // LAST, so the owner's own file wins. `register` is a Map.set, so whoever
-    // goes last takes the name — and a skill the owner wrote into their own
-    // DOMO_HOME is a deliberate act that a built-in default should not
-    // silently discard. Built-ins are what this Mac ships; these are what its
-    // owner said instead.
-    this.skills.loadDir(path.join(home, "device/skills"));
+    // Last, after every built-in: plugin skills exactly while their plugin is
+    // staged and on, then the owner's own files over all of it (see the doc).
+    this.syncPluginSkills();
   }
 
   /**
@@ -883,7 +859,66 @@ export class DeviceAgent {
    * as present — publishing its skill and minting for it.
    */
   private plugin(name: string): StagedPlugin | null {
+    if (this.disabledPlugins.has(name)) return null;
     return this.plugins.find((p) => p.manifest.name === name) ?? null;
+  }
+
+  /**
+   * The plugins the owner has turned off, by name. Off is one fact with three
+   * consequences, all from `plugin()` answering null: not staged as far as
+   * this device is concerned, skill unpublished, commands refused by name at
+   * the pre-intent chokepoint. Called at startup and on every toggle — one
+   * code path.
+   */
+  setDisabledPlugins(names: readonly string[]): void {
+    this.disabledPlugins = new Set(names);
+    this.syncPluginSkills();
+  }
+
+  /**
+   * The one owner of plugin skill lifecycle, at launch and on every toggle:
+   * each staged plugin's skill is published exactly while the plugin is on,
+   * and the owner's own files load LAST so a file in their DOMO_HOME wins
+   * under a shared name — order is the whole mechanism, re-run each time.
+   */
+  private syncPluginSkills(): void {
+    for (const staged of this.plugins) {
+      const skill = this.pluginSkill(staged);
+      if (skill === null) continue;
+      if (this.plugin(staged.manifest.name) !== null) this.skills.register(skill);
+      else this.skills.unregister(skill.name);
+    }
+    this.skills.loadDir(path.join(this.home, "device/skills"));
+  }
+
+  /**
+   * A plugin's one-line description for the owner: its published skill's,
+   * so an owner's override shows the owner what it shows the agent — and the
+   * declared one while the plugin is off, so the row offering to turn it
+   * back on is not blank.
+   */
+  pluginDescription(name: string): string | null {
+    const staged = this.plugins.find((p) => p.manifest.name === name);
+    const declared = staged ? this.pluginSkill(staged) : null;
+    return declared ? (this.skills.skill(declared.name)?.description ?? declared.description) : null;
+  }
+
+  /**
+   * The skill a staged plugin publishes. A provider is a specialisation: its
+   * plugin publishes the provider's own skill (gog's orchestration wants its
+   * own copy, not the manifest's); any other staged plugin publishes the
+   * skill its OWN manifest declares, if any — and nothing rather than a
+   * broken skill when that file is unreadable or malformed.
+   */
+  private pluginSkill(staged: StagedPlugin): Skill | null {
+    const provider = PROVIDERS.find((p) => p.plugin === staged.manifest.name);
+    if (provider) return provider.skill;
+    if (staged.manifest.skill === null) return null;
+    try {
+      return parseFrontmatter(fs.readFileSync(path.join(staged.dir, staged.manifest.skill), "utf8"));
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -929,8 +964,16 @@ export class DeviceAgent {
    * silent drop would leave the caller believing it chose a cwd it didn't.
    */
   pluginRefusal(argv: readonly string[], cwd?: string): string | null {
-    const plugin = pluginFor(this.plugins, argv[0] ?? "");
+    // A provider's row names its plugin; anything else is named by argv[0].
+    const provider = providerFor(argv);
+    const plugin = provider
+      ? (this.plugins.find((p) => p.manifest.name === provider.plugin) ?? null)
+      : pluginFor(this.plugins, argv[0] ?? "");
     if (plugin === null) return null;
+    if (this.plugin(plugin.manifest.name) === null) return `${provider?.command ?? plugin.manifest.command} is turned off on this Mac`;
+    // Off is the one answer shared with a provider's command; the rest of its
+    // belt is `providerRefusal`'s, and it takes a cwd (stripped, never run in).
+    if (provider !== null) return null;
     if (cwd !== undefined) return "cwd is refused for a plugin; it always runs in its own directory";
     const verdict = classifyArgv(plugin.manifest, argv);
     return verdict.kind === "refused" ? verdict.reason : null;
@@ -1005,9 +1048,14 @@ export class DeviceAgent {
       // resolve; if it cannot, that is an answer, not a pass.
       const plugin = this.plugin(provider.plugin);
       if (plugin === null) {
-        return this.execError(intent.intentId, `${provider.command} is not installed on this Mac`);
+        return this.execError(intent.intentId, this.pluginRefusal(argv) ?? `${provider.command} is not installed on this Mac`);
       }
-      return this.executePlowGog(intent, plugin, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
+      try {
+        return await this.executePlowGog(intent, plugin, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
+      } catch (error: unknown) {
+        // A refused launch (the guard above), audited like the plain path's.
+        return this.execError(intent.intentId, error instanceof Error ? error.message : String(error));
+      }
     }
 
     // A staged plugin with no PROVIDERS row: reachable on its manifest alone.
@@ -1025,6 +1073,9 @@ export class DeviceAgent {
     let runEnv: Record<string, string> | undefined;
     let runSysvSemaphores = false;
     if (plugin !== null) {
+      if (this.plugin(plugin.manifest.name) === null) {
+        return this.execError(intent.intentId, `${plugin.manifest.command} is turned off on this Mac`);
+      }
       // The manifest's own belt (`argv.read`/`argv.write`) is checked before
       // anything spawns, the same defense-in-depth shape as `providerRefusal`
       // above — the device is the chokepoint regardless of what a caller
@@ -1081,6 +1132,7 @@ export class DeviceAgent {
         sysvSemaphores: runSysvSemaphores,
         waitMs,
         env: runEnv,
+        guard: () => this.pluginRefusal(argv),
       });
       return this.finishRun(intent.intentId, result, {
         argv,
@@ -1103,7 +1155,7 @@ export class DeviceAgent {
    * in the capability the approver saw, so the start event carries only the
    * target. A failure is diagnosed like a command's, with the app the agent
    * named as the automation target, so a denied or never-asked Automation
-   * grant lands on the Capabilities tab's row for that app the same way —
+   * grant lands on the Permissions section's row for that app the same way —
    * and a refusal that is the app's own is said to be no gate.
    */
   private async executeAppleScript(
@@ -1218,7 +1270,7 @@ export class DeviceAgent {
         //
         // The clearing is recorded too, when the parked verdict was: a
         // run that went on to an end of its own was let through the
-        // dialog, and the Capabilities tab must stop counting a block the
+        // dialog, and the Permissions section must stop counting a block the
         // owner has answered — a folder it cannot query would otherwise
         // stay red on the strength of a guess. A reaped run was still
         // parked, and its verdict stands.
@@ -1389,6 +1441,10 @@ export class DeviceAgent {
         waitMs: opts.waitMs,
         // A help run gets no token, same as the gog path.
         env: token === null ? undefined : { [provider.tokenEnv]: token },
+        // Off NOW, not off at approval: the mint, the conflict probe and the
+        // executor's own hold are all waits the owner can flip the switch
+        // during, and this is the one seam every launch passes through.
+        guard: () => this.pluginRefusal(argv),
       });
     // An inner run that outlives wait_ms is WAITED OUT, not abandoned: the
     // per-account children have no public handle — the outer call owns the
@@ -1650,7 +1706,7 @@ export class DeviceAgent {
   /**
    * Forget a `prompt_waiting` verdict for a run that went on — the owner
    * answered the dialog (or it never mattered) — and record the clearing,
-   * so the Capabilities tab stops counting a block the owner has answered:
+   * so the Permissions section stops counting a block the owner has answered:
    * a folder it cannot query would otherwise stay red on the strength of a
    * guess. Any other verdict stands. Idempotent; at most one clearing per
    * run is recorded, because the dedupe key goes with it.

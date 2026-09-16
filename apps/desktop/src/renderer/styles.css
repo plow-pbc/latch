@@ -23,7 +23,7 @@
   --zinc-bg: #f4f4f5; --zinc-fg: #52525b; --zinc-bd: #e4e4e7;
   /* Light enough to read against the --blue-fg primary button. */
   --focus: #60a5fa;
-  /* The Capabilities tab's "will not work" dot: the text red lifted and
+  /* The Permissions section's "will not work" dot: the text red lifted and
      desaturated, so a column of them reads as status rather than alarm. */
   --dot-off: #d9555b;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -133,24 +133,6 @@ body {
   cursor: pointer;
 }
 .seg button.active { background: var(--card); color: var(--fg); box-shadow: var(--shadow); }
-/* The Capabilities tab's badge: rows needing a decision, not events. Amber,
-   because a block by this Mac is nobody refusing — the audit row's tone. */
-.tabcount {
-  /* A fixed 16px box, as wide as it is tall at minimum: one digit is a
-     circle, two or more stretch it into a pill. Centred on the label's cap
-     height, not sat on its baseline — an inline box with padding hangs
-     below the text otherwise. */
-  display: inline-flex; align-items: center; justify-content: center;
-  vertical-align: middle; position: relative; top: -1px;
-  height: 16px; min-width: 16px; padding: 0 5px; box-sizing: border-box;
-  margin-left: 6px;
-  font-size: 10px; font-weight: 700; line-height: 1;
-  border-radius: 999px;
-  background: var(--amber-fg); color: var(--card);
-  font-variant-numeric: tabular-nums;
-}
-.tabcount[hidden] { display: none; }
-
 .toolbar {
   display: flex;
   align-items: center;
@@ -444,7 +426,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 .support-copy { min-width: 0; }
 .support-title { font-weight: 600; margin-bottom: 2px; }
 
-/* The Capabilities tab (capabilitiesModel.ts). Dots: green granted, red
+/* The Permissions section (capabilitiesModel.ts). Dots: green granted, red
    will not work as things stand (refused, or never asked), grey unknown. */
 .status-dot.off { background: var(--dot-off); }
 .cap-banner {
@@ -520,6 +502,18 @@ textarea.text { min-height: 70px; resize: vertical; }
 /* A group of switches behind one line (Folders, Automation). The head is a
    full-width button in the row grid's clothes; the rows beneath indent past
    the chevron so they read as the group's. */
+/* The Plugins tab's rows. Same rhythm as a switch row, without the icon
+   column macOS fills there: the dot, the name and its lines, the status
+   badge, and the on/off switch. A requirement under it drops the badge. */
+.plugin-row { grid-template-columns: 8px 1fr auto auto; }
+.plugin-req { grid-template-columns: 8px 1fr auto; }
+.plugin-name { display: flex; align-items: center; gap: 8px; }
+.plugin-switch { margin-top: 0; }
+/* Settings holds the permission inventory in a container of its own so it can
+   be drawn and refreshed as one thing; `contents` keeps its cards in the
+   pane's own column, and the last one keeps the gap before what follows. */
+.permissions { display: contents; }
+.settings .permissions .item:last-child { margin-bottom: 16px; }
 .cap-group { border-top: 1px solid var(--border); }
 .cap-group:first-of-type { border-top: 0; }
 /* The head IS a .cap-row (same grid, padding and type), made a button. */

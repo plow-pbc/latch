@@ -10,7 +10,7 @@
   <key>com.apple.security.automation.apple-events</key>
   <true/>
   <!-- Contacts and Calendars, asked for in process by @domo/native-permissions
-       (the Capabilities tab). Under the hardened runtime TCC refuses these
+       (the Permissions section). Under the hardened runtime TCC refuses these
        without a dialog unless the app declares them — the same lesson as
        apple-events above. The usage strings live in electron-builder.yml's
        extendInfo; both halves are needed. -->

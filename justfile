@@ -319,7 +319,7 @@ clean:
     @echo "wiped {{apphome}}"
 
 # ---------------------------------------------------------------------------
-# Permissions — exercising the Capabilities tab
+# Permissions — exercising the Permissions section
 # ---------------------------------------------------------------------------
 
 # The packaged app's bundle id AND the from-source Electron.app's, plus the
@@ -338,13 +338,13 @@ reset-permissions-dry-run host="auto":
     scripts/reset-permissions.sh "{{apphome}}" {{host}} --dry-run
 
 # Fake agents, fake goals, spread over the last eight hours, appended to
-# THIS checkout's audit log so the Capabilities tab's banner, counts and
+# THIS checkout's audit log so the Permissions section's banner, counts and
 # "See blocked requests…" can be looked at without revoking a grant first.
 # The banner's dismissal is left alone: if it was dismissed less than eight
 # hours ago the rows land after that moment instead, so they count as new
 # and "Show in Audit" narrows to them (Date: Since …). Every seeded row is
 # marked, and unseed removes exactly those.
-# Seed the audit log with sample blocked requests for the Capabilities tab.
+# Seed the audit log with sample blocked requests for the Permissions section.
 seed-blocked-requests:
     node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson" "{{apphome}}/app/settings.json"
 

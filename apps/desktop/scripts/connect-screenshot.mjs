@@ -398,8 +398,9 @@ async function setUp() {
     };
     return connectorsFixture;
   });
-  // The Capabilities tab, which Connected Accounts now shares: the REAL view
-  // model over a stub inventory (Full Disk Access off, nothing blocked).
+  // Settings' Permissions section, which Connected Accounts now shares: the
+  // REAL view model over a stub inventory (Full Disk Access off, nothing
+  // blocked).
   const inventory = {
     checked_at: "2026-09-02T08:00:00Z",
     full_disk_access: { granted: false, probes: [] },
@@ -446,12 +447,12 @@ async function setUp() {
   return connect;
 }
 
-/** The Capabilities tab, where Connected Accounts lives now, with the
- *  connector state drawn (it arrives a beat after the switches). */
-const showCapabilities = (settled) => async (win) => {
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("capabilities")`);
+/** Settings, where Connected Accounts lives now, with the connector state
+ *  drawn (it arrives a beat after the switches). */
+const showSettings = (settled) => async (win) => {
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   await waitFor(win, `[...document.querySelectorAll(".cap-name")].some((n) => n.textContent === "Google")`,
-    "the Connected Accounts section of the Capabilities tab");
+    "the Connected Accounts section of Settings");
   await waitFor(win, settled, "the connector state to draw");
 };
 
@@ -460,7 +461,7 @@ const SCREENS = [
   {
     name: "capabilities-connected-accounts",
     connectors: CONNECTORS_POPULATED,
-    prepare: showCapabilities(`document.querySelectorAll(".cap-account-email").length === 2`),
+    prepare: showSettings(`document.querySelectorAll(".cap-account-email").length === 2`),
     // Each account is a row under Google, the default's pill beside it, and
     // a "•••" menu (Set as Default / Remove Account) rather than inline
     // buttons; "Add another" carries the browser-hop arrow.
@@ -478,7 +479,7 @@ const SCREENS = [
       busy: true,
       google: { accounts: [], connecting: true },
     },
-    prepare: showCapabilities(`document.body.innerText.includes("Connecting…")`),
+    prepare: showSettings(`document.body.innerText.includes("Connecting…")`),
     expect: ["Connected Accounts", "Google", "Connecting…"],
     reject: ["Slack", CONNECTOR_TIMEOUT_NOTE, "Add another"],
   },
@@ -489,7 +490,7 @@ const SCREENS = [
       message: CONNECTOR_TIMEOUT_NOTE,
       noteKind: "neutral",
     },
-    prepare: showCapabilities(`!!document.querySelector(".connector-note.neutral")`),
+    prepare: showSettings(`!!document.querySelector(".connector-note.neutral")`),
     expect: ["Connected Accounts", "Google", "Connect", CONNECTOR_TIMEOUT_NOTE],
     reject: ["Slack", "Connecting…"],
     // The label plus its ↗ glyph: the button's text, as the harness reads it.

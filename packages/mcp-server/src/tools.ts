@@ -473,23 +473,15 @@ export const TOOLS: ToolSpec[] = [
       if (refusal !== null) throw new ToolError(refusal);
       const provider = providerFor(argv);
 
-      // Same chokepoint, for a staged non-provider plugin's own manifest
-      // belt: an argv the plugin's argv.read/argv.write would refuse — or a
-      // caller-supplied cwd, which a plugin's own dispatch never reads —
-      // must never reach an approval card, or the card the owner approved
-      // and what could actually run would silently disagree. Checked only
-      // when it isn't a provider's own command — pluginFor matches on
-      // manifest.command, which for a provider-driven plugin (gog) IS the
-      // provider's own command, and that path is providerRefusal's above.
-      // The device, not the caller, supplies the plugin's own directory
-      // below (`pluginDir`) — that is the one true cwd for this run, so a
-      // caller-supplied one is still refused unconditionally rather than
-      // compared against it.
+      // Same chokepoint, for what the device knows about a staged plugin: the
+      // owner's off switch (a provider's command is a staged plugin's too),
+      // and for a non-provider plugin its own manifest belt and a
+      // caller-supplied cwd, which its dispatch never reads (`pluginDir`
+      // below is the one true cwd). None of it may reach an approval card,
+      // or the card the owner approved and what could run would disagree.
       const rawCwd = a.get("cwd").str;
-      if (provider === null) {
-        const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd ?? undefined);
-        if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
-      }
+      const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd ?? undefined);
+      if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
       // Resolved here, before the intent is built, so the approval card
       // shows the owner the true run location (`Run: <argv> (in <dir>)`)
       // instead of nothing — the device then refuses at execution if the

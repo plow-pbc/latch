@@ -897,16 +897,17 @@ describe("review findings", () => {
   // capability the card displayed never matched what could run. Same
   // chokepoint shape as providerRefusal, just above in this file's tools.ts.
   describe("a staged plugin's own argv belt gates before an intent exists too", () => {
-    function stagePlugin(root: string): void {
-      const dir = path.join(root, "echoer");
+    const ECHOER = { name: "echoer", command: "echoer", argv: { read: [["say"]], write: [] } };
+    function stagePlugin(root: string, plugin = ECHOER): void {
+      const dir = path.join(root, plugin.name);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(
         path.join(dir, "latch-plugin.json"),
         JSON.stringify({
-          name: "echoer", version: "test", command: "echoer",
+          ...plugin, version: "test",
           runtime: { binaries: [] },
           exec: { argv: ["/bin/echo"] },
-          env: {}, argv: { read: [["say"]], write: [] },
+          env: {},
         }),
       );
     }
@@ -914,9 +915,9 @@ describe("review findings", () => {
     // One staged "echoer" plugin, a fresh device and server around it, and
     // cleanup registered — the lifecycle every test below needs, varying
     // only the policy delegate.
-    function makePluginServer(delegate: PolicyDelegate) {
+    function makePluginServer(delegate: PolicyDelegate, plugin = ECHOER) {
       const root = tempDir();
-      stagePlugin(root);
+      stagePlugin(root, plugin);
       const home = tempDir();
       const device = new DeviceAgent(home, "Test Mac", delegate, null, undefined, null, loadPlugins([root]));
       const server = createDomoMcpServer(device, {});
@@ -940,6 +941,24 @@ describe("review findings", () => {
       // The refusal never became an approval decision, and nothing was audited.
       expect(decided).toBe(false);
       expect(events(device)).not.toContain("exec_start");
+    });
+
+    // A provider's command is a staged plugin's too, and the owner's off
+    // switch is the device's answer for it before any card — not "not
+    // installed" after one.
+    it("refuses a provider's command when the owner turned its plugin off, before an intent is ever built", async () => {
+      let decided = false;
+      const { server, device } = makePluginServer(
+        { async decideIntent() { decided = true; return "allow_once" as const; } },
+        { name: "gog", command: "plow-gog", argv: { read: [], write: [] } },
+      );
+      device.setDisabledPlugins(["gog"]);
+
+      const { isError, payload } = await callTool(server, "plow_run_command", { argv: ["plow-gog", "gmail", "search", "q"] }, AGENT);
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("plow-gog is turned off on this Mac");
+      expect(decided).toBe(false);
     });
 
     // A plugin's own dispatch (deviceAgent.ts's executeCommand) always execs

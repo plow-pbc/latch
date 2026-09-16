@@ -37,7 +37,7 @@ const STATUS_FILTERS = [
   ["any", "Any"], ["completed", "Completed"], ["running", "Running"], ["blocked", "Blocked"], ["failed", "Failed"],
 ];
 // The Date filter: rows at or after a cutoff. The presets are relative to
-// now; "since" is a fixed moment set by the Capabilities tab's "Show in
+// now; "since" is a fixed moment set by the Permissions section's "Show in
 // Audit" (the dismissal its count starts from) and listed in the menu only
 // while it is set.
 let dateFilter = "any";
@@ -347,7 +347,7 @@ async function refreshAuditNow(opts) {
     decision: decisionFilter,
     status: statusFilter,
     cutoffMs: cutoff,
-    // The Capabilities tab counts by the block's own time, so its cutoff
+    // The Permissions section counts by the block's own time, so its cutoff
     // keys on that; the presets key on when the row began.
     cutoffKey: dateFilter === "since" ? "blocked" : "ts",
     // The selected row stays loaded even when new activity above it pushes
@@ -2171,30 +2171,20 @@ async function refreshUpdateBanner() {
 
 // ---- Settings ----
 
-// ---- Capabilities: what this Mac lets agents do, and what that stopped ----
-// Everything renders from one shape (capabilitiesModel.ts, over IPC): the
-// sections, each row's status and count and one action, the banner, and the
-// badge. The renderer keeps nothing of its own but which rows are open.
+// ---- Plugins, and the permission inventory Settings holds ----
+// Two panes, one shape each, both from IPC: the Plugins tab draws
+// `pluginsModel.ts`'s rows (what each plugin still needs), and Settings'
+// Permissions section draws `capabilitiesModel.ts`'s
+// sections, banner and rows. The renderer keeps nothing of its own but which
+// rows are open.
 
-let capabilitiesMounted = null;
-const capCount = document.getElementById("capCount");
-
-/** The tab's badge, read fresh: rows needing a decision, or none. */
-async function refreshCapabilitiesBadge(view) {
-  try {
-    const v = view ?? (await window.domo.capabilitiesGet()).view;
-    const n = v?.badge ?? 0;
-    capCount.textContent = String(n);
-    capCount.hidden = n === 0;
-  } catch {
-    capCount.hidden = true;
-  }
-}
+let pluginsMounted = null;
+let permissionsMounted = null;
 
 /** The audit tab, filtered to what this Mac blocked: the Blocked chip, and
     the search box set to `term` — a switch's name from a row's button, or
     cleared from the banner's, so a stale search never hides the rows. */
-// The Capabilities tab's "Show in Audit": the blocked rows, narrowed to one
+// The Permissions section's "Show in Audit": the blocked rows, narrowed to one
 // switch by `term` when a row asked, and to the moment the count started
 // from by `since` — so the list is exactly the requests it counted.
 async function showAuditBlocked(term = "", since = null) {
@@ -2232,9 +2222,14 @@ function whenText(iso) {
     : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-async function renderCapabilities() {
-  const panel = el("div", { class: "panel settings" });
-  view.replaceChildren(panel);
+/**
+ * Settings' Permissions section: every switch this Mac has — the
+ * machine-configuration view, where the Plugins tab shows only what is unmet.
+ * Returns the drawn container and how to refresh it; `display: contents`
+ * keeps its cards in Settings' own column.
+ */
+async function permissionsPane() {
+  const panel = el("div", { class: "permissions" });
   const openRows = new Set();
   // Which groups are open. Seeded from the model on first sight of each
   // group (a group with blocked requests inside opens itself), then the
@@ -2298,7 +2293,6 @@ async function renderCapabilities() {
   void refreshConnectors();
 
   const draw = (v) => {
-    refreshCapabilitiesBadge(v);
     const nodes = [];
     if (v.banner) {
       const summary = v.banner.summary.map((s) => `${s.count} ${s.title}`).join(", ");
@@ -2313,7 +2307,7 @@ async function renderCapabilities() {
       nodes.push(el("div", { class: "cap-banner" }, [
         icon("warning", { class: "ico cap-banner-icon" }),
         el("div", {}, [
-          // Leads with the badge's number, then what those switches did.
+          // Leads with how many switches need attention, then what they did.
           el("div", { class: "bt", text:
             `${v.banner.switches} capabilit${oneSwitch ? "y needs" : "ies need"} to be allowed. ` +
             `${oneSwitch ? "It" : "They"} blocked ${v.banner.count} request${one ? "" : "s"}, ` +
@@ -2546,9 +2540,7 @@ async function renderCapabilities() {
         ? [el("div", { class: "cap-sentence" }, [el("p", { class: "lbl", text: "What the agent was told" }), el("span", { text: sentence })])]
         : []),
       el("div", { class: "cap-actions" }, [
-        ...(r.key === "full_disk_access" && r.status !== "granted"
-          ? [el("span", { class: "badge b-amber" }, [el("span", { class: "dot" }), el("span", { text: "Quit and reopen after granting" })])]
-          : []),
+        ...(r.hint ? [el("span", { class: "badge b-amber" }, [el("span", { class: "dot" }), el("span", { text: r.hint })])] : []),
         el("div", { class: "spacer" }),
         inAudit,
         notNow,
@@ -2562,13 +2554,107 @@ async function renderCapabilities() {
     draw(c.view);
   };
   await load();
-  capabilitiesMounted = {
-    applyConnectors,
-    refresh: async () => {
-      await load();
-      await refreshConnectors();
+  return {
+    node: panel,
+    mounted: {
+      applyConnectors,
+      refresh: async () => {
+        await load();
+        await refreshConnectors();
+      },
     },
   };
+}
+
+/**
+ * The Plugins tab: one row per staged plugin — whether it can work right now
+ * and the one thing the owner has to do if it cannot. A met requirement
+ * renders NOTHING; the inventory is Settings' Permissions section. Every
+ * plugin-authored string (name, description) goes through `el`, which sets
+ * textContent — never innerHTML, as in the approval window.
+ */
+async function renderPlugins() {
+  const panel = el("div", { class: "panel settings" });
+  view.replaceChildren(panel);
+  // The three statuses, in the row's own vocabulary: the dot's class and the
+  // word beside the toggle. Amber for needs-setup — it is the owner's to fix.
+  const STATUS = {
+    off: { dot: "", tone: "zinc", word: "Off" },
+    "needs-setup": { dot: " off", tone: "amber", word: "Needs setup" },
+    ready: { dot: " on", tone: "green", word: "Ready" },
+  };
+  const reload = async () => draw(await window.domo.pluginsGet());
+
+  /** A requirement's button, while it is doing its one thing. */
+  const busy = async (button, label, act) => {
+    button.disabled = true;
+    const was = button.textContent;
+    button.textContent = label;
+    try {
+      await act();
+      await reload();
+    } catch {
+      button.disabled = false;
+      button.textContent = was;
+    }
+  };
+
+  const unmetRow = (u) => {
+    const action = el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } });
+    action.addEventListener("click", () => busy(action, "Connecting…", () => window.domo.connectorsConnect()));
+    return el("div", { class: "cap-row plugin-req" }, [
+      el("span", { class: "status-dot off" }),
+      el("div", {}, [
+        el("div", { class: "cap-name", text: "Account" }),
+        el("div", { class: "cap-sub", text: u.id }),
+      ]),
+      action,
+    ]);
+  };
+
+  const pluginRow = (r) => {
+    const s = STATUS[r.status];
+    const box = el("input", { attrs: { type: "checkbox" } });
+    box.checked = r.status !== "off";
+    box.addEventListener("change", async () => {
+      box.disabled = true;
+      try {
+        draw(await window.domo.pluginsSetEnabled(r.name, box.checked));
+      } catch {
+        box.checked = !box.checked;
+        box.disabled = false;
+      }
+    });
+    const head = el("div", { class: "cap-row plugin-row" }, [
+      el("span", { class: "status-dot" + s.dot, attrs: { title: s.word } }),
+      el("div", {}, [
+        el("div", { class: "cap-name plugin-name" }, [
+          el("span", { text: r.name }),
+          badge("zinc", "CLI"),
+        ]),
+        r.description ? el("div", { class: "cap-sub", text: r.description }) : null,
+      ]),
+      badge(s.tone, s.word),
+      el("label", { class: "check plugin-switch", attrs: { title: "Turn this plugin on or off" } }, [box]),
+    ]);
+    return el("div", { class: "cap-group open" }, [
+      head,
+      r.unmet.length ? el("div", { class: "cap-group-rows" }, r.unmet.map(unmetRow)) : null,
+    ]);
+  };
+
+  const draw = (state) => {
+    panel.replaceChildren(group(
+      "Plugins",
+      "The tools agents can run on this Mac. Turning one off unpublishes its skill and refuses its commands.",
+      state.rows.length
+        ? state.rows.map(pluginRow)
+        : [el("p", { class: "faint", text: "No plugins are installed on this Mac." })],
+    ));
+  };
+
+  draw(await window.domo.pluginsGet());
+  pluginsMounted = { refresh: reload };
 }
 
 async function renderSettings() {
@@ -2753,6 +2839,13 @@ async function renderSettings() {
 
   // What a status change re-reads: display nodes only, every one of them read
   // back from main rather than remembered here.
+  // The permission inventory and the connected accounts, which used to be a
+  // tab of their own: the machine-configuration view, where it belongs. Drawn
+  // before the pane is assembled so a switch is on screen with everything else.
+  const permissions = await permissionsPane();
+  if (generation !== settingsRenderGeneration || currentTab !== "settings") return;
+  permissionsMounted = permissions.mounted;
+
   const mounted = {
     refresh: async () => {
       await refreshAccount();
@@ -2803,6 +2896,7 @@ async function renderSettings() {
         ]),
       ]),
     ]),
+    permissions.node,
     group("Software Updates", `Version ${u.currentVersion}`, [
       el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
       autoCheckLabel,
@@ -2844,7 +2938,7 @@ function render() {
   else if (currentTab === "audit") renderAudit();
   else if (currentTab === "rules") renderRules();
   else if (currentTab === "vault") renderVault(view, () => currentTab === "vault");
-  else if (currentTab === "capabilities") renderCapabilities();
+  else if (currentTab === "plugins") renderPlugins();
   else if (currentTab === "settings") renderSettings();
 }
 
@@ -2866,8 +2960,8 @@ async function selectTab(tab) {
     closeCloudModal();
   }
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
-  if (tab !== "settings") settingsMounted = null;
-  if (tab !== "capabilities") capabilitiesMounted = null;
+  if (tab !== "settings") settingsMounted = permissionsMounted = null;
+  if (tab !== "plugins") pluginsMounted = null;
   if (tab !== "agents") agentsMounted = null;
   if (tab !== "rules") rulesMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
@@ -2888,12 +2982,12 @@ window.domo.onAuditChanged((change) => {
   if (currentTab === "audit") refreshAudit({ followTop: true, changed: new Set(change?.ids ?? ["*"]) });
 });
 // A block by this Mac is an audit row, and the only kind that moves the
-// Capabilities tab's badge, lines and banner — main says so only for those,
+// Permissions section's lines and banner — main says so only for those,
 // because refreshing the tab takes the standing permission inventory (a
 // helper process per switch), which every audit line used to trigger.
 window.domo.onCapabilitiesChanged(() => {
-  if (currentTab === "capabilities") capabilitiesMounted?.refresh();
-  else refreshCapabilitiesBadge();
+  if (currentTab === "plugins") pluginsMounted?.refresh();
+  if (currentTab === "settings") permissionsMounted?.refresh();
 });
 window.domo.onStatusChanged(() => {
   refreshStatus();
@@ -2914,7 +3008,9 @@ window.domo.onRulesChanged(() => {
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onConnectorsChanged((state) => {
-  if (currentTab === "capabilities") capabilitiesMounted?.applyConnectors(state);
+  if (currentTab === "settings") permissionsMounted?.applyConnectors(state);
+  // Connecting an account can be the requirement a plugin was waiting on.
+  if (currentTab === "plugins") pluginsMounted?.refresh();
 });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
@@ -2938,11 +3034,10 @@ window.domo.onConfirmLeave(async (hasPendingAgentSetup) => {
 window.domo.onShowSettings(async () => {
   if (await selectTab("settings")) window.domo.updatesCheck();
 });
-// The tray item and the notification for a block by this Mac land here —
-// on the switch's row when the block named one, else on the Audit tab's
-// Blocked view, where the row carries the sentence that fixes it.
+// A block by this Mac lands on its switch in Settings; one that named no
+// permission goes to onShowAuditBlocked instead.
 window.domo.onShowCapabilities(async () => {
-  if (await selectTab("capabilities")) window.domo.uiSetTab("capabilities");
+  if (await selectTab("settings")) window.domo.uiSetTab("settings");
 });
 window.domo.onShowAuditBlocked(() => showAuditBlocked());
 // Another app handed main a credential exchange (Apple Passwords' export):
@@ -2958,9 +3053,11 @@ window.domo.onVaultExchange(async () => {
 // this app when it does — the moment a pane can learn the outcome is when
 // the person comes back.
 window.addEventListener("focus", () => {
-  if (currentTab === "settings") settingsMounted?.refresh();
-  if (currentTab === "capabilities") capabilitiesMounted?.refresh();
-  else refreshCapabilitiesBadge();
+  if (currentTab === "settings") {
+    settingsMounted?.refresh();
+    permissionsMounted?.refresh();
+  }
+  if (currentTab === "plugins") pluginsMounted?.refresh();
 });
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
@@ -2968,9 +3065,8 @@ async function boot() {
   refreshStatus();
   refreshUpdateBanner();
   const saved = await window.domo.uiGetTab();
-  const known = ["agents", "audit", "rules", "vault", "capabilities", "settings"];
+  const known = ["agents", "audit", "rules", "vault", "plugins", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
-  refreshCapabilitiesBadge();
   // A credential exchange can arrive before this window exists (the system
   // launches the app for it); the push above then had no listener, so ask.
   // Only when landing elsewhere: a boot onto the Vault tab found it already.

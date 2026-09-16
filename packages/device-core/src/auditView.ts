@@ -151,7 +151,7 @@ export interface AuditActivity {
   /** When the row starts, as the log wrote it (ISO 8601): the table's Time
    *  column (formatted by the renderer at draw time) and the date filter. */
   ts: string;
-  /** When this Mac refused it, if it did — the moment the Capabilities tab
+  /** When this Mac refused it, if it did — the moment the Permissions section
    *  counts by, so "Show in Audit" keys its cutoff on the block rather than
    *  on a request that may have started before the dismissal. */
   blockedAt: string | null;
@@ -174,7 +174,7 @@ export interface AuditActivity {
   decisionKind: DecisionKind;
   /** The Status filter's bucket. `blocked` is this Mac itself refusing (a
    *  macOS permission, a waiting dialog, the sandbox bound) — its own bucket,
-   *  because it is the one the Capabilities tab links into. `none` for a row
+   *  because it is the one the Permissions section links into. `none` for a row
    *  with no outcome, which only "any" shows. */
   statusKind: StatusKind;
   command: string | null;
@@ -184,7 +184,7 @@ export interface AuditActivity {
   intentId: string | null;
   exitCode: number | null;
   /** The macOS switch a block by this Mac named, in System Settings' words
-   *  ("Full Disk Access") — what the Capabilities tab's "Show in Audit"
+   *  ("Full Disk Access") — what the Permissions section's "Show in Audit"
    *  searches for. Null for everything else. */
   permission: string | null;
   capabilities: string[];

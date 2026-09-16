@@ -7,6 +7,12 @@
  * because a PluginError reaches the owner directly — the installer's caller,
  * or launch-time stderr — never the audit log or an agent.
  */
+
+/** The account connectors this Mac can connect — "Connect Google" is the only
+ *  button the Plugins tab can offer, so any other id is a requirement nothing
+ *  can ever meet. Refused at the boundary. */
+const ACCOUNT_IDS: ReadonlySet<string> = new Set(["google"]);
+
 export class PluginError extends Error {
   constructor(message: string) {
     super(message);
@@ -15,6 +21,13 @@ export class PluginError extends Error {
 }
 
 export type EnvSource = { fixed: string };
+
+/** What a plugin needs before it can work. One kind today — a connector the
+ *  owner must connect — keyed so another is a field added, not a reshaping.
+ *  Present and empty when the manifest omits it. */
+export interface PluginRequires {
+  accounts: string[]; // a connector id the app can connect, e.g. "google"
+}
 
 export interface PluginManifest {
   name: string; // ^[a-z][a-z0-9-]{0,31}$
@@ -33,6 +46,7 @@ export interface PluginManifest {
   env: Record<string, EnvSource>;
   argv: { read: string[][]; write: string[][] };
   hooks: { postinstall?: string };
+  requires: PluginRequires;
   skill: string | null; // path in repo/, or null when a code layer publishes the skill
 }
 
@@ -73,6 +87,13 @@ function typedArray(v: unknown, what: string): unknown[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) fail(`${what} must be an array`);
   return v;
+}
+/** A present-but-wrong-type list is refused, never coerced; absent is empty. */
+function strList(v: unknown, field: string): string[] {
+  return typedArray(v, field).map((e: unknown) => {
+    if (typeof e !== "string") fail(`${field} entries must be strings`);
+    return e;
+  });
 }
 /** Absent stays absent (caller applies its own default); a present value of the wrong type is refused, never stringified. */
 function typedString(v: unknown, what: string): string | undefined {
@@ -166,6 +187,15 @@ export function parseManifest(raw: string): PluginManifest {
     }
   }
 
+  // Names the field, never the value: a requirement id is third-party text.
+  const req = typedObj(m.requires, "requires");
+  const requires: PluginRequires = {
+    accounts: strList(req.accounts, "requires.accounts").map((e) => {
+      if (!ACCOUNT_IDS.has(e)) fail("requires.accounts entries must name an account connector this Mac offers");
+      return e;
+    }),
+  };
+
   const hooks = obj(m.hooks);
   const postinstall = hooks.postinstall === undefined ? null : insideOrFail(hooks.postinstall, "hooks.postinstall");
   const skill = m.skill === undefined ? null : insideOrFail(m.skill, "skill");
@@ -180,6 +210,7 @@ export function parseManifest(raw: string): PluginManifest {
     env,
     argv: { read: read as string[][], write: write as string[][] },
     hooks: postinstall === null ? {} : { postinstall },
+    requires,
     skill,
   };
 }

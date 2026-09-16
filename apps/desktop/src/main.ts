@@ -53,7 +53,7 @@ import {
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission } from "@domo/device-core";
+import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission, StagedPlugin } from "@domo/device-core";
 import { approvalViewModel, CredentialTitles } from "./viewModel.js";
 import { AuditIndex, AuditQuery } from "./auditIndex.js";
 
@@ -61,6 +61,7 @@ import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
+import { pluginRows } from "./pluginsModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -231,6 +232,9 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let connectors: Connectors | null = null;
+/** What `loadPlugins` found at startup — the Plugins tab's inventory, and the
+ *  list the owner's off switch selects from. Empty until whenReady. */
+let stagedPlugins: readonly StagedPlugin[] = [];
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let agentToken: string | null = null;
@@ -610,10 +614,8 @@ ipcMain.handle("ui:getTab", async () => {
     void cloudAgents?.refresh();
     void connectClient?.refreshRoster();
   }
-  // "connect" was this tab's key before the content went to Settings and came
-  // back as "agents". Anyone who left the app on it lands where that content
-  // lives now, rather than silently on the default tab.
-  return tab === "connect" ? "agents" : tab;
+  // Retired keys land where their content lives now, not on the default tab.
+  return tab === "connect" ? "agents" : tab === "capabilities" ? "plugins" : tab;
 });
 ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
@@ -1342,7 +1344,7 @@ ipcMain.handle("capabilities:get", async () => {
   };
 });
 
-// MARK: The Capabilities tab (capabilitiesModel.ts)
+// MARK: The permission inventory, in Settings (capabilitiesModel.ts)
 
 /**
  * The icon beside a row or group — macOS's own, never drawn here: the app's
@@ -1566,6 +1568,40 @@ ipcMain.handle("capabilities:dismiss", async (_e, rawKey: unknown) => {
 ipcMain.handle("capabilities:bannerSeen", async () => {
   saveSettings(home, { ...loadSettings(home), blockedBannerSeenAt: new Date().toISOString() });
   return capabilitiesNow();
+});
+
+// MARK: The Plugins tab (pluginsModel.ts)
+
+/** The whole tab, fresh: what is staged, and what each plugin still needs. */
+function pluginsNow(): { rows: ReturnType<typeof pluginRows> } {
+  const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
+  const rows = pluginRows({
+    plugins: stagedPlugins.map((p) => ({
+      manifest: p.manifest,
+      enabled: !disabled.has(p.manifest.name),
+      description: device?.pluginDescription(p.manifest.name) ?? null,
+    })),
+    // One connector today, and it is connected exactly when an account is.
+    connectedAccounts: (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [],
+  });
+  return { rows };
+}
+
+ipcMain.handle("plugins:get", async () => pluginsNow());
+
+/** The owner's off switch: the disabled NAMES persist (a later plugin is on
+ *  by default), and the device is told in the same breath, so the skill and
+ *  the exec gate follow without a relaunch. */
+ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
+  if (stagedPlugins.some((p) => p.manifest.name === name)) {
+    const settings = loadSettings(home);
+    const disabled = new Set(settings.disabledPlugins ?? []);
+    if (on) disabled.delete(name);
+    else disabled.add(name);
+    saveSettings(home, { ...settings, disabledPlugins: [...disabled] });
+    device?.setDisabledPlugins([...disabled]);
+  }
+  return pluginsNow();
 });
 // The floating panel's poll: has the switch it points at landed?
 ipcMain.handle("grant:state", async () => {
@@ -2140,6 +2176,8 @@ app.whenReady().then(async () => {
     if (e instanceof PluginError) console.error(`[plugins] ${e.message}`);
     throw e;
   }
+  // What the Plugins tab lists, and what its off switch selects from.
+  stagedPlugins = plugins;
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -2163,6 +2201,9 @@ app.whenReady().then(async () => {
     // degrades — the same contract as the Full Disk Access tracker.
     nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath, native: nativePermissions() }),
   );
+  // The owner's off switches, as they left them: one call, and the device
+  // publishes exactly the skills it will honour commands for.
+  device.setDisabledPlugins(loadSettings(home).disabledPlugins ?? []);
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,
   // not only in the approvals directory.
@@ -2216,8 +2257,8 @@ app.whenReady().then(async () => {
   device.audit.events.on("reset", () => {
     if (auditIndex !== null) auditIndex.reset(device?.audit.entries() ?? []);
     auditChanged([], true);
-    // A clear takes the blocks the Capabilities tab counts with it, and a
-    // rotation can age some out: the tab reads the log too, so it re-reads.
+    // A clear takes the blocks the Plugins tab counts with it, and a rotation
+    // can age some out: both panes read the log too, so they re-read.
     notifyRenderer("capabilities:changed");
   });
   // A block by this Mac itself is the owner's to clear, and the owner is
@@ -2227,14 +2268,15 @@ app.whenReady().then(async () => {
     if (entry.event === "host_permission_blocked") noteHostGateBlock(entry.fields);
     if (entry.event === "host_permission_cleared") clearHostGateAttention(entry.fields);
     // The three folders have no query: what a run's dialog was answered
-    // with, or a touch that got through, is what the Capabilities row
-    // has to go on — the same memo the row's own button writes.
+    // with, or a touch that got through, is what the permission row has to
+    // go on — the same memo the row's own button writes.
     if (entry.event === "host_permission_cleared" || entry.event === "host_permission_observed") {
       learnFolderConsent(entry.fields);
     }
-    // Only these lines change what the Capabilities tab shows (its badge, a
-    // row's line, the banner). Every other event used to refresh it too —
-    // the standing inventory, a dozen helper processes, per audit line.
+    // Only these lines change what the Plugins tab and Settings' Permissions
+    // section show (the badge, a row's line, the banner). Every other event
+    // used to refresh them too — the standing inventory, a dozen helper
+    // processes, per audit line.
     if (entry.event.startsWith("host_permission_")) notifyRenderer("capabilities:changed");
   });
   // Usage stats ride the same funnel as the audit log — one source of truth
@@ -2632,12 +2674,10 @@ function clearHostGateAttention(fields: { [k: string]: unknown }): void {
 }
 
 /**
- * The tray item's and the notification's one destination. A block that
- * names a switch lands on the Capabilities tab, where that switch shows
- * what it stopped and the grant flow starts. One that names none — a
- * locked file, a SIP root, POSIX permissions — has no row there (the tab
- * lists switches), so it lands on the Audit tab's Blocked view, where the
- * row carries the sentence that fixes it.
+ * The tray item's and the notification's one destination: a block that names
+ * a permission lands on its switch, in Settings; one that names none (a locked
+ * file, a SIP root) lands on the Audit tab's Blocked view, where the row
+ * carries the sentence that fixes it.
  */
 function showCapabilitiesForHostGate(block?: NonNullable<typeof hostGateAttention>): void {
   const permission = block ? block.permission : (hostGateAttention?.permission ?? null);

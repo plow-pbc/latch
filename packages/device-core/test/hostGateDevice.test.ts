@@ -737,7 +737,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     // run fails with a refusal. The verdict on record — a dialog — is now
     // wrong, so the clearing is recorded and the refusal is recorded as a
     // second block under the same handle: the poll, the audit row and the
-    // Capabilities tab all take the newest.
+    // Permissions section all take the newest.
     const home = tempDir();
     const downloads = path.join(home, "Downloads");
     fs.mkdirSync(downloads);
@@ -1079,7 +1079,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     // What a packaged build saw for real: Automation for Contacts granted,
     // the first script answered, the second — walking every person's
     // phones — exited 1 with "File permission error. (-54)". That is
-    // Contacts data access refusing the app, and the Capabilities tab has
+    // Contacts data access refusing the app, and the Permissions section has
     // the row (and the prompt) for it.
     const home = tempDir();
     const probes = scriptedProbes({ automation: { Contacts: "granted" }, permissions: { contacts: "denied" } });

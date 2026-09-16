@@ -18,6 +18,7 @@ import {
   impliesNetwork,
   loadPlugins,
   MintError,
+  providerFor,
   type Minter,
   type PolicyDelegate,
   type Provider,
@@ -96,9 +97,9 @@ function gogPlugin(): StagedPlugin[] {
   return stagedGog('#!/bin/sh\necho "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*"\n');
 }
 
-function device(minter: Minter | null, plugins: StagedPlugin[]): DeviceAgent {
+function device(minter: Minter | null, plugins: StagedPlugin[], home: string = tmp()): DeviceAgent {
   return new DeviceAgent(
-    tmp(),
+    home,
     "Test Mac",
     new HeadlessPolicy({ intent: "allow_once" }),
     null,
@@ -351,6 +352,32 @@ describe("a provider through the exec path", () => {
  * closes: reachable on the manifest alone, not a second dispatch system
  * beside providers.
  */
+const ECHOER_MANIFEST = {
+  name: "echoer", version: "test", command: "echoer",
+  runtime: {
+    binaries: [{
+      name: "echo-bin", version: "test",
+      url: { arm64: "https://example.invalid/e-arm64.tar.gz", x64: "https://example.invalid/e-x64.tar.gz" },
+      sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
+    }],
+  },
+  exec: { argv: ["echo-bin", "--quiet"] },
+  env: {}, argv: { read: [["say"]], write: [] },
+  skill: "skill.md",
+};
+
+/** A staged echoer plugin whose binary runs `script`, with a skill.md the
+ * manifest names (fakePlugin only stages the binary, not this). */
+function echoerPlugin(script: string): StagedPlugin[] {
+  const root = tmp();
+  const dir = fakePlugin(root, ECHOER_MANIFEST, script);
+  fs.writeFileSync(
+    path.join(dir, "skill.md"),
+    "---\nname: echoer\ndescription: says things\n---\nSay what the owner asks.\n",
+  );
+  return loadPlugins([root]);
+}
+
 describe("a staged non-provider plugin through the exec path", () => {
   // The binary's staged name ("echo-bin") and the manifest's own command
   // ("echoer") are deliberately different strings: the agent's argv[0] is
@@ -359,32 +386,6 @@ describe("a staged non-provider plugin through the exec path", () => {
   // exec path ever resolved off the caller's argv[0] instead of the
   // manifest's own entrypoint, these two being the same string (as they
   // were before) would hide it.
-  const ECHOER_MANIFEST = {
-    name: "echoer", version: "test", command: "echoer",
-    runtime: {
-      binaries: [{
-        name: "echo-bin", version: "test",
-        url: { arm64: "https://example.invalid/e-arm64.tar.gz", x64: "https://example.invalid/e-x64.tar.gz" },
-        sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
-      }],
-    },
-    exec: { argv: ["echo-bin", "--quiet"] },
-    env: {}, argv: { read: [["say"]], write: [] },
-    skill: "skill.md",
-  };
-
-  /** A staged echoer plugin whose binary runs `script`, with a skill.md the
-   * manifest names (fakePlugin only stages the binary, not this). */
-  function echoerPlugin(script: string): StagedPlugin[] {
-    const root = tmp();
-    const dir = fakePlugin(root, ECHOER_MANIFEST, script);
-    fs.writeFileSync(
-      path.join(dir, "skill.md"),
-      "---\nname: echoer\ndescription: says things\n---\nSay what the owner asks.\n",
-    );
-    return loadPlugins([root]);
-  }
-
   it("publishes the plugin's own manifest-declared skill only when it is staged", () => {
     expect(device(null, echoerPlugin("#!/bin/sh\n")).skills.manifest().map((s) => s.name)).toContain("echoer");
     expect(device(null, []).skills.manifest().map((s) => s.name)).not.toContain("echoer");
@@ -1127,5 +1128,93 @@ esac
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
     expect(jv(response).get("error").str).toMatch(/could not reach Plow/);
     expectNeverSpawned(d);
+  });
+});
+
+/**
+ * The owner's off switch (`setDisabledPlugins`), which the Plugins tab drives.
+ *
+ * Off is asserted where it has to hold rather than on the setter: the skill is
+ * withdrawn from what `plow_list_skills` advertises, and the command is
+ * refused at the pre-intent chokepoint with nothing spawned — the same two
+ * consequences a plugin that was never staged has.
+ */
+describe("a plugin the owner turned off", () => {
+  const GOG_SKILL = providerFor(["plow-gog"])!.skill.name;
+  const publishes = (d: DeviceAgent): boolean => d.skills.manifest().some((s) => s.name === GOG_SKILL);
+
+  it("unpublishes the skill and refuses the command, and both come back when it is turned on", async () => {
+    const d = device(okMinter(), gogPlugin());
+    expect(publishes(d)).toBe(true);
+
+    d.setDisabledPlugins(["gog"]);
+    expect(publishes(d)).toBe(false);
+    // Unpublished, but the row that offers to turn it back on is not blank.
+    expect(d.pluginDescription("gog")).toBe(providerFor(["plow-gog"])!.skill.description);
+    // Refused by name before any card, and again at the executor.
+    expect(d.pluginRefusal(["plow-gog", "gmail", "search", "q"])).toBe("plow-gog is turned off on this Mac");
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(jv(response).get("error").str).toBe("plow-gog is turned off on this Mac");
+    expectNeverSpawned(d);
+
+    d.setDisabledPlugins([]);
+    expect(publishes(d)).toBe(true);
+  });
+
+  // Off at approval is not the question — off NOW is. The mint is a network
+  // wait the owner can flip the switch during, and a token minted for a
+  // plugin that is off by the time it returns must never reach a child.
+  it("never launches a credentialed child for a plugin turned off during the mint", async () => {
+    let d: DeviceAgent | null = null;
+    const flipsDuringMint = minterOf(async () => { d!.setDisabledPlugins(["gog"]); return TOKEN; });
+    const ran = path.join(tmp(), "ran");
+    d = device(flipsDuringMint, stagedGog(`#!/bin/sh\ntouch "${ran}"\n`));
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(jv(response).get("error").str).toBe("plow-gog is turned off on this Mac");
+    // Refused at the launch seam itself — after exec_start, before any child.
+    expect(fs.existsSync(ran)).toBe(false);
+    expect(d.audit.entries().map((e) => jv(e).get("event").str)).not.toContain("exec_end");
+  });
+
+  // A non-provider plugin has no PROVIDERS row to refuse through, and its
+  // command may well also be a real binary on PATH — off has to refuse by
+  // name at both chokepoints, never fall through to running that binary.
+  it("refuses a non-provider plugin's command by name rather than falling through to PATH", async () => {
+    const d = device(null, echoerPlugin("#!/bin/sh\necho ran\n"));
+    d.setDisabledPlugins(["echoer"]);
+    expect(d.skills.manifest().map((s) => s.name)).not.toContain("echoer");
+    expect(d.pluginRefusal(["echoer", "say", "hi"])).toBe("echoer is turned off on this Mac");
+    const response = await run(d, ["echoer", "say", "hi"]);
+    expect(jv(response).get("error").str).toBe("echoer is turned off on this Mac");
+    expectNeverSpawned(d);
+  });
+
+  /**
+   * Owner skills load last so the owner wins, but a later toggle re-runs the
+   * plugin sync — which used to re-register the built-in over the owner's
+   * file under the same name, and unregister it on the way down. What an
+   * agent is advertised and reads has to be the owner's, at every point in
+   * the cycle.
+   */
+  it("never lets a plugin toggle overwrite a skill the owner wrote under the same name", () => {
+    const home = tmp();
+    fs.mkdirSync(path.join(home, "device/skills"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, "device/skills/gog.md"),
+      `---\nname: ${GOG_SKILL}\ndescription: The owner's own notes.\n---\nDrive it this way.\n`,
+    );
+    const d = device(okMinter(), gogPlugin(), home);
+    const advertised = () => d.skills.manifest().find((s) => s.name === GOG_SKILL)?.description;
+    // The Plugins tab's row reads the same sentence the agent does — and while
+    // the plugin is off, the declared one rather than a blank row.
+    expect(advertised()).toBe("The owner's own notes.");
+    expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
+    d.setDisabledPlugins(["gog"]);
+    expect(advertised()).toBe("The owner's own notes.");
+    expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
+    d.setDisabledPlugins([]);
+    expect(advertised()).toBe("The owner's own notes.");
+    expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
+    expect(d.skills.skill(GOG_SKILL)?.body).toBe("Drive it this way.");
   });
 });

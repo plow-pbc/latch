@@ -427,6 +427,9 @@ export class Executor {
   async run(args: {
     argv: string[];
     cwd?: string;
+    /** The caller's last word, asked after every wait this run makes and
+     *  before anything launches: a sentence refuses the launch with it. */
+    guard?: () => string | null;
     readPaths: string[];
     writePaths: string[];
     network: boolean;
@@ -479,6 +482,8 @@ export class Executor {
     };
     // No new writer over what a hold is about, while it is out.
     while (this.conflicts(writableRoots(profileArgs))) await new Promise<void>((wake) => this.holdWaiters.push(wake));
+    const refusal = args.guard?.() ?? null;
+    if (refusal !== null) throw new ExecutorError(refusal);
     const profile = SandboxProfile.generate(profileArgs);
     this.profiles.set(handle, profileArgs);
     if (process.env.DOMO_DEBUG_SANDBOX) {

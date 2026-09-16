@@ -17,6 +17,7 @@
       }
     ]
   },
+  "requires": { "accounts": ["google"] },
   "exec": { "argv": ["gog", "--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"] },
   "env": {},
   "argv": { "read": [], "write": [] },

@@ -320,7 +320,7 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
 - A parked run's verdict is provisional and the exit corrects the record: a
   run let through the dialog gets a `host_permission_cleared` line, and one
   the owner refused gets a second `host_permission_blocked` under the same
-  handle. The Audit tab and the Capabilities tab both fold the log in the
+  handle. The Audit tab and the Permissions section both fold the log in the
   order it was written — a clearing removes the verdict, a later block
   replaces it — so the agent's answer and the owner's views never disagree
   about how a run ended, and a "Needs …" tray item comes down with the
@@ -328,7 +328,7 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   something since is parked no longer, and a poll never reports a dialog
   beside the output that proves it gone. The battery reads a run's stderr,
   never its merged output: a program's stdout can carry any phrase at all. A block that names no switch (a locked file, a SIP root, POSIX
-  permissions) has no row on the Capabilities tab, so its tray item and
+  permissions) has no row on the Permissions section, so its tray item and
   notification land on the Audit tab's Blocked view instead.
 - An app can refuse the COMMAND for coming from a sandboxed sender after
   the event was delivered and consent was granted: AppleScript's `-10004`,
@@ -341,12 +341,12 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   sandbox is the app's own refusal and names no gate at all. A script run's
   failures otherwise take the same battery as a command's, with the app the
   agent named as the automation target, so a denied or never-asked
-  Automation grant lands on the Capabilities tab's row for it either way.
+  Automation grant lands on the Permissions section's row for it either way.
 - A scripted app can refuse its DATA after the event itself was delivered:
   AppleScript's `-54` from Contacts.app or Calendar.app is that service's
   own privacy permission for the calling app, which a scripted read never
   prompts for. The battery asks the service's status (the same query the
-  Capabilities tab's row uses) and the verdict names the service, not
+  Permissions section's row uses) and the verdict names the service, not
   Automation. And a failed command with no verdict says so — `host_gate:
   "none"` — because an agent left to read a program's own error text will
   find a permission in it and send the owner to System Settings for nothing.
@@ -394,9 +394,10 @@ touches another application's data.
 Full Disk Access and the folder gates have no request API and no query API;
 the first access *is* the request. So the grants are asked for **while the
 owner is at the Mac**. Setup's "Data & permissions" step offers Full Disk
-Access through the drag-to-grant flow; after that the **Capabilities tab**
+Access through the drag-to-grant flow; after that the **Permissions section**
 (`apps/desktop/src/capabilitiesModel.ts`) is the one home for every switch:
-Full Disk Access (and, only while it is off, the three folders it covers),
+Full Disk Access (and, until it is granted AND a sandboxed child inherits
+it, the three folders it covers),
 Contacts, Calendars and Accessibility, Automation consent per app agents are
 asked to drive, and a section for anything a block named that the tab has
 no button for. Beside each row sits what it stopped — the audit log's blocks
@@ -538,7 +539,7 @@ repo can prove they broke nothing.
   (`apps/desktop/src/auditIndex.ts`): parsed once on first use, then each
   recorded event is folded into the one or two rows it touches, a rotation
   or a clear rebuilds it from the files, and the renderer is served a page
-  of rows (no timelines) plus the selected row by id. The Capabilities tab
+  of rows (no timelines) plus the selected row by id. The Permissions section
   folds the log as the index holds it and refreshes only when a
   `host_permission_*` line is written. Nothing re-reads the log per event: that
   re-read, the regroup of every event behind it, and a locale time format
@@ -751,7 +752,10 @@ registration site and the canonical list of what ships; this paragraph names no
 inventory, so a new skill cannot make it drift. A skill naming a capability this
 Mac lacks is a guaranteed denial, so its absence is the honest answer instead. Every probe runs once, in
 the `DeviceAgent` constructor — installing WhatsApp, or staging a plugin,
-after launch needs a restart to publish the skill. A provider carries its skill
+after launch needs a restart to publish the skill. The one live exception is
+the owner's plugin off switch: `syncPluginSkills` owns that lifecycle,
+publishing each staged plugin's skill while it is on and loading the owner's
+own `device/skills` files last, at launch and on every toggle. A provider carries its skill
 on its registry row rather than being registered under a literal elsewhere, so
 the provider's name has one spelling and a rename cannot silently unpublish it.
 `whatsapp-history` is also why the registry takes a *built* skill and not only
