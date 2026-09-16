@@ -41,7 +41,7 @@ describe("pluginRows status", () => {
 
 it("names an unmet requirement with the action that fixes it, and stays silent once met", () => {
   const unmet = (connected: string[]) => pluginRows(build({ requires: { accounts: ["google"] }, enabled: true, connected }))[0]!.unmet;
-  expect(unmet([])).toEqual([{ kind: "account", id: "google", action: "Connect Google" }]);
+  expect(unmet([])).toEqual([{ id: "google", action: "Connect Google" }]);
   expect(unmet(["google"])).toEqual([]);
 });
 
@@ -66,7 +66,7 @@ describe("the shipped plugins", () => {
     parseManifest(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", name, "latch-plugin.json"), "utf8"));
 
   it.each([
-    { connected: [] as string[], status: "needs-setup", unmet: [{ kind: "account", id: "google", action: "Connect Google" }] },
+    { connected: [] as string[], status: "needs-setup", unmet: [{ id: "google", action: "Connect Google" }] },
     { connected: ["google"], status: "ready", unmet: [] },
   ])("reads gog as $status with connected accounts $connected", ({ connected, status, unmet }) => {
     const [row] = pluginRows({ plugins: [{ manifest: shipped("gog"), enabled: true }], connectedAccounts: connected });

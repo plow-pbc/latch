@@ -10,7 +10,6 @@ import type { PluginManifest } from "@domo/device-core";
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
 export interface UnmetRequirement {
-  kind: "account";
   id: string;
   /** What the owner's button does, in their words: "Connect Google". */
   action: string;
@@ -38,7 +37,7 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
   return input.plugins.map(({ manifest, enabled, description }) => {
     const unmet: UnmetRequirement[] = manifest.requires.accounts
       .filter((id) => !accounts.has(id))
-      .map((id) => ({ kind: "account", id, action: `Connect ${id === "google" ? "Google" : id}` }));
+      .map((id) => ({ id, action: "Connect Google" }));
     // Off wins: a disabled plugin's unmet requirements are not the owner's
     // problem until they turn it back on.
     const status: PluginStatus = !enabled ? "off" : unmet.length > 0 ? "needs-setup" : "ready";

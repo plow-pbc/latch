@@ -39,7 +39,7 @@ describe("parseManifest", () => {
     expect(m.requires).toEqual({ accounts: [] });
   });
 
-  it("keeps every declared requirement, including an underscored permission id", () => {
+  it("keeps a declared account requirement", () => {
     const requires = { accounts: ["google"] };
     expect(parseManifest(withPatch({ requires })).requires).toEqual(requires);
   });

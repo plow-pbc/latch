@@ -2173,8 +2173,8 @@ async function refreshUpdateBanner() {
 
 // ---- Plugins, and the permission inventory Settings holds ----
 // Two panes, one shape each, both from IPC: the Plugins tab draws
-// `pluginsModel.ts`'s rows (what each plugin still needs, and what that has
-// blocked), and Settings' Permissions section draws `capabilitiesModel.ts`'s
+// `pluginsModel.ts`'s rows (what each plugin still needs), and Settings'
+// Permissions section draws `capabilitiesModel.ts`'s
 // sections, banner and rows. The renderer keeps nothing of its own but which
 // rows are open.
 
@@ -2240,7 +2240,6 @@ async function permissionsPane() {
   // macOS's own icons per row key, from main; kept across redraws (an act
   // answers with the view alone) and refreshed on a full read.
   let icons = {};
-  // Which plugins declare each switch, for the "Used by" line.
   const iconCell = (key) => {
     const src = icons[key];
     return src
@@ -2987,9 +2986,6 @@ window.domo.onAuditChanged((change) => {
 // because refreshing the tab takes the standing permission inventory (a
 // helper process per switch), which every audit line used to trigger.
 window.domo.onCapabilitiesChanged(() => {
-  // A block can move a plugin's row (a switch it needs may now read denied)
-  // and the Permissions section in Settings alike; whichever is on screen
-  // re-reads.
   if (currentTab === "plugins") pluginsMounted?.refresh();
   if (currentTab === "settings") permissionsMounted?.refresh();
 });
