@@ -158,4 +158,22 @@ describe("the shipped plugins", () => {
     });
     expect(row).toMatchObject({ name: "gog", status, unmet });
   });
+
+  it("names a switch canonically even when the map it was handed has no row for it", () => {
+    // A real manifest can only declare ids the parser accepts, and a map from
+    // `permissionStatuses` always answers for those — so this fallback is for
+    // an incomplete map a caller passes, and it still uses the name System
+    // Settings uses, since that pane is where the owner is being sent.
+    // titleCase alone would call this one "Files Desktop".
+    const [row] = pluginRows({
+      plugins: [{ manifest: manifest({ permissions: ["files_desktop"] }), enabled: true }],
+      permissionStatus: {},
+      connectedAccounts: [],
+      availablePaths: [],
+    });
+    expect(row).toMatchObject({
+      status: "needs-setup",
+      unmet: [{ kind: "permission", id: "files_desktop", action: "Grant Desktop folder" }],
+    });
+  });
 });

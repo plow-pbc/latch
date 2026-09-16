@@ -18,7 +18,7 @@
  * remedy, and the remedy does not change with the count.
  */
 import type { PluginManifest } from "@domo/device-core";
-import type { PermissionReadiness } from "./capabilitiesModel.js";
+import { PERMISSION_TITLES, type PermissionReadiness } from "./capabilitiesModel.js";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
@@ -77,7 +77,16 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
       ...needAccounts.filter((id) => !accounts.has(id)).map((id) => ({ kind: "account" as const, id, action: `Connect ${titleCase(id)}` })),
       ...permissions
         .filter((id) => input.permissionStatus[id]?.status !== "granted")
-        .map((id) => ({ kind: "permission" as const, id, action: input.permissionStatus[id]?.repair ?? `Grant ${titleCase(id)}` })),
+        // The fallback is for a map that has no row for the id — a caller's
+        // incomplete input, not a state the view produces. It still uses the
+        // canonical name, because titleCase alone renames real switches
+        // ("Screen Recording" for what System Settings calls "Screen & System
+        // Audio Recording"), and the owner is being sent to that pane.
+        .map((id) => ({
+          kind: "permission" as const,
+          id,
+          action: input.permissionStatus[id]?.repair ?? `Grant ${PERMISSION_TITLES[id] ?? titleCase(id)}`,
+        })),
       ...needPaths.filter((p) => !paths.has(p)).map((id) => ({ kind: "path" as const, id, action: `Create ${id}` })),
     ];
     // Off wins: a disabled plugin's unmet requirements are not the owner's
