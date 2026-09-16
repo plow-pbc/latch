@@ -16,6 +16,7 @@ import {
   DENIAL_SOURCE_NO_REVIEWER,
   DeviceAgent,
   HeadlessPolicy,
+  loadPlugins,
   MAX_FILE_BYTES,
   PolicyDelegate,
 } from "@domo/device-core";
@@ -716,6 +717,38 @@ describe("review findings", () => {
       expect(approvedArgv).not.toContain(attachmentLink);
     });
 
+    // executePlowGog's runGog builds executor.run({...}) with no `cwd` field
+    // at all, so a caller-supplied cwd folded into the capability anyway
+    // would show the owner a card claiming the run happens somewhere it
+    // never will — the same lie the plugin path refuses outright above.
+    // gog is live and first-party, so instead of refusing (which could break
+    // an existing caller) the cwd is stripped before it reaches the
+    // capability the card renders. Reaching decideIntent (not a pre-intent
+    // ToolError) is what shows the call isn't refused, unlike the plugin case.
+    it("a provider's capability carries no cwd, even when the caller supplies one", async () => {
+      let decided = false;
+      let cwd: string | undefined;
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          decided = true;
+          cwd = intent.capabilities.find((c) => c.kind === "process.exec")?.cwd;
+          return "deny" as const;
+        },
+      });
+      const home = tempDir();
+
+      const { isError } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["plow-gog", "gmail", "search", "q"], cwd: home },
+        AGENT,
+      );
+
+      expect(decided).toBe(true);
+      expect(cwd).toBeUndefined();
+      expect(isError).toBe(true); // denied by policy, not refused pre-intent
+    });
+
     // The `allowed` flag the policy sees for a given capability kind, when
     // plow_run_command builds an intent from `argv` + the extra tool args.
     async function allowedFor(
@@ -853,6 +886,175 @@ describe("review findings", () => {
         handle: first.handle,
       });
       expect((store.get("agent-1", second.handle) as { status: string }).status).toBe("ready");
+    });
+  });
+
+  // A staged non-provider plugin's own manifest belt (argv.read/argv.write)
+  // is checked at execution time (deviceAgent.ts's plugin dispatch, in
+  // executeCommand). Without
+  // this same check before an intent exists, an owner could be shown — and
+  // approve — a card for an invocation the device would then refuse: the
+  // capability the card displayed never matched what could run. Same
+  // chokepoint shape as providerRefusal, just above in this file's tools.ts.
+  describe("a staged plugin's own argv belt gates before an intent exists too", () => {
+    function stagePlugin(root: string): void {
+      const dir = path.join(root, "echoer");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "latch-plugin.json"),
+        JSON.stringify({
+          name: "echoer", version: "test", command: "echoer",
+          runtime: { binaries: [], sources: [] },
+          exec: { cwd: "plugin", argv: ["/bin/echo"] },
+          env: {}, argv: { read: [["say"]], write: [] },
+        }),
+      );
+    }
+
+    // One staged "echoer" plugin, a fresh device and server around it, and
+    // cleanup registered — the lifecycle every test below needs, varying
+    // only the policy delegate.
+    function makePluginServer(delegate: PolicyDelegate) {
+      const root = tempDir();
+      stagePlugin(root);
+      const home = tempDir();
+      const device = new DeviceAgent(home, "Test Mac", delegate, null, undefined, null, loadPlugins([root]));
+      const server = createDomoMcpServer(device, {});
+      cleanups.push(() => server.close());
+      return { server, device, root, home };
+    }
+
+    it("refuses an off-allowlist argv before an intent is ever built, never reaching approval", async () => {
+      let decided = false;
+      const { server, device } = makePluginServer({
+        async decideIntent() {
+          decided = true;
+          return "allow_once" as const;
+        },
+      });
+
+      const { isError, payload } = await callTool(server, "plow_run_command", { argv: ["echoer", "shout", "hi"] }, AGENT);
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("echoer allows: say");
+      // The refusal never became an approval decision, and nothing was audited.
+      expect(decided).toBe(false);
+      expect(events(device)).not.toContain("exec_start");
+    });
+
+    // A plugin's own dispatch (deviceAgent.ts's executeCommand) always execs
+    // in the plugin's own directory — a caller-supplied cwd is never read.
+    // Folding it into the capability anyway would show the owner an
+    // approval card claiming the run happens somewhere it never will.
+    // Refused by name, same as env
+    // above, rather than silently dropped: a silent drop would let an agent
+    // believe it chose a cwd it didn't.
+    it("refuses a caller-supplied cwd for a plugin before an intent is ever built", async () => {
+      let decided = false;
+      const { server, device, home } = makePluginServer({
+        async decideIntent() {
+          decided = true;
+          return "allow_once" as const;
+        },
+      });
+
+      const { isError, payload } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["echoer", "say"], cwd: home },
+        AGENT,
+      );
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("cwd");
+      expect(decided).toBe(false);
+      expect(events(device)).not.toContain("exec_start");
+    });
+
+    // The refusal is unconditional on cwd being present at all — never
+    // conditional on its value differing from the plugin's own directory.
+    // Pins that a later "only refuse when cwd disagrees with plugin.dir"
+    // special case would fail this test rather than silently reopening the
+    // gap: a plugin's own dispatch always execs in plugin.dir regardless, so
+    // even a cwd that happens to equal it is still a caller belief the card
+    // would have to lie about if it were ever allowed through.
+    it("refuses a caller-supplied cwd equal to the plugin's own directory too", async () => {
+      let decided = false;
+      const { server, device, root } = makePluginServer({
+        async decideIntent() {
+          decided = true;
+          return "allow_once" as const;
+        },
+      });
+
+      const pluginDir = path.join(root, "echoer");
+      const { isError, payload } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["echoer", "say"], cwd: pluginDir },
+        AGENT,
+      );
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("cwd");
+      expect(decided).toBe(false);
+      expect(events(device)).not.toContain("exec_start");
+    });
+
+    // The security finding this pins: the sandbox must never grant more than
+    // the card disclosed. Before this, a staged plugin's own directory was
+    // substituted at execution time and never shown to the approver at all —
+    // the card said `Run: echoer say` with no directory, while the sandbox
+    // then granted a recursive read over `plugin.dir`. Now `mcp-server`
+    // resolves that directory itself, before the intent is built, and puts
+    // it in the very capability the approver is shown — same as any other
+    // `cwd` (capability.ts's `capabilityDisplay`).
+    it("offers the plugin's own directory as the approved cwd, so the card shows the true run location", async () => {
+      let cwd: string | undefined;
+      const { server, root } = makePluginServer({
+        async decideIntent(intent) {
+          cwd = intent.capabilities.find((c) => c.kind === "process.exec")?.cwd;
+          return "deny" as const;
+        },
+      });
+
+      await callTool(server, "plow_run_command", { argv: ["echoer", "say"] }, AGENT);
+
+      expect(cwd).toBe(canonicalize(path.join(root, "echoer")));
+    });
+
+    it.skipIf(!ON_MAC)("a staged plugin with no cwd argument still runs normally", async () => {
+      const { server, device } = makePluginServer({ async decideIntent() { return "allow_once" as const; } });
+
+      const { isError } = await callTool(server, "plow_run_command", { argv: ["echoer", "say"] }, AGENT);
+
+      expect(isError).toBe(false);
+      expect(events(device)).toContain("exec_start");
+    });
+
+    it.skipIf(!ON_MAC)("a non-plugin command's cwd is unaffected", async () => {
+      const home = tempDir();
+      const device = new DeviceAgent(
+        home,
+        "Test Mac",
+        { async decideIntent() { return "allow_once" as const; } },
+        null,
+        undefined,
+        null,
+        [],
+      );
+      const server = createDomoMcpServer(device, {});
+      cleanups.push(() => server.close());
+
+      const { isError } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["/bin/pwd"], cwd: home },
+        AGENT,
+      );
+
+      expect(isError).toBe(false);
+      expect(events(device)).toContain("exec_start");
     });
   });
 });

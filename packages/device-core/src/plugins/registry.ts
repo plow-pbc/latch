@@ -18,6 +18,10 @@ import { binDir, type Arch } from "./stage.js";
 
 export interface StagedPlugin {
   manifest: PluginManifest;
+  /** The plugin's own root directory — where `latch-plugin.json` and a
+   * manifest-declared `skill` path live. Not `binDir`, which is one level
+   * (arch-specific) below it. Canonical (realpath'd) physical path. */
+  dir: string;
   binDir: string;
 }
 
@@ -38,6 +42,13 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
   // incomplete plugin in a higher root must not let a lower root supply the
   // binary a provider row will hand a minted token to.
   const claimed = new Set<string>();
+  // `pluginFor` matches on manifest.command, and it is not the directory
+  // name — nothing else guarantees two staged plugins can't declare the
+  // same one, and a collision there means an agent's argv silently routes
+  // to whichever enumerates first. Same posture as a name collision above:
+  // the first staged plugin to claim a command keeps it, a later one is
+  // skipped and surfaced rather than the whole load thrown away.
+  const commands = new Map<string, string>();
   for (const root of roots) {
     let names: string[];
     try {
@@ -53,12 +64,33 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
       claimed.add(name);
       const manifest = parseManifest(fs.readFileSync(file, "utf8"));
       if (manifest.name !== name) throw new PluginError("plugin directory must be named after its manifest");
-      const bin = binDir(dir, arch);
+      // Canonicalized once, here, at load — staging is startup work, not
+      // call-path work, so this realpathSync never blocks a call budget.
+      const canonicalDir = fs.realpathSync(dir);
+      const bin = binDir(canonicalDir, arch);
       if (!manifest.runtime.binaries.every((b) => executable(path.join(bin, b.name)))) continue;
-      out.push({ manifest, binDir: bin });
+      const holder = commands.get(manifest.command);
+      if (holder !== undefined) {
+        console.error(`[plugins] command "${manifest.command}" is already claimed by ${holder}; skipping ${name}`);
+        continue;
+      }
+      commands.set(manifest.command, name);
+      out.push({ manifest, dir: canonicalDir, binDir: bin });
     }
   }
   return out;
+}
+
+/**
+ * The staged plugin an argv's `argv[0]` names, or null when none matches.
+ *
+ * Matched on `manifest.command` — the same field a provider's `command` row
+ * happens to share with the plugin it drives (gog's manifest command IS
+ * `plow-gog`), so a provider's own command is found here too; the caller
+ * checks `providerFor` first and only reaches this for what that left null.
+ */
+export function pluginFor(plugins: readonly StagedPlugin[], command: string): StagedPlugin | null {
+  return plugins.find((p) => p.manifest.command === command) ?? null;
 }
 
 /**

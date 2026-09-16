@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { parseManifest, PluginError } from "../src/plugins/manifest.js";
@@ -16,7 +16,7 @@ describe("loadPlugins", () => {
     const dir = fakePlugin(root, MINIMAL, SCRIPT);
     const [p] = loadPlugins([root]);
     expect(p.manifest.name).toBe("fix");
-    expect(p.binDir).toBe(path.join(dir, "runtime", process.arch, "bin"));
+    expect(p.binDir).toBe(path.join(fs.realpathSync(dir), "runtime", process.arch, "bin"));
   });
 
   it("omits a plugin whose declared binary is not staged, and a directory with no manifest", () => {
@@ -53,7 +53,7 @@ describe("loadPlugins", () => {
     await stageBinaries(manifest, dir, process.arch as Arch, tmp(), async () => fs.readFileSync(file));
     const [p] = loadPlugins([root]);
     expect(p.manifest.name).toBe(manifest.name);
-    expect(p.binDir).toBe(path.join(dir, "runtime", process.arch, "bin"));
+    expect(p.binDir).toBe(path.join(fs.realpathSync(dir), "runtime", process.arch, "bin"));
   });
 
   it("takes the first root that has a name, and a missing root is not an error", () => {
@@ -78,6 +78,23 @@ describe("loadPlugins", () => {
     fs.rmSync(path.join(first, "fix", "runtime", process.arch, "bin", "tool"));
     fakePlugin(second, withBinary, SCRIPT);
     expect(loadPlugins([first, second])).toEqual([]);
+  });
+
+  // Read order within a root is alphabetical; across roots it is root order.
+  // Either way the first claimant keeps the command, the loser is skipped
+  // rather than taking the load down, and the sentence names both.
+  it.each([
+    ["within one root", (a: string, _b: string) => ({ at: [a, a], roots: [a] })],
+    ["across roots", (a: string, b: string) => ({ at: [a, b], roots: [a, b] })],
+  ])("keeps the first claimant of a command %s", (_why, layout) => {
+    const { at, roots } = layout(tmp(), tmp());
+    fakePlugin(at[0]!, { ...MINIMAL, name: "fixa" }, SCRIPT);
+    fakePlugin(at[1]!, { ...MINIMAL, name: "fixb" }, SCRIPT);
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(loadPlugins(roots).map((p) => p.manifest.name)).toEqual(["fixa"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"fix"'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("fixb"));
+    warn.mockRestore();
   });
 
   it("refuses a manifest whose name is not its directory", () => {

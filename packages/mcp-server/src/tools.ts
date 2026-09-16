@@ -473,9 +473,32 @@ export const TOOLS: ToolSpec[] = [
       if (refusal !== null) throw new ToolError(refusal);
       const provider = providerFor(argv);
 
+      // Same chokepoint, for a staged non-provider plugin's own manifest
+      // belt: an argv the plugin's argv.read/argv.write would refuse — or a
+      // caller-supplied cwd, which a plugin's own dispatch never reads —
+      // must never reach an approval card, or the card the owner approved
+      // and what could actually run would silently disagree. Checked only
+      // when it isn't a provider's own command — pluginFor matches on
+      // manifest.command, which for a provider-driven plugin (gog) IS the
+      // provider's own command, and that path is providerRefusal's above.
+      // The device, not the caller, supplies the plugin's own directory
+      // below (`pluginDir`) — that is the one true cwd for this run, so a
+      // caller-supplied one is still refused unconditionally rather than
+      // compared against it.
+      const rawCwd = a.get("cwd").str;
+      if (provider === null) {
+        const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd ?? undefined);
+        if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
+      }
+      // Resolved here, before the intent is built, so the approval card
+      // shows the owner the true run location (`Run: <argv> (in <dir>)`)
+      // instead of nothing — the device then refuses at execution if the
+      // approved cwd ever disagrees with this, rather than substituting its
+      // own answer for whatever was approved (deviceAgent.ts's executeCommand).
+      const pluginDir = provider === null ? ctx.device.pluginDir(argv) : null;
+
       // Resolve every declared or provider-derived path before it becomes the
       // bound the human approves and the sandbox enforces.
-      const rawCwd = a.get("cwd").str;
       const cwd = rawCwd === null ? undefined : await resolved(rawCwd);
       const providerReadPaths: string[] = [];
       const providerWritePaths: string[] = [];
@@ -508,8 +531,25 @@ export const TOOLS: ToolSpec[] = [
         ...await resolveAll(strings(a.get("write_paths").arr)),
         ...providerWritePaths,
       ]);
+      // A provider ignores cwd entirely: executePlowGog's runGog builds
+      // executor.run({...}) with no cwd field at all, so folding a
+      // caller-supplied one into the capability would show the owner a card
+      // claiming the run happens somewhere it never will — the same lie the
+      // plugin path above refuses outright. Unlike the plugin path this is
+      // stripped, not refused: the plugin path is brand new with no existing
+      // callers, so teaching the caller via refusal costs nothing, while
+      // `gog` is live and first-party (driven through plow-gog today), so
+      // turning a previously-accepted argument into a refusal risks breaking
+      // a real caller. Stripping removes the owner-facing lie — the actual
+      // security property — without changing what succeeds. `cwd` itself is
+      // still resolved above and used to make relative provider file args
+      // absolute; only the capability (and therefore the card) never sees it.
+      // A staged plugin's own cwd is never the caller's `cwd` (refused
+      // above) — it is always this plugin's own directory. `pluginDir` is
+      // already canonical (registry.ts, at load), so no second resolution.
+      const execCwd = provider !== null ? undefined : pluginDir ?? cwd;
       const capabilities: Capability[] = [
-        { kind: "process.exec", argv, cwd },
+        { kind: "process.exec", argv, cwd: execCwd },
         // A provider implies network. Its whole purpose is to reach
         // the service its minted token authenticates against, so a gog call
         // approved without it is a call the sandbox then denies — and making

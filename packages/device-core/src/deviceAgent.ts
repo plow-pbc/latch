@@ -13,7 +13,8 @@
  */
 import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
-import type { StagedPlugin } from "./plugins/registry.js";
+import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
+import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import fs from "node:fs";
@@ -53,7 +54,7 @@ import {
 import { readCredentialsState } from "./browser/vaultCredentials.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
-import { SkillRegistry } from "./skills.js";
+import { parseFrontmatter, type Skill, SkillRegistry } from "./skills.js";
 import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
@@ -339,7 +340,7 @@ export class DeviceAgent {
     this.ownerHome = ownerHome;
     this.hostProbes = hostProbes ?? nodeProbes({ ownerHome });
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
-    this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
+    this.policy = new PolicyEngine(path.join(home, "device/rules.json"), (i) => this.pluginRuleView(i));
     // Every rule that comes to exist, and every one that stops, is a line in
     // the log. A rule is not always the twin of an `always_allow` decision:
     // an answer that arrived after the approval's deadline denies the request
@@ -399,9 +400,10 @@ export class DeviceAgent {
     registerContactsSkill(this.skills, ownerHome);
     // Registered only when the CLI it documents is actually staged: a skill
     // for a binary this Mac does not have teaches an agent commands the exec
-    // path refuses unconditionally. The SAME predicate that gate uses — two
-    // sites answering one question two ways is what produces that gap — and
-    // driven off the registry, so a provider's name has one spelling.
+    // path refuses unconditionally. Driven off the staged set itself — through
+    // the SAME predicate the exec gate uses, so a plugin that is staged but
+    // turned off is absent everywhere at once — and every staged plugin is a
+    // candidate, not just the ones with a PROVIDERS row (`pluginSkill`).
     this.syncPluginSkills();
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
@@ -866,32 +868,122 @@ export class DeviceAgent {
    * as present — publishing its skill and minting for it.
    */
   private plugin(name: string): StagedPlugin | null {
-    if (this.disabledPlugins.has(name)) return null;
-    return this.plugins.find((p) => p.manifest.name === name) ?? null;
+    return this.activePlugins.find((p) => p.manifest.name === name) ?? null;
   }
 
   /**
    * The plugins the owner has turned off, by name.
    *
    * Off is one fact with three consequences, and they all fall out of
-   * `plugin()` answering null: the plugin is not staged as far as this device
-   * is concerned, its skill is unpublished (below), and its commands are
-   * refused at the same pre-intent chokepoint that already refuses a provider
-   * with nothing staged. The app calls this at startup with what it read from
-   * settings and again on every toggle, so there is one code path, not a
-   * start-time filter and a live one.
+   * `activePlugins` omitting it: the plugin is not staged as far as this
+   * device is concerned, its skill is unpublished (below), and its commands
+   * are refused at the same pre-intent chokepoint that already refuses a
+   * provider with nothing staged. The app calls this at startup with what it
+   * read from settings and again on every toggle, so there is one code path,
+   * not a start-time filter and a live one.
    */
   setDisabledPlugins(names: readonly string[]): void {
     this.disabledPlugins = new Set(names);
     this.syncPluginSkills();
   }
 
-  /** Publish a provider's skill exactly while its plugin is staged AND on. */
+  /** The staged plugins the owner has not turned off — the one predicate every "is it here" answer runs through. */
+  private get activePlugins(): StagedPlugin[] {
+    return this.plugins.filter((p) => !this.disabledPlugins.has(p.manifest.name));
+  }
+
+  /** Publish each staged plugin's skill exactly while the plugin is on. */
   private syncPluginSkills(): void {
-    for (const p of PROVIDERS) {
-      if (this.plugin(p.plugin) !== null) this.skills.register(p.skill);
-      else this.skills.unregister(p.skill.name);
+    for (const staged of this.plugins) {
+      const skill = this.pluginSkill(staged);
+      if (skill === null) continue;
+      if (this.plugin(staged.manifest.name) !== null) this.skills.register(skill);
+      else this.skills.unregister(skill.name);
     }
+  }
+
+  /**
+   * The skill a staged plugin publishes. A provider is a specialisation: its
+   * plugin publishes the provider's own skill (gog's orchestration wants its
+   * own copy, not the manifest's); any other staged plugin publishes the
+   * skill its OWN manifest declares, if any — and nothing rather than a
+   * broken skill when that file is unreadable or malformed.
+   */
+  private pluginSkill(staged: StagedPlugin): Skill | null {
+    const provider = PROVIDERS.find((p) => p.plugin === staged.manifest.name);
+    if (provider) return provider.skill;
+    if (staged.manifest.skill === null) return null;
+    try {
+      return parseFrontmatter(fs.readFileSync(path.join(staged.dir, staged.manifest.skill), "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The `PolicyEngine` rule view (see its constructor doc): an intent whose
+   * `process.exec` argv resolves to a staged plugin has that one capability's
+   * argv narrowed through `ruleArgv` — a read collapses to `<command>
+   * <prefix>`, so the query TEXT may vary freely under one "always allow";
+   * a write (or anything that isn't a plugin at all) passes through
+   * unchanged. Only argv is narrowed — the rest of the intent's capabilities
+   * (paths, network, …) still participate in the rule key, so a call
+   * carrying different ones is a different request and re-prompts. Always
+   * returns a NEW Intent and never mutates the one it is handed: the object
+   * handed in is reused afterwards for the grant, the approval card, the
+   * sandbox profile and the audit log, all of which must keep the real, full
+   * argv — only the rule itself sees the narrowed view.
+   */
+  private pluginRuleView(intent: Intent): Intent {
+    const cap = intent.capabilities.find((c) => c.kind === "process.exec");
+    const argv = cap?.argv;
+    if (cap === undefined || argv === undefined || argv.length === 0) return intent;
+    const plugin = pluginFor(this.activePlugins, argv[0] ?? "");
+    if (plugin === null) return intent;
+    const viewed = ruleArgv(plugin.manifest, argv);
+    if (viewed === argv) return intent;
+    return { ...intent, capabilities: intent.capabilities.map((c) => (c === cap ? { ...c, argv: [...viewed] } : c)) };
+  }
+
+  /**
+   * An argv a staged non-provider plugin's own manifest would refuse, or
+   * null when argv doesn't name a staged plugin at all (falls through to the
+   * ordinary exec path) or the plugin allows it.
+   *
+   * The mcp-server tool calls this BEFORE an intent exists — the same
+   * pre-intent chokepoint `providerRefusal` gives provider commands — so an
+   * owner is never shown an approval card for an invocation this device
+   * would then refuse at execution time. This device checks again there
+   * regardless: it is the chokepoint and cannot rely on the caller.
+   *
+   * `cwd` is a caller-supplied `plow_run_command` argument, never the
+   * plugin's own `manifest.exec.cwd` — a plugin's own dispatch always execs
+   * in the plugin's own directory and never reads it, so folding it into the
+   * capability would show the owner an approval card asserting a run
+   * location that could never happen. Refused by name, same as a manifest
+   * declaring env this Mac cannot resolve (below): a silent drop would leave
+   * the caller believing it chose a cwd it didn't.
+   */
+  pluginRefusal(argv: readonly string[], cwd?: string): string | null {
+    const plugin = pluginFor(this.activePlugins, argv[0] ?? "");
+    if (plugin === null) return null;
+    if (cwd !== undefined) return "cwd is refused for a plugin; it always runs in its own directory";
+    const verdict = classifyArgv(plugin.manifest, argv);
+    return verdict.kind === "refused" ? verdict.reason : null;
+  }
+
+  /**
+   * The directory a staged non-provider plugin's own dispatch runs in, or
+   * null when argv doesn't name one — this Mac's own answer, never the
+   * caller's (see `pluginRefusal`). The mcp-server tool resolves this BEFORE
+   * the intent exists so the approval card can show the true run location
+   * as the `process.exec` capability's `cwd`, the same way it shows any
+   * other bound. `executeCommand` below then enforces that the approved
+   * `cwd` is exactly this, refusing rather than substituting one of its own
+   * when it disagrees.
+   */
+  pluginDir(argv: readonly string[]): string | null {
+    return pluginFor(this.activePlugins, argv[0] ?? "")?.dir ?? null;
   }
 
   /** Every connected account's token, for the provider's fan-out. */
@@ -954,10 +1046,83 @@ export class DeviceAgent {
       return this.executePlowGog(intent, plugin, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
     }
 
+    // A staged plugin with no PROVIDERS row: reachable on its manifest alone.
+    // `pluginFor` matches on `manifest.command`, the same field a provider's
+    // own command happens to share with the plugin it drives — but that
+    // command was already claimed above, so this only ever resolves a
+    // plugin's own dispatch, never a provider's. One execution lifecycle
+    // covers both shapes below: a plugin only ever changes WHAT gets run
+    // (`runArgv`) and refuses before it is decided, including when the
+    // approved `cwd` disagrees with this plugin's own directory (below) —
+    // the audit, the executor call and the error handling are the ordinary
+    // command's own, unchanged.
+    const plugin = pluginFor(this.activePlugins, argv[0] ?? "");
+    let runArgv = argv;
+    if (plugin !== null) {
+      // The manifest's own belt (`argv.read`/`argv.write`) is checked before
+      // anything spawns, the same defense-in-depth shape as `providerRefusal`
+      // above — the device is the chokepoint regardless of what a caller
+      // already checked.
+      const verdict = classifyArgv(plugin.manifest, argv);
+      if (verdict.kind === "refused") return this.execError(intent.intentId, verdict.reason);
+      // No secret store, mint scope, or Plow API base is wired to a plugin's
+      // env yet — nothing on this Mac can answer `resolveEnv`'s `secret`/`mint`
+      // sources today, and faking a base URL would be a silent wrong answer
+      // rather than a loud one. A plugin declaring env is refused rather than
+      // handed a guess; the loud gap is the honest state until that plumbing
+      // exists.
+      if (Object.keys(plugin.manifest.env).length > 0) {
+        return this.execError(intent.intentId, `${plugin.manifest.command} needs env this Mac cannot resolve yet`);
+      }
+      // exec.cwd is required on every manifest (manifest.ts) and validated to
+      // be either the literal "plugin" or a declared source's name — but
+      // nothing on this Mac clones a source anywhere yet (stage.ts only ever
+      // stages binaries), so there is no staged directory to resolve a source
+      // name to. Same standard as env just above: refused by name, never a
+      // guessed path.
+      if (plugin.manifest.exec.cwd !== "plugin") {
+        return this.execError(
+          intent.intentId,
+          `${plugin.manifest.command} needs a source-rooted cwd this Mac cannot resolve yet`,
+        );
+      }
+      // A relative entrypoint that NAMES A STAGED BINARY (manifest.runtime.binaries)
+      // is joined under this plugin's OWN bin dir, so PATH never decides which
+      // copy runs (plow-gog's own pattern). Any other relative entry names a
+      // tool reached through the executor's curated PATH instead (e.g. the wiki
+      // plugin's `uv`-installed `wiki`) — joining it under binDir would point at
+      // a file this Mac never staged there, and every invocation would ENOENT.
+      // An absolute entry (e.g. /bin/sh) is a manifest choosing a fixed system
+      // binary and is left alone either way — manifest.ts's own comment on
+      // exec.argv[0] is why: nothing joins under bin/ for that shape.
+      const entry = plugin.manifest.exec.argv[0]!;
+      const isStagedBinary = plugin.manifest.runtime.binaries.some((b) => b.name === entry);
+      const bin = isStagedBinary ? path.join(plugin.binDir, entry) : entry;
+      runArgv = [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)];
+      // exec.cwd: "plugin" means this plugin's own dispatch runs in its own
+      // staged directory, and nowhere else. `mcp-server`'s tool offers that
+      // directory before the intent is built (`pluginDir`), so the owner
+      // approves a card naming it — this is the enforcement half: the
+      // approved `cwd` must be exactly this, or refuse. Refusing rather than
+      // substituting `plugin.dir` here is the point of this check — the
+      // device must never grant a wider sandbox than the card it showed.
+      // No separate read grant for the binary: the executor already reads
+      // `cwd` recursively to exec anything under it, and `plugin.binDir` is
+      // always a subdirectory of it.
+      // `plugin.dir` is canonicalized once, at load, in registry.ts — the
+      // one owner of that fact. mcp-server's `pluginDir` hands back that
+      // same canonical string unchanged, so plain equality refuses no less
+      // than resolve-and-compare would: a non-canonical spelling only fails
+      // closed instead of passing, never the reverse.
+      if (exec.cwd !== plugin.dir) {
+        return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
+      }
+    }
+
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     try {
       const result = await this.executor.run({
-        argv,
+        argv: runArgv,
         cwd: exec.cwd,
         readPaths,
         writePaths,
