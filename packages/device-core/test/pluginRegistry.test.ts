@@ -80,27 +80,20 @@ describe("loadPlugins", () => {
     expect(loadPlugins([first, second])).toEqual([]);
   });
 
-  it("skips the second of two staged plugins claiming the same command, keeping the load", () => {
-    const root = tmp();
-    fakePlugin(root, { ...MINIMAL, name: "fixa" }, SCRIPT);
-    fakePlugin(root, { ...MINIMAL, name: "fixb" }, SCRIPT);
+  // Read order within a root is alphabetical; across roots it is root order.
+  // Either way the first claimant keeps the command, the loser is skipped
+  // rather than taking the load down, and the sentence names both.
+  it.each([
+    ["within one root", (a: string, _b: string) => ({ at: [a, a], roots: [a] })],
+    ["across roots", (a: string, b: string) => ({ at: [a, b], roots: [a, b] })],
+  ])("keeps the first claimant of a command %s", (_why, layout) => {
+    const { at, roots } = layout(tmp(), tmp());
+    fakePlugin(at[0]!, { ...MINIMAL, name: "fixa" }, SCRIPT);
+    fakePlugin(at[1]!, { ...MINIMAL, name: "fixb" }, SCRIPT);
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
-    const loaded = loadPlugins([root]);
-    // Alphabetically, "fixa" is read first — it keeps the command, "fixb" is
-    // skipped, and the sentence names both the command and the loser.
-    expect(loaded.map((p) => p.manifest.name)).toEqual(["fixa"]);
+    expect(loadPlugins(roots).map((p) => p.manifest.name)).toEqual(["fixa"]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('"fix"'));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("fixb"));
-    warn.mockRestore();
-  });
-
-  it("across roots, the higher-priority root's plugin keeps a command a lower root's plugin also declares", () => {
-    const first = tmp(); const second = tmp();
-    fakePlugin(first, { ...MINIMAL, name: "fixa" }, SCRIPT);
-    fakePlugin(second, { ...MINIMAL, name: "fixb" }, SCRIPT);
-    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
-    const loaded = loadPlugins([first, second]);
-    expect(loaded.map((p) => p.manifest.name)).toEqual(["fixa"]);
     warn.mockRestore();
   });
 
