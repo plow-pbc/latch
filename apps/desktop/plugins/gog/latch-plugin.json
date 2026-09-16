@@ -15,11 +15,10 @@
           "x64": "7252cfc0a63d239912d0d57ca5f51e31ca58472b506834237e148704387902df"
         }
       }
-    ],
-    "sources": []
+    ]
   },
   "requires": { "accounts": ["google"] },
-  "exec": { "cwd": "plugin", "argv": ["gog", "--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"] },
+  "exec": { "argv": ["gog", "--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"] },
   "env": {},
   "argv": { "read": [], "write": [] },
   "hooks": { "postinstall": "postinstall.mjs" }

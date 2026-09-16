@@ -15,6 +15,7 @@ import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue,
 import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
 import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
 import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
+import { resolveEnv } from "./plugins/env.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import fs from "node:fs";
@@ -956,13 +957,11 @@ export class DeviceAgent {
    * would then refuse at execution time. This device checks again there
    * regardless: it is the chokepoint and cannot rely on the caller.
    *
-   * `cwd` is a caller-supplied `plow_run_command` argument, never the
-   * plugin's own `manifest.exec.cwd` — a plugin's own dispatch always execs
-   * in the plugin's own directory and never reads it, so folding it into the
-   * capability would show the owner an approval card asserting a run
-   * location that could never happen. Refused by name, same as a manifest
-   * declaring env this Mac cannot resolve (below): a silent drop would leave
-   * the caller believing it chose a cwd it didn't.
+   * `cwd` is a caller-supplied `plow_run_command` argument — a plugin's own
+   * dispatch always execs in the plugin's own directory and never reads it,
+   * so folding it into the capability would show the owner an approval card
+   * asserting a run location that could never happen. Refused by name: a
+   * silent drop would leave the caller believing it chose a cwd it didn't.
    */
   pluginRefusal(argv: readonly string[], cwd?: string): string | null {
     const plugin = pluginFor(this.plugins, argv[0] ?? "");
@@ -1059,6 +1058,8 @@ export class DeviceAgent {
     // command's own, unchanged.
     const plugin = pluginFor(this.plugins, argv[0] ?? "");
     let runArgv = argv;
+    let runEnv: Record<string, string> | undefined;
+    let runSysvSemaphores = false;
     if (plugin !== null) {
       if (this.plugin(plugin.manifest.name) === null) {
         return this.execError(intent.intentId, `${plugin.manifest.command} is turned off on this Mac`);
@@ -1069,47 +1070,13 @@ export class DeviceAgent {
       // already checked.
       const verdict = classifyArgv(plugin.manifest, argv);
       if (verdict.kind === "refused") return this.execError(intent.intentId, verdict.reason);
-      // No secret store, mint scope, or Plow API base is wired to a plugin's
-      // env yet — nothing on this Mac can answer `resolveEnv`'s `secret`/`mint`
-      // sources today, and faking a base URL would be a silent wrong answer
-      // rather than a loud one. A plugin declaring env is refused rather than
-      // handed a guess; the loud gap is the honest state until that plumbing
-      // exists.
-      if (Object.keys(plugin.manifest.env).length > 0) {
-        return this.execError(intent.intentId, `${plugin.manifest.command} needs env this Mac cannot resolve yet`);
-      }
-      // exec.cwd is required on every manifest (manifest.ts) and validated to
-      // be either the literal "plugin" or a declared source's name — but
-      // nothing on this Mac clones a source anywhere yet (stage.ts only ever
-      // stages binaries), so there is no staged directory to resolve a source
-      // name to. Same standard as env just above: refused by name, never a
-      // guessed path.
-      if (plugin.manifest.exec.cwd !== "plugin") {
-        return this.execError(
-          intent.intentId,
-          `${plugin.manifest.command} needs a source-rooted cwd this Mac cannot resolve yet`,
-        );
-      }
-      // A relative entrypoint that NAMES A STAGED BINARY (manifest.runtime.binaries)
-      // is joined under this plugin's OWN bin dir, so PATH never decides which
-      // copy runs (plow-gog's own pattern). Any other relative entry names a
-      // tool reached through the executor's curated PATH instead (e.g. the wiki
-      // plugin's `uv`-installed `wiki`) — joining it under binDir would point at
-      // a file this Mac never staged there, and every invocation would ENOENT.
-      // An absolute entry (e.g. /bin/sh) is a manifest choosing a fixed system
-      // binary and is left alone either way — manifest.ts's own comment on
-      // exec.argv[0] is why: nothing joins under bin/ for that shape.
-      const entry = plugin.manifest.exec.argv[0]!;
-      const isStagedBinary = plugin.manifest.runtime.binaries.some((b) => b.name === entry);
-      const bin = isStagedBinary ? path.join(plugin.binDir, entry) : entry;
-      runArgv = [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)];
-      // exec.cwd: "plugin" means this plugin's own dispatch runs in its own
-      // staged directory, and nowhere else. `mcp-server`'s tool offers that
-      // directory before the intent is built (`pluginDir`), so the owner
-      // approves a card naming it — this is the enforcement half: the
-      // approved `cwd` must be exactly this, or refuse. Refusing rather than
-      // substituting `plugin.dir` here is the point of this check — the
-      // device must never grant a wider sandbox than the card it showed.
+      // A plugin's own dispatch runs in its own staged directory, and nowhere
+      // else. `mcp-server`'s tool offers that directory before the intent is
+      // built (`pluginDir`), so the owner approves a card naming it — this is
+      // the enforcement half: the approved `cwd` must be exactly this, or
+      // refuse. Refusing rather than substituting `plugin.dir` here is the
+      // point of this check — the device must never grant a wider sandbox
+      // than the card it showed.
       // No separate read grant for the binary: the executor already reads
       // `cwd` recursively to exec anything under it, and `plugin.binDir` is
       // always a subdirectory of it.
@@ -1121,6 +1088,24 @@ export class DeviceAgent {
       if (exec.cwd !== plugin.dir) {
         return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
       }
+      // Resolved here, never logged and never folded into argv: the values go
+      // into the child's environment below and nowhere else. `${owner_home}`
+      // is the owner's real home (wiki's WIKI_PATH), not the instance's.
+      runEnv = resolveEnv(plugin.manifest, { pluginHome: plugin.dir, ownerHome: this.ownerHome });
+      // A relative entrypoint that NAMES A STAGED BINARY (manifest.runtime.binaries)
+      // is joined under this plugin's OWN bin dir, so PATH never decides which
+      // copy runs (plow-gog's own pattern). Any other relative entry names a
+      // tool reached through the executor's curated PATH instead. An absolute
+      // entry (e.g. /bin/sh) is a manifest choosing a fixed system binary and
+      // is left alone either way — manifest.ts's own comment on
+      // exec.argv[0] is why: nothing joins under bin/ for that shape.
+      const entry = plugin.manifest.exec.argv[0]!;
+      const isStagedBinary = plugin.manifest.runtime.binaries.some((b) => b.name === entry);
+      const bin = isStagedBinary ? path.join(plugin.binDir, entry) : entry;
+      runArgv = [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)];
+      // The plugin's own hash-pinned binary, and nothing else — see the
+      // executor option for why.
+      runSysvSemaphores = isStagedBinary;
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
@@ -1132,7 +1117,9 @@ export class DeviceAgent {
         writePaths,
         network,
         appleEvents,
+        sysvSemaphores: runSysvSemaphores,
         waitMs,
+        env: runEnv,
       });
       return this.finishRun(intent.intentId, result, {
         argv,

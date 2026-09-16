@@ -12,7 +12,7 @@ import { pluginRows, type PluginsInput } from "../src/pluginsModel.js";
 const manifest = (requires: object, name = "wiki"): PluginManifest =>
   parseManifest(JSON.stringify({
     name, version: "1", command: name,
-    exec: { cwd: "plugin", argv: ["/bin/sh", "cli.sh"] },
+    exec: { argv: ["/bin/sh", "cli.sh"] },
     argv: { read: [["index"]], write: [["init"]] },
     requires,
   }));

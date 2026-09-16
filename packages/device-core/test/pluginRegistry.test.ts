@@ -27,7 +27,7 @@ describe("loadPlugins", () => {
         name: "tool",
         url: { arm64: "https://x/tool", x64: "https://x/tool" },
         sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) },
-      }], sources: [] },
+      }] },
     };
     fakePlugin(root, withBinary, SCRIPT);
     fs.rmSync(path.join(root, "fix", "runtime", process.arch, "bin", "tool"));
@@ -44,7 +44,7 @@ describe("loadPlugins", () => {
         name: "tool",
         url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" },
         sha256: { arm64: sha256, x64: sha256 },
-      }], sources: [] },
+      }] },
     }));
     const dir = path.join(root, manifest.name);
     fs.mkdirSync(dir, { recursive: true });
@@ -72,7 +72,7 @@ describe("loadPlugins", () => {
         name: "tool",
         url: { arm64: "https://x/tool", x64: "https://x/tool" },
         sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) },
-      }], sources: [] },
+      }] },
     };
     fakePlugin(first, withBinary, SCRIPT);
     fs.rmSync(path.join(first, "fix", "runtime", process.arch, "bin", "tool"));

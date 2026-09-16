@@ -904,8 +904,8 @@ describe("review findings", () => {
         path.join(dir, "latch-plugin.json"),
         JSON.stringify({
           name: "echoer", version: "test", command: "echoer",
-          runtime: { binaries: [], sources: [] },
-          exec: { cwd: "plugin", argv: ["/bin/echo"] },
+          runtime: { binaries: [] },
+          exec: { argv: ["/bin/echo"] },
           env: {}, argv: { read: [["say"]], write: [] },
         }),
       );
