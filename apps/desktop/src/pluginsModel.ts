@@ -18,7 +18,7 @@
  * remedy, and the remedy does not change with the count.
  */
 import type { PluginManifest } from "@domo/device-core";
-import { PERMISSION_TITLES, type PermissionReadiness } from "./capabilitiesModel.js";
+import type { PermissionReadiness } from "./capabilitiesModel.js";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
@@ -56,8 +56,9 @@ export interface PluginsInput {
    *  in. Neither is re-derived here: a second opinion about a status is how a
    *  switch Settings knows is granted reads "Needs setup" on this tab, and a
    *  second opinion about the remedy is how this tab came to say "Grant Full
-   *  Disk Access" for a grant that is already there. An id it has no answer
-   *  for is unmet, which is the honest answer. */
+   *  Disk Access" for a grant that is already there. Every declared id has an
+   *  entry — the parser accepts only ids the view has rows for — so a missing
+   *  one is a broken caller and reads as one, loudly. */
   permissionStatus: Record<string, PermissionReadiness>;
   /** Connector ids the owner has connected, e.g. "google". */
   connectedAccounts: string[];
@@ -76,17 +77,8 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
     const unmet: UnmetRequirement[] = [
       ...needAccounts.filter((id) => !accounts.has(id)).map((id) => ({ kind: "account" as const, id, action: `Connect ${titleCase(id)}` })),
       ...permissions
-        .filter((id) => input.permissionStatus[id]?.status !== "granted")
-        // The fallback is for a map that has no row for the id — a caller's
-        // incomplete input, not a state the view produces. It still uses the
-        // canonical name, because titleCase alone renames real switches
-        // ("Screen Recording" for what System Settings calls "Screen & System
-        // Audio Recording"), and the owner is being sent to that pane.
-        .map((id) => ({
-          kind: "permission" as const,
-          id,
-          action: input.permissionStatus[id]?.repair ?? `Grant ${PERMISSION_TITLES[id] ?? titleCase(id)}`,
-        })),
+        .filter((id) => input.permissionStatus[id]!.status !== "granted")
+        .map((id) => ({ kind: "permission" as const, id, action: input.permissionStatus[id]!.repair })),
       ...needPaths.filter((p) => !paths.has(p)).map((id) => ({ kind: "path" as const, id, action: `Create ${id}` })),
     ];
     // Off wins: a disabled plugin's unmet requirements are not the owner's
