@@ -226,12 +226,13 @@ export function parseManifest(raw: string): PluginManifest {
     // than trusted to every consumer downstream.
     paths: strList(req.paths, "requires.paths").map((e) => {
       if (!e) fail("requires.paths entries must not be empty");
+      // Wider than C0 on purpose. Every character in this set can end a line
+      // in text layout, so refusing only \n would leave the same forged
+      // second line one character away: NEL and the rest of C1, plus LINE
+      // SEPARATOR and PARAGRAPH SEPARATOR.
       // eslint-disable-next-line no-control-regex
       if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(e)) fail("requires.paths entries must not contain control characters");
-      // The set is wider than C0 on purpose: NEL, LINE SEPARATOR and PARAGRAPH
-    // SEPARATOR break a line in text layout as surely as \n does, so blocking
-    // only \n would leave the same forged second line one character away.
-    // Rooted at the owner's home or the filesystem: a bare relative segment
+      // Rooted at the owner's home or the filesystem: a bare relative segment
       // has no base to resolve against, and `..` names a path by where it is
       // NOT. Every other path field in this parser is shape-checked; this one
       // differs only in being allowed outside the plugin's tree.
