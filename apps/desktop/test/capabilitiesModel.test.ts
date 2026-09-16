@@ -18,6 +18,7 @@ import {
   LABEL_IN_SETTINGS,
   LABEL_VIA_PROMPT,
   paneFor,
+  permissionStatuses,
   SETTINGS_PANES,
 } from "../src/capabilitiesModel.js";
 
@@ -114,6 +115,32 @@ describe("capabilitiesView", () => {
     ]);
     expect(on.sections[0]!.items.filter((i) => isGroup(i)).map((i) => (i as CapabilityGroup).key)).toEqual(["automation"]);
     expect(on.sections[0]!.rows[0]).toMatchObject({ status: "granted", action: "none", actionLabel: null });
+  });
+
+  it("Full Disk Access answers for Contacts and Calendars, and the Plugins tab reads the same map", () => {
+    // What a run reads is the store's files, and a child of this app inherits
+    // Full Disk Access; the per-API switch these rows otherwise read is for a
+    // framework nothing here calls. So a row saying "Not granted" under the
+    // umbrella would send the owner after a switch that changes nothing — and
+    // would contradict the Plugins tab, which has always read the umbrella.
+    const inv = inventory({ full_disk_access: { granted: true, probes: [] } });
+    expect(inv.permissions.find((p) => p.permission === "contacts")!.status).toBe("not_asked");
+    expect(inv.permissions.find((p) => p.permission === "accessibility")!.status).toBe("denied");
+    const view = capabilitiesView(input({ inventory: inv }));
+    const rows = view.sections[0]!.rows;
+    expect(rows.find((r) => r.key === "contacts")).toMatchObject({ status: "granted", action: "none", actionLabel: null });
+    expect(rows.find((r) => r.key === "calendars")).toMatchObject({ status: "granted", action: "none" });
+    // Accessibility is not under the umbrella: its own answer stands.
+    expect(rows.find((r) => r.key === "accessibility")).toMatchObject({ status: "denied", action: "grant" });
+    // The one map the Plugins tab reads, saying what the rows say.
+    const statuses = permissionStatuses(view);
+    expect(statuses.contacts).toBe("granted");
+    expect(statuses.accessibility).toBe("denied");
+    // The folders keep no row once it is on, so the map answers for them here.
+    expect(statuses.files_downloads).toBe("granted");
+    // Off, the rows go back to their own answer.
+    const off = capabilitiesView(input()).sections[0]!.rows;
+    expect(off.find((r) => r.key === "contacts")).toMatchObject({ status: "not_asked", action: "request" });
   });
 
   it("the banner counts rows that are off AND were hit; a switch nobody hit does not", () => {

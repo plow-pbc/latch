@@ -420,7 +420,17 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   }
   const queryable = new Map(inv?.permissions.map((p) => [p.permission, p.status]) ?? []);
   for (const permission of QUERYABLE) {
-    const status = (queryable.get(permission) ?? "unknown") as RowStatus;
+    // Full Disk Access covers Contacts and Calendars exactly as it covers the
+    // folders above. What a run reads is the store's FILES — the contacts
+    // skill opens AddressBook-v22.abcddb with sqlite3 — and a child of this
+    // app inherits its Full Disk Access (the inventory's `child_attribution`
+    // is the check that it does). The switch this row otherwise reads is
+    // CNContactStore's / EKEventStore's authorization, which nothing on this
+    // Mac calls for data. A red row here while the Plugins tab said Ready was
+    // the section refusing something that works. Accessibility is not under
+    // the umbrella and keeps its own answer.
+    const covered = fda === true && COVERED_BY_FULL_DISK_ACCESS.has(permission);
+    const status = covered ? "granted" : ((queryable.get(permission) ?? "unknown") as RowStatus);
     const detail =
       permission === "contacts"
         ? "Reading and updating your address book, and associating contact names with Messages."
@@ -502,14 +512,15 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
  * caller that re-derived a status from the raw inventory would be a second
  * opinion, and the two would disagree exactly where it matters.
  *
- * Full Disk Access, granted, answers for everything it covers — including
- * the folder rows, which the view stops listing once it is on.
+ * Full Disk Access, granted, answers for everything it covers. The rows it
+ * covers already say so themselves; what is left to fill in here is the
+ * switches the view stops listing once it is on — the folders.
  */
 export function permissionStatuses(view: CapabilitiesView): Record<string, RowStatus> {
   const statuses: Record<string, RowStatus> = {};
   for (const section of view.sections) for (const r of section.rows) statuses[r.key] = r.status;
   if (statuses.full_disk_access === "granted") {
-    for (const id of COVERED_BY_FULL_DISK_ACCESS) statuses[id] = "granted";
+    for (const id of COVERED_BY_FULL_DISK_ACCESS) statuses[id] ??= "granted";
   }
   return statuses;
 }
