@@ -607,31 +607,15 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
     },
   );
 
-  itSpawns(
-    "still re-prompts a write with different arguments — one write's approval never authorises another",
-    async () => {
-      const { delegate, asked } = countingAlwaysAllow();
-      const { device: d, dir } = kbDevice(delegate);
-
-      await run(d, ["kb", "put", "alpha"], 8000, undefined, dir);
-      expect(asked()).toBe(1);
-
+  itSpawns.each<{ why: string; firstArgv: string[]; secondArgv: string[]; readPaths?: [string[], string[]] }>([
+    {
       // Same prefix ("put"), different tail: a write is never narrowed, so
       // this must be decided fresh, not answered from the first's rule.
-      await run(d, ["kb", "put", "beta"], 8000, undefined, dir);
-      expect(asked()).toBe(2);
+      why: "different arguments — one write's approval never authorises another",
+      firstArgv: ["kb", "put", "alpha"],
+      secondArgv: ["kb", "put", "beta"],
     },
-  );
-
-  itSpawns(
-    "still re-prompts a read carrying different read_paths — the rule key covers the whole capability set, not just the narrowed argv",
-    async () => {
-      const { delegate, asked } = countingAlwaysAllow();
-      const { device: d, dir } = kbDevice(delegate);
-
-      await run(d, ["kb", "get", "alpha"], 8000, ["/tmp/a"], dir);
-      expect(asked()).toBe(1);
-
+    {
       // Same argv prefix ("get"), so the narrowed rule view sees an identical
       // process.exec capability — but a different approved fs.read path is a
       // materially different request. This must NOT be answered from the
@@ -640,10 +624,21 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
       // (not just the narrowed argv) is what keeps that true. This is
       // intentional — the fix for the over-prompt this guards is narrowing
       // WHAT the rule covers, never narrowing the key itself.
-      await run(d, ["kb", "get", "alpha"], 8000, ["/tmp/b"], dir);
-      expect(asked()).toBe(2);
+      why: "different read_paths — the rule key covers the whole capability set, not just the narrowed argv",
+      firstArgv: ["kb", "get", "alpha"],
+      secondArgv: ["kb", "get", "alpha"],
+      readPaths: [["/tmp/a"], ["/tmp/b"]],
     },
-  );
+  ])("still re-prompts a request carrying $why", async ({ firstArgv, secondArgv, readPaths }) => {
+    const { delegate, asked } = countingAlwaysAllow();
+    const { device: d, dir } = kbDevice(delegate);
+
+    await run(d, firstArgv, 8000, readPaths?.[0], dir);
+    expect(asked()).toBe(1);
+
+    await run(d, secondArgv, 8000, readPaths?.[1], dir);
+    expect(asked()).toBe(2);
+  });
 });
 
 /**
