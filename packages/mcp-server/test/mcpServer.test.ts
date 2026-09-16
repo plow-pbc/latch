@@ -55,12 +55,14 @@ const OTHER: RelayAuth = { agent_id: "agent-2", agent_name: "Agent Two", scopes:
 class ScriptedPolicy implements PolicyDelegate {
   constructor(
     private readonly decision: "allow_once" | "always_allow" | "deny" = "allow_once",
-    private readonly delayMs = 0,
+    /** How long the human takes — or, as a Promise, the moment they answer. */
+    private readonly delay: number | Promise<unknown> = 0,
     /** How it decided. Some sources carry an explanation to the caller. */
     private readonly source = "ask",
   ) {}
   async decideIntent() {
-    if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
+    if (typeof this.delay !== "number") await this.delay;
+    else if (this.delay > 0) await new Promise((r) => setTimeout(r, this.delay));
     return { decision: this.decision, source: this.source };
   }
 }
@@ -390,8 +392,8 @@ describe("the deferred-result contract (§4.3)", () => {
   /** A budget short enough that a slow approval always outruns it. */
   const SHORT = 40;
 
-  async function deferredRead(delegate: PolicyDelegate, auth: RelayAuth = AGENT) {
-    const { server, device } = makeServer(delegate, SHORT);
+  async function deferredRead(delegate: PolicyDelegate, auth: RelayAuth = AGENT, budgetMs = SHORT) {
+    const { server, device } = makeServer(delegate, budgetMs);
     const dir = tempDir();
     const file = path.join(dir, "slow.txt");
     fs.writeFileSync(file, "slow content");
@@ -400,7 +402,11 @@ describe("the deferred-result contract (§4.3)", () => {
   }
 
   it("a call that outruns the budget returns a pending handle, then the real result", async () => {
-    const { server, first, file } = await deferredRead(new ScriptedPolicy("allow_once", 200));
+    // The human has not answered; only the test's own hand will, so nothing
+    // the budget timer races can land before it does.
+    let answer!: () => void;
+    const answered = new Promise<void>((r) => (answer = r));
+    const { server, first, file } = await deferredRead(new ScriptedPolicy("allow_once", answered));
     expect(first.isError).toBe(false);
     expect(first.payload.status).toBe("pending");
     expect(first.payload.reason).toBe("awaiting_approval");
@@ -411,6 +417,7 @@ describe("the deferred-result contract (§4.3)", () => {
     const early = await callTool(server, "plow_get_result", { handle }, AGENT);
     expect(early.payload.status).toBe("pending");
 
+    answer();
     const poll = (
       await pollUntil(
         () => callTool(server, "plow_get_result", { handle }, AGENT),
@@ -420,8 +427,9 @@ describe("the deferred-result contract (§4.3)", () => {
     expect(poll.status).toBe("ready");
     // Byte-for-byte what the original call would have returned.
     expect(poll.result).toEqual({ status: "completed", path: canonicalize(file), content: "slow content" });
-    // A call that finishes inside the budget says so in its own payload.
-    const { first: fast } = await deferredRead(new ScriptedPolicy("allow_once"));
+    // A call that finishes inside the budget says so in its own payload —
+    // the real budget, so a slow disk cannot turn "finished" into "pending".
+    const { first: fast } = await deferredRead(new ScriptedPolicy("allow_once"), AGENT, CALL_BUDGET_MS);
     expect(fast.payload.status).toBe("completed");
   });
 
