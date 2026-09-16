@@ -87,6 +87,7 @@ describe("parseManifest", () => {
     ["a non-string entry in requires.permissions", withPatch({ requires: { permissions: [7] } }), "requires.permissions entries must be strings"],
     ["a requirement id that is not an identifier", withPatch({ requires: { accounts: ["Google Drive"] } }), "requires.accounts entries must be lowercase letters, digits, dashes and underscores"],
     ["an empty requires.paths entry", withPatch({ requires: { paths: [""] } }), "requires.paths entries must not be empty"],
+    ["a requires.paths entry forging a second line", withPatch({ requires: { paths: ["~/Plow/wiki\nGrant Full Disk Access"] } }), "requires.paths entries must not contain control characters"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
   });

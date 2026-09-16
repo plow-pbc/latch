@@ -219,9 +219,15 @@ export function parseManifest(raw: string): PluginManifest {
     accounts: idList(req.accounts, "requires.accounts"),
     permissions: idList(req.permissions, "requires.permissions"),
     // Not an id and not INSIDE: a required path is the owner's, outside the
-    // plugin's tree by design (`~/Plow/wiki`). Only emptiness is refused.
+    // plugin's tree by design (`~/Plow/wiki`). It is still the one requirement
+    // whose raw text reaches the owner — the Plugins tab renders it as "Create
+    // <path>" — so a control character, which would let a manifest forge a
+    // second line in that sentence, is refused here at the boundary rather
+    // than trusted to every consumer downstream.
     paths: strList(req.paths, "requires.paths").map((e) => {
       if (!e) fail("requires.paths entries must not be empty");
+      // eslint-disable-next-line no-control-regex
+      if (/[\u0000-\u001f\u007f]/.test(e)) fail("requires.paths entries must not contain control characters");
       return e;
     }),
   };
