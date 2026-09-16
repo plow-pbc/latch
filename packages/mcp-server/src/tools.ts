@@ -481,10 +481,9 @@ export const TOOLS: ToolSpec[] = [
       // when it isn't a provider's own command — pluginFor matches on
       // manifest.command, which for a provider-driven plugin (gog) IS the
       // provider's own command, and that path is providerRefusal's above.
-      // The device, not the caller, supplies the plugin's own directory
-      // below (`pluginDir`) — that is the one true cwd for this run, so a
-      // caller-supplied one is still refused unconditionally rather than
-      // compared against it.
+      // The device, not the caller, supplies this run's directory below
+      // (`pluginDir`) — that is the one true cwd for it, so a caller-supplied
+      // one is still refused unconditionally rather than compared against it.
       const rawCwd = a.get("cwd").str;
       if (provider === null) {
         const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd ?? undefined);
@@ -545,8 +544,10 @@ export const TOOLS: ToolSpec[] = [
       // still resolved above and used to make relative provider file args
       // absolute; only the capability (and therefore the card) never sees it.
       // A staged plugin's own cwd is never the caller's `cwd` (refused
-      // above) — it is always this plugin's own directory. `pluginDir` is
-      // already canonical (registry.ts, at load), so no second resolution.
+      // above) — it is whatever the device's own `pluginDir` answers: the
+      // plugin's directory, or the source it dispatches from when the
+      // manifest's `exec.cwd` names one. Both are rooted at the dir
+      // registry.ts canonicalized at load, so no second resolution.
       const execCwd = provider !== null ? undefined : pluginDir ?? cwd;
       const capabilities: Capability[] = [
         { kind: "process.exec", argv, cwd: execCwd },
