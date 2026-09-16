@@ -526,40 +526,6 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   return { banner: banner(sections, input.bannerSeenAt), sections };
 }
 
-/**
- * Every switch's status, by its row key — the one place anything else asks
- * whether a permission is met. Built from the rows above, so the folder
- * memos, the audit fold and the dismissal cutoff are already in it; a
- * caller that re-derived a status from the raw inventory would be a second
- * opinion, and the two would disagree exactly where it matters.
- *
- * Full Disk Access, granted, answers for everything it covers. The rows it
- * covers already say so themselves; what is left to fill in here is the
- * switches the view stops listing once it is on — the folders.
- *
- * Each entry carries the row's own `repair` as well as its status, because
- * one status can have two remedies — a Full Disk Access grant a child cannot
- * inherit is not fixed by granting it again — and a caller that rebuilt the
- * sentence from the id alone would tell the owner to do the wrong thing.
- */
-export interface PermissionReadiness {
-  status: RowStatus;
-  /** What to do about it, in the owning row's words. */
-  repair: string;
-}
-export function permissionStatuses(view: CapabilitiesView): Record<string, PermissionReadiness> {
-  const out: Record<string, PermissionReadiness> = {};
-  for (const section of view.sections) {
-    for (const r of section.rows) out[r.key] = { status: r.status, repair: r.hint ?? `Grant ${r.title}` };
-  }
-  if (out.full_disk_access?.status === "granted") {
-    for (const id of COVERED_BY_FULL_DISK_ACCESS) {
-      out[id] ??= { status: "granted", repair: `Grant ${PERMISSION_TITLES[id] ?? id}` };
-    }
-  }
-  return out;
-}
-
 /** The later of two timestamps, either possibly absent. */
 function later(a: string | null, b: string | null): string | null {
   if (a === null) return b;

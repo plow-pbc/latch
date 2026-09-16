@@ -2223,11 +2223,10 @@ function whenText(iso) {
 }
 
 /**
- * Settings' Permissions section: every switch this Mac has, including ones no
- * plugin requires, each with the plugins that declare it. The deliberate
- * machine-configuration view — the Plugins tab shows only what is unmet and
- * actionable. Returns the drawn container and how to refresh it; `display:
- * contents` keeps its cards in Settings' own column.
+ * Settings' Permissions section: every switch this Mac has — the
+ * machine-configuration view, where the Plugins tab shows only what is unmet.
+ * Returns the drawn container and how to refresh it; `display: contents`
+ * keeps its cards in Settings' own column.
  */
 async function permissionsPane() {
   const panel = el("div", { class: "permissions" });
@@ -2242,7 +2241,6 @@ async function permissionsPane() {
   // answers with the view alone) and refreshed on a full read.
   let icons = {};
   // Which plugins declare each switch, for the "Used by" line.
-  let usedBy = {};
   const iconCell = (key) => {
     const src = icons[key];
     return src
@@ -2387,18 +2385,12 @@ async function permissionsPane() {
       ? el("span", { class: "cap-action" }, [icon("nudgeArrow", { class: "cap-nudge", fill: true }), action])
       : action;
     if (asks && r.actionLabel) action.classList.add("attention");
-    // Which plugins this switch is for, named — the back-reference that makes
-    // the inventory readable as configuration rather than a list of toggles.
-    // Plugin names are manifest text, so `el` sets them as textContent.
-    const users = usedBy[r.key] ?? [];
     const children = [
       el("span", { class: "status-dot" + dotClass, attrs: { title: r.statusText } }),
       iconCell(r.key),
       el("div", {}, [
         el("div", { class: "cap-name", text: r.title }),
         r.detail ? el("div", { class: "cap-sub", text: r.detail }) : null,
-        el("div", { class: "cap-sub cap-usedby", text:
-          users.length ? `Used by ${users.join(", ")}` : "Not required by any plugin" }),
         asks,
       ]),
       pointed,
@@ -2560,7 +2552,6 @@ async function permissionsPane() {
   const load = async () => {
     const c = await window.domo.capabilitiesGet();
     icons = c.icons ?? icons;
-    usedBy = c.usedBy ?? usedBy;
     draw(c.view);
   };
   await load();
@@ -2577,17 +2568,11 @@ async function permissionsPane() {
 }
 
 /**
- * The Plugins tab: one row per staged plugin — what it is, whether it can
- * work right now, and the one thing the owner has to do if it cannot. A met
- * requirement renders NOTHING: this is the list of what is stopping an agent,
- * not an inventory. The inventory is Settings' Permissions section, built from
- * the same `HostInventory`.
- *
- * Every string on this pane that a plugin author wrote — its name, its
- * description, and an unmet requirement's action (the `path` kind
- * interpolates a manifest path) — is assigned through `el`, which sets
- * textContent. Nothing here goes near innerHTML, for the reason the approval
- * window does not either.
+ * The Plugins tab: one row per staged plugin — whether it can work right now
+ * and the one thing the owner has to do if it cannot. A met requirement
+ * renders NOTHING; the inventory is Settings' Permissions section. Every
+ * plugin-authored string (name, description) goes through `el`, which sets
+ * textContent — never innerHTML, as in the approval window.
  */
 async function renderPlugins() {
   const panel = el("div", { class: "panel settings" });
@@ -2599,8 +2584,6 @@ async function renderPlugins() {
     "needs-setup": { dot: " off", tone: "amber", word: "Needs setup" },
     ready: { dot: " on", tone: "green", word: "Ready" },
   };
-  const KIND = { account: "Account", permission: "Permission", path: "Folder" };
-
   const reload = async () => draw(await window.domo.pluginsGet());
 
   /** A requirement's button, while it is doing its one thing. */
@@ -2618,25 +2601,12 @@ async function renderPlugins() {
   };
 
   const unmetRow = (u) => {
-    let action;
-    if (u.kind === "account") {
-      action = el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } });
-      action.addEventListener("click", () => busy(action, "Connecting…", () => window.domo.connectorsConnect()));
-    } else if (u.kind === "permission") {
-      action = el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } });
-      action.addEventListener("click", () => busy(action, "Asking macOS…", () => window.domo.capabilitiesAct(u.id)));
-    } else {
-      // A folder, and deliberately a sentence rather than a button: creating
-      // a path a third-party manifest names is a write this app would be
-      // doing on the manifest's say-so, and the containment that would make
-      // that safe is the work the design defers until plugins arrive from
-      // anywhere but here. The owner is told exactly what to make.
-      action = el("span", { class: "cap-sub", text: u.action });
-    }
+    const action = el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } });
+    action.addEventListener("click", () => busy(action, "Connecting…", () => window.domo.connectorsConnect()));
     return el("div", { class: "cap-row plugin-req" }, [
       el("span", { class: "status-dot off" }),
       el("div", {}, [
-        el("div", { class: "cap-name", text: KIND[u.kind] }),
+        el("div", { class: "cap-name", text: "Account" }),
         el("div", { class: "cap-sub", text: u.id }),
       ]),
       action,
@@ -3068,12 +3038,10 @@ window.domo.onConfirmLeave(async (hasPendingAgentSetup) => {
 window.domo.onShowSettings(async () => {
   if (await selectTab("settings")) window.domo.updatesCheck();
 });
-// The tray item and the notification for a block by this Mac land here — on
-// the tab main says owns the remedy: Plugins when a staged plugin declares
-// the permission, Settings when nobody does and the switch is all there is.
-// A block that named no permission goes to onShowAuditBlocked instead.
-window.domo.onShowCapabilities(async (tab) => {
-  if (await selectTab(tab)) window.domo.uiSetTab(tab);
+// A block by this Mac lands on its switch in Settings; one that named no
+// permission goes to onShowAuditBlocked instead.
+window.domo.onShowCapabilities(async () => {
+  if (await selectTab("settings")) window.domo.uiSetTab("settings");
 });
 window.domo.onShowAuditBlocked(() => showAuditBlocked());
 // Another app handed main a credential exchange (Apple Passwords' export):

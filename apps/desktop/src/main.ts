@@ -60,8 +60,8 @@ import { AuditIndex, AuditQuery } from "./auditIndex.js";
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { blockedGroups, capabilitiesView, CapabilitiesView, isGroup, paneFor, permissionStatuses, PERMISSION_TITLES } from "./capabilitiesModel.js";
-import { blockDestination, permissionUsers, pluginRows } from "./pluginsModel.js";
+import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
+import { pluginRows } from "./pluginsModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -614,13 +614,8 @@ ipcMain.handle("ui:getTab", async () => {
     void cloudAgents?.refresh();
     void connectClient?.refreshRoster();
   }
-  // Two keys this tab strip has retired. "connect" went to Settings and came
-  // back as "agents"; "capabilities" became "plugins", the switches it listed
-  // now being one of the three kinds of thing a plugin requires. Anyone who
-  // left the app on either lands where that content lives now, rather than
-  // silently on the default tab.
-  const RETIRED = { connect: "agents", capabilities: "plugins" };
-  return RETIRED[tab as keyof typeof RETIRED] ?? tab;
+  // Retired keys land where their content lives now, not on the default tab.
+  return tab === "connect" ? "agents" : tab === "capabilities" ? "plugins" : tab;
 });
 ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
@@ -1302,8 +1297,6 @@ ipcMain.handle("capabilities:get", async () => {
     inventory,
     view,
     icons: await capabilityIcons(view),
-    // Settings' "Used by" back-reference: which plugins declare each switch.
-    usedBy: permissionUsers(stagedPlugins),
   };
 });
 
@@ -1535,19 +1528,8 @@ ipcMain.handle("capabilities:bannerSeen", async () => {
 
 // MARK: The Plugins tab (pluginsModel.ts)
 
-/** The declared requirement paths that are really there. `~` is the OWNER's
- *  home, the same one every skill names, not the app's DOMO_HOME. */
-async function availablePaths(declared: readonly string[]): Promise<string[]> {
-  // Deduped first: two plugins requiring the same path is the normal case,
-  // and the caller reads the result as a set either way.
-  const unique = [...new Set(declared)];
-  const there = await Promise.all(unique.map((d) =>
-    fs.stat(d.startsWith("~/") ? path.join(os.homedir(), d.slice(2)) : d).then(() => true, () => false)));
-  return unique.filter((_, i) => there[i]);
-}
-
 /** The whole tab, fresh: what is staged, and what each plugin still needs. */
-async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows> }> {
+function pluginsNow(): { rows: ReturnType<typeof pluginRows> } {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
   const rows = pluginRows({
     plugins: stagedPlugins.map((p) => ({
@@ -1555,33 +1537,22 @@ async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows> }> {
       enabled: !disabled.has(p.manifest.name),
       description: device?.pluginDescription(p.manifest.name) ?? null,
     })),
-    // Settings' own answer for every switch, not a second reading of the
-    // inventory: the pane folds the audit log and the folder memos into it,
-    // and a row that disagrees with Settings about a granted switch is the
-    // tab telling the owner to fix something already fixed.
-    permissionStatus: permissionStatuses(await capabilitiesNow()),
     // One connector today, and it is connected exactly when an account is.
     connectedAccounts: (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [],
-    availablePaths: await availablePaths(stagedPlugins.flatMap((p) => p.manifest.requires.paths)),
   });
   return { rows };
 }
 
 ipcMain.handle("plugins:get", async () => pluginsNow());
 
-/**
- * The owner's off switch. Persisted beside the other device settings as the
- * disabled NAMES — a plugin absent from the list is on, so a plugin that
- * arrives later is on by default and one that is uninstalled leaves nothing
- * to clean up. The device is told in the same breath, so the skill and the
- * exec gate follow without a relaunch.
- */
-ipcMain.handle("plugins:setEnabled", async (_e, rawName: unknown, rawOn: unknown) => {
-  const name = typeof rawName === "string" ? rawName : "";
+/** The owner's off switch: the disabled NAMES persist (a later plugin is on
+ *  by default), and the device is told in the same breath, so the skill and
+ *  the exec gate follow without a relaunch. */
+ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
   if (stagedPlugins.some((p) => p.manifest.name === name)) {
     const settings = loadSettings(home);
     const disabled = new Set(settings.disabledPlugins ?? []);
-    if (rawOn === true) disabled.delete(name);
+    if (on) disabled.delete(name);
     else disabled.add(name);
     saveSettings(home, { ...settings, disabledPlugins: [...disabled] });
     device?.setDisabledPlugins([...disabled]);
@@ -2658,13 +2629,10 @@ function clearHostGateAttention(fields: { [k: string]: unknown }): void {
 }
 
 /**
- * The tray item's and the notification's one destination, decided here
- * because here is where the staged plugins are: `blockDestination` routes a
- * block by who owns the permission it names — the Plugins tab when a staged
- * plugin declares it, Settings when nobody does and the switch is all there
- * is, and the Audit tab's Blocked view when the block names no switch at all
- * (a locked file, a SIP root, POSIX permissions), where the row carries the
- * sentence that fixes it.
+ * The tray item's and the notification's one destination: a block that names
+ * a permission lands on its switch, in Settings; one that names none (a locked
+ * file, a SIP root) lands on the Audit tab's Blocked view, where the row
+ * carries the sentence that fixes it.
  */
 function showCapabilitiesForHostGate(block?: NonNullable<typeof hostGateAttention>): void {
   const permission = block ? block.permission : (hostGateAttention?.permission ?? null);
@@ -2674,11 +2642,7 @@ function showCapabilitiesForHostGate(block?: NonNullable<typeof hostGateAttentio
   if (!block || hostGateAttention === block) hostGateAttention = null;
   refreshTray();
   gate.sync();
-  const tab = blockDestination(permission, stagedPlugins);
-  const send = () =>
-    tab === "audit"
-      ? mainWindow?.webContents.send("ui:showAuditBlocked")
-      : mainWindow?.webContents.send("ui:showCapabilities", tab);
+  const send = () => mainWindow?.webContents.send(permission ? "ui:showCapabilities" : "ui:showAuditBlocked");
   if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
   else send();
 }

@@ -89,17 +89,13 @@ contextBridge.exposeInMainWorld("domo", {
   capabilitiesAct: (key: string) => ipcRenderer.invoke("capabilities:act", key),
   capabilitiesDismiss: (key: string) => ipcRenderer.invoke("capabilities:dismiss", key),
   capabilitiesBannerSeen: () => ipcRenderer.invoke("capabilities:bannerSeen"),
-  // The Plugins tab (pluginsModel.ts): one row per staged plugin and what it
-  // still needs, in one whole-state shape per read. `setEnabled` is the
-  // owner's off switch and answers with the fresh state, like every other
-  // act on this bridge.
+  // The Plugins tab (pluginsModel.ts): one whole-state shape per read;
+  // `setEnabled` is the owner's off switch and answers with the fresh state.
   pluginsGet: () => ipcRenderer.invoke("plugins:get"),
   pluginsSetEnabled: (name: string, on: boolean) => ipcRenderer.invoke("plugins:setEnabled", name, on),
-  // A block by this Mac lands the tray item and the notification here, with
-  // the tab main decided the remedy lives on ("plugins" or "settings") —
-  // main holds the staged plugins, so the renderer never has to guess.
-  onShowCapabilities: (cb: (tab: string) => void) =>
-    ipcRenderer.on("ui:showCapabilities", (_e, tab: string) => cb(tab)),
+  // A block by this Mac lands the tray item and the notification on its
+  // switch (Settings), or on the Audit tab's Blocked view when it named none.
+  onShowCapabilities: (cb: () => void) => ipcRenderer.on("ui:showCapabilities", cb),
   onShowAuditBlocked: (cb: () => void) => ipcRenderer.on("ui:showAuditBlocked", cb),
   // The floating panel's own poll: which switch it points at, and whether
   // that grant has landed.

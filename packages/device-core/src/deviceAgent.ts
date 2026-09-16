@@ -400,10 +400,8 @@ export class DeviceAgent {
     registerContactsSkill(this.skills, ownerHome);
     // Registered only when the CLI it documents is actually staged: a skill
     // for a binary this Mac does not have teaches an agent commands the exec
-    // path refuses unconditionally. Driven off the staged set itself — through
-    // the SAME predicate the exec gate uses, so a plugin that is staged but
-    // turned off is absent everywhere at once — and every staged plugin is a
-    // candidate, not just the ones with a PROVIDERS row (`pluginSkill`).
+    // path refuses unconditionally — through the SAME predicate the exec gate
+    // uses, so a plugin that is off is absent everywhere at once.
     this.syncPluginSkills();
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
@@ -485,12 +483,6 @@ export class DeviceAgent {
         approval,
       );
     }
-    // The owner's own files, which no later `register` or `unregister` can
-    // touch — the registry itself holds that line (skills.ts), because a
-    // plugin toggle re-runs `syncPluginSkills` long after this call and load
-    // order alone would only have held until then. Built-ins are what this
-    // Mac ships; these are what its owner said instead.
-    this.skills.loadDir(path.join(home, "device/skills"));
   }
 
   /**
@@ -873,23 +865,23 @@ export class DeviceAgent {
   }
 
   /**
-   * The plugins the owner has turned off, by name.
-   *
-   * Off is one fact with three consequences, and they all fall out of
-   * `plugin()` answering null: the plugin is not staged as far as this
-   * device is concerned, its skill is unpublished (below), and its commands
-   * are refused at the same pre-intent chokepoint that already refuses a
-   * provider with nothing staged — by name, never by falling through to
-   * PATH, which is where a bare command of the same spelling would run. The app calls this at startup with what it
-   * read from settings and again on every toggle, so there is one code path,
-   * not a start-time filter and a live one.
+   * The plugins the owner has turned off, by name. Off is one fact with three
+   * consequences, all from `plugin()` answering null: not staged as far as
+   * this device is concerned, skill unpublished, commands refused by name at
+   * the pre-intent chokepoint. Called at startup and on every toggle — one
+   * code path.
    */
   setDisabledPlugins(names: readonly string[]): void {
     this.disabledPlugins = new Set(names);
     this.syncPluginSkills();
   }
 
-  /** Publish each staged plugin's skill exactly while the plugin is on. */
+  /**
+   * The one owner of plugin skill lifecycle, at launch and on every toggle:
+   * each staged plugin's skill is published exactly while the plugin is on,
+   * and the owner's own files load LAST so a file in their DOMO_HOME wins
+   * under a shared name — order is the whole mechanism, re-run each time.
+   */
   private syncPluginSkills(): void {
     for (const staged of this.plugins) {
       const skill = this.pluginSkill(staged);
@@ -897,6 +889,7 @@ export class DeviceAgent {
       if (this.plugin(staged.manifest.name) !== null) this.skills.register(skill);
       else this.skills.unregister(skill.name);
     }
+    this.skills.loadDir(path.join(this.home, "device/skills"));
   }
 
   /**

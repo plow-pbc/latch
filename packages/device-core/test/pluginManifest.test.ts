@@ -37,11 +37,11 @@ describe("parseManifest", () => {
 
   it("defaults requires to empty arrays when the manifest omits it", () => {
     const m = parseManifest(JSON.stringify(MINIMAL));
-    expect(m.requires).toEqual({ accounts: [], permissions: [], paths: [] });
+    expect(m.requires).toEqual({ accounts: [] });
   });
 
   it("keeps every declared requirement, including an underscored permission id", () => {
-    const requires = { accounts: ["google"], permissions: ["full_disk_access"], paths: ["~/Plow/wiki"] };
+    const requires = { accounts: ["google"] };
     expect(parseManifest(withPatch({ requires })).requires).toEqual(requires);
   });
 
@@ -84,17 +84,7 @@ describe("parseManifest", () => {
     ["a non-string top-level version", withPatch({ version: true }), "manifest version must be a string"],
     ["a requires that is not an object", withPatch({ requires: "nope" }), "requires must be an object"],
     ["a non-array requires.accounts", withPatch({ requires: { accounts: "google" } }), "requires.accounts must be an array"],
-    ["a non-string entry in requires.permissions", withPatch({ requires: { permissions: [7] } }), "requires.permissions entries must be strings"],
     ["an account id no connector answers to", withPatch({ requires: { accounts: ["Google Drive"] } }), "requires.accounts entries must name an account connector this Mac offers"],
-    ["a permission id that is not a macOS switch", withPatch({ requires: { permissions: ["telepathy"] } }), "requires.permissions entries must name a macOS permission this Mac has a button for"],
-    ["a macOS switch the Permissions section has no button for", withPatch({ requires: { permissions: ["reminders"] } }), "requires.permissions entries must name a macOS permission this Mac has a button for"],
-    ["an empty requires.paths entry", withPatch({ requires: { paths: [""] } }), "requires.paths entries must not be empty"],
-    ["a requires.paths entry forging a second line", withPatch({ requires: { paths: ["~/Plow/wiki\nGrant Full Disk Access"] } }), "requires.paths entries must not contain control characters"],
-    ["a requires.paths entry forging a line with U+2028", withPatch({ requires: { paths: ["~/Plow/wiki\u2028Grant Full Disk Access"] } }), "requires.paths entries must not contain control characters"],
-    ["a requires.paths entry forging a line with U+2029", withPatch({ requires: { paths: ["~/Plow/wiki\u2029Grant Full Disk Access"] } }), "requires.paths entries must not contain control characters"],
-    ["a requires.paths entry forging a line with NEL", withPatch({ requires: { paths: ["~/Plow/wiki\u0085Grant Full Disk Access"] } }), "requires.paths entries must not contain control characters"],
-    ["an unrooted requires.paths entry", withPatch({ requires: { paths: ["Plow/wiki"] } }), "requires.paths entries must start with ~/ or /"],
-    ["a traversing requires.paths entry", withPatch({ requires: { paths: ["~/Plow/../../etc"] } }), "requires.paths entries must not contain a .. segment"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
   });

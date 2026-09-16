@@ -18,8 +18,8 @@ import {
 } from "../dist/settingsActions.js";
 import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
-import { capabilitiesView, permissionStatuses } from "../dist/capabilitiesModel.js";
-import { blockDestination, permissionUsers, pluginRows } from "../dist/pluginsModel.js";
+import { capabilitiesView } from "../dist/capabilitiesModel.js";
+import { pluginRows } from "../dist/pluginsModel.js";
 import { parseManifest } from "@domo/device-core";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -78,52 +78,27 @@ const probeCapabilities = () => ({
   fullDiskAccess: false,
   inventory: probeInventory,
   view: capabilitiesView({ inventory: probeInventory, automation: [], events: [], dismissals: {}, bannerSeenAt: null }),
-  // Settings' "Used by" back-reference, from the REAL fold over the staged
-  // manifests below: one switch a plugin declares, and the rest declared by
-  // nobody — Contacts among them, which is the other sentence that row can
-  // carry and the block the routing check below follows.
-  usedBy: permissionUsers(probeStaged),
 });
 ipcMain.handle("capabilities:get", async () => probeCapabilities());
 ipcMain.handle("capabilities:act", async () => probeCapabilities().view);
 ipcMain.handle("capabilities:dismiss", async () => probeCapabilities().view);
 ipcMain.handle("capabilities:bannerSeen", async () => probeCapabilities().view);
 ipcMain.handle("grant:state", async () => ({ key: "full_disk_access", label: "Full Disk Access", granted: false }));
-// The Plugins tab renders from the REAL view model (pluginsModel.ts) over a
-// stub registry: one CLI that is ready, and one that needs an account it
-// cannot work without — the two halves of the tab in one read. gog is the
-// SHIPPED manifest, read off disk, so what the tab tells the owner about the
-// one plugin that ships is what its own file declares. The off switch answers
-// with the fresh state, exactly as main does.
-const probePlugins = { wiki: true, gog: true };
-/** A staged plugin's manifest, through the real parser — a CLI with one
- *  requirement block, which is all the tab reads. */
-const probeManifest = (name, requires) => parseManifest(JSON.stringify({
-  name, version: "1", command: name,
-  exec: { cwd: "plugin", argv: [name] },
-  requires,
-}));
-const probeStaged = [
-  {
-    manifest: parseManifest(fs.readFileSync(path.join(dir, "../plugins/gog/latch-plugin.json"), "utf8")),
-    description: "Gmail and Calendar, through gog.",
-  },
-  {
-    manifest: probeManifest("wiki", { permissions: ["calendars"] }),
-    description: "Keeps a wiki in ~/Plow/wiki.",
-  },
-];
-const probePluginRows = () => {
-  const rows = pluginRows({
+// The Plugins tab renders from the REAL view model (pluginsModel.ts) over the
+// SHIPPED gog manifest, read off disk, with no account connected: what the tab
+// tells the owner is what the file declares. The off switch answers with the
+// fresh state, exactly as main does.
+const probePlugins = { gog: true };
+const probeStaged = [{
+  manifest: parseManifest(fs.readFileSync(path.join(dir, "../plugins/gog/latch-plugin.json"), "utf8")),
+  description: "Gmail and Calendar, through gog.",
+}];
+const probePluginRows = () => ({
+  rows: pluginRows({
     plugins: probeStaged.map((p) => ({ ...p, enabled: probePlugins[p.manifest.name] })),
-    // The REAL status map, off the same view the Permissions section draws:
-    // wiki's calendars reads granted there, so it reads met here.
-    permissionStatus: permissionStatuses(probeCapabilities().view),
     connectedAccounts: [],
-    availablePaths: [],
-  });
-  return { rows };
-};
+  }),
+});
 ipcMain.handle("plugins:get", async () => probePluginRows());
 ipcMain.handle("plugins:setEnabled", async (_e, name, on) => {
   probePlugins[name] = on === true;
@@ -2126,36 +2101,24 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
-  // The Plugins tab: one row per staged plugin, the CLI badge read off
-  // exec.argv, the description from its skill, and — for the one whose
-  // account is not connected — the unmet requirement with the button that
-  // fixes it. No count of what a plugin has blocked, anywhere: the audit log
-  // cannot say which plugin a refusal belonged to.
+  // The Plugins tab: the row, its CLI badge and skill description, and the
+  // unmet account with the button that fixes it.
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("plugins")`);
-  await waitFor(win, `document.querySelectorAll(".plugin-row").length === 2`, "the Plugins tab");
+  await waitFor(win, `document.querySelectorAll(".plugin-row").length === 1`, "the Plugins tab");
   const plugins = await win.webContents.executeJavaScript(`(${() => {
     const rows = [...document.querySelectorAll(".plugin-row")];
     const gog = rows.find((r) => r.querySelector(".plugin-name span")?.textContent === "gog");
     const req = gog?.parentElement.querySelector(".plugin-req");
     return {
       names: rows.map((r) => r.querySelector(".plugin-name span")?.textContent),
-      // Derived from exec.argv, never declared.
       cliBadges: rows.every((r) => r.querySelector(".plugin-name .badge")?.textContent.trim() === "CLI"),
       describes: (gog?.querySelector(".cap-sub")?.textContent ?? "").includes("Gmail and Calendar"),
-      // Needs setup, and no claim about what it has blocked.
       saysNeedsSetup: (gog?.textContent ?? "").includes("Needs setup"),
-      claimsNoBlockCount: !/Blocked \d+ request/.test(document.querySelector("#view")?.innerText ?? ""),
       // The unmet requirement, named, with its action as a button.
       namesRequirement: req?.querySelector(".cap-name")?.textContent === "Account",
       offersTheFix: req?.querySelector("button.btn")?.textContent.trim() === "Connect Google",
-      // The ready one is silent about everything it already has.
-      readyIsQuiet: rows.some((r) => (r.textContent ?? "").includes("Ready")) &&
-        document.querySelectorAll(".plugin-req").length === 1,
-      // The tab carries no badge: it counted the same misattribution.
-      noBadge: !document.querySelector('#seg button[data-tab="plugins"] .tabcount'),
-      // Every switch is on, and it is a real control (the off switch).
+      // The switch is on, and it is a real control (the off switch).
       switchesOn: [...document.querySelectorAll(".plugin-switch input")].every((b) => b.checked),
-      switchCount: document.querySelectorAll(".plugin-switch input").length,
     };
   }})()`);
   // The off switch: unchecking it answers with the fresh state, and the row
@@ -2179,8 +2142,7 @@ app.whenReady().then(async () => {
   // inventory says Full Disk Access is off, the row names the permission, its
   // dot says so honestly, the line gives the Messages use case, and the one
   // button routes the grant through System Settings (a key into main's table —
-  // the renderer never holds the URL). Each row also says which plugins it is
-  // for. Nothing has been blocked, so no banner.
+  // the renderer never holds the URL). Nothing has been blocked, so no banner.
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("settings")`);
   await waitFor(win, `document.querySelector(".cap-row")`, "the Permissions section");
   // The accounts arrive on the connector refresh, a beat after the switches.
@@ -2196,17 +2158,6 @@ app.whenReady().then(async () => {
       // A granted switch is a word, not a button.
       calendarsGranted: rows.some((r) => r.querySelector(".cap-name")?.textContent === "Calendars" && r.querySelector(".cap-granted")),
       noBanner: !document.querySelector(".cap-banner"),
-      // The back-reference, in both of its shapes.
-      calendarsUsedBy: rows.find((r) => r.querySelector(".cap-name")?.textContent === "Calendars")
-        ?.querySelector(".cap-usedby")?.textContent,
-      // Contacts is the live example of a switch no plugin declares: the
-      // built-in skill's, and the block the routing check below follows.
-      contactsUsedByNobody: rows.find((r) => r.querySelector(".cap-name")?.textContent === "Contacts")
-        ?.querySelector(".cap-usedby")?.textContent === "Not required by any plugin",
-      fdaUsedByNobody: fda?.querySelector(".cap-usedby")?.textContent === "Not required by any plugin",
-      // The section lives in Settings now, and the tab it came from is gone.
-      inSettings: !!document.querySelector(".settings .cap-row"),
-      noCapabilitiesTab: !document.querySelector('#seg button[data-tab="capabilities"]'),
       fdaNoInlineDragTile: !document.querySelector(".fda-drag-tile"),
       // The hand-off into System Settings wears the macOS "…", never the
       // external-link arrow.
@@ -2228,30 +2179,19 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
-  // A block by this Mac, routed by who owns the permission it named — the
-  // decision is main's (it holds the staged plugins), so the probe makes it
-  // with the REAL blockDestination over the same manifests and checks the
-  // renderer lands where it was sent. Calendars is wiki's, so the owner gets
-  // the Plugins tab; Contacts is the built-in skill's and no plugin declares
-  // it, so the only remedy is the switch, and the switch is in Settings.
+  // A block by this Mac lands the renderer on the tab its channel names: a
+  // switch is in Settings, and a block naming none is on the Audit tab.
   const activeTab = `document.querySelector("#seg button.active")?.dataset.tab`;
-  const landing = async (permission) => {
+  const landing = async (channel) => {
     const before = await win.webContents.executeJavaScript(activeTab);
-    // Mirrors main's own channel choice, not just its tab choice: an audit
-    // landing travels a different channel, so sending everything down
-    // ui:showCapabilities would leave that wire unproven.
-    const tab = blockDestination(permission, probeStaged);
-    if (tab === "audit") win.webContents.send("ui:showAuditBlocked");
-    else win.webContents.send("ui:showCapabilities", tab);
-    // Waited on as "no longer where it was", never as "where we expect": the
-    // expectation is asserted below, so the wait cannot assert it away.
-    await waitFor(win, `${activeTab} !== ${JSON.stringify(before)}`, `the block on ${permission} to land`);
+    win.webContents.send(channel);
+    // Waited on as "no longer where it was", never as "where we expect".
+    await waitFor(win, `${activeTab} !== ${JSON.stringify(before)}`, `${channel} to land`);
     return win.webContents.executeJavaScript(activeTab);
   };
   const blockLanding = {
-    declaredByAPlugin: await landing("calendars"),
-    declaredByNobody: await landing("contacts"),
-    namesNoSwitch: await landing(null),
+    namesASwitch: await landing("ui:showCapabilities"),
+    namesNoSwitch: await landing("ui:showAuditBlocked"),
   };
 
   // The floating grant panel (fdaGrantFlow.ts) comes up through the same
@@ -2445,25 +2385,15 @@ app.whenReady().then(async () => {
     capabilities.fdaOffersSystemSettings &&
     capabilities.calendarsGranted &&
     capabilities.noBanner &&
-    blockLanding.declaredByAPlugin === "plugins" &&
-    blockLanding.declaredByNobody === "settings" &&
+    blockLanding.namesASwitch === "settings" &&
     blockLanding.namesNoSwitch === "audit" &&
-    capabilities.calendarsUsedBy === "Used by wiki" &&
-    capabilities.contactsUsedByNobody &&
-    capabilities.fdaUsedByNobody &&
-    capabilities.inSettings &&
-    capabilities.noCapabilitiesTab &&
-    plugins.names.join("|") === "gog|wiki" &&
+    plugins.names.join("|") === "gog" &&
     plugins.cliBadges &&
     plugins.describes &&
     plugins.saysNeedsSetup &&
-    plugins.claimsNoBlockCount &&
     plugins.namesRequirement &&
     plugins.offersTheFix &&
-    plugins.readyIsQuiet &&
-    plugins.noBadge &&
     plugins.switchesOn &&
-    plugins.switchCount === 2 &&
     pluginOff.saysOff &&
     pluginOff.noRequirements &&
     capabilities.fdaNoInlineDragTile &&

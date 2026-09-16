@@ -31,26 +31,14 @@ export function indentSkillCodeBlock(text: string): string {
 
 export class SkillRegistry {
   private skills = new Map<string, Skill>();
-  /**
-   * Names the owner wrote themselves. Nothing a built-in or a plugin sync
-   * does may overwrite or withdraw one: the owner putting a file in their own
-   * DOMO_HOME is a deliberate act, and this Mac's defaults are not an opinion
-   * about it. The rule lives here rather than in registration ORDER, because
-   * `syncPluginSkills` runs again on every off-switch toggle — load order
-   * only holds until the second call.
-   */
-  private owned = new Set<string>();
 
   register(skill: Skill): void {
-    if (this.owned.has(skill.name)) return;
     this.skills.set(skill.name, skill);
   }
 
   /** Withdraw a skill — the owner turned off the plugin it documents, and a
-   *  skill for a CLI the exec path now refuses teaches an agent nothing but
-   *  a dead end. An owner's own file under the same name stays. */
+   *  skill for a CLI the exec path now refuses is a dead end. */
   unregister(name: string): void {
-    if (this.owned.has(name)) return;
     this.skills.delete(name);
   }
 
@@ -73,13 +61,8 @@ export class SkillRegistry {
       .map(({ name, description }) => ({ name, description }));
   }
 
-  /**
-   * Load owner-authored skills from $DOMO_HOME/device/skills/*.md.
-   *
-   * Sampled once, at construction, so `owned` has the same lifetime as the
-   * skills it names: a file deleted while the app runs does not free its name
-   * until restart, exactly as its content would not change.
-   */
+  /** Load owner-authored skills from $DOMO_HOME/device/skills/*.md. Loaded
+   *  LAST by whoever publishes, so the owner's file wins under a shared name. */
   loadDir(dir: string): void {
     let files: string[];
     try {
@@ -91,10 +74,7 @@ export class SkillRegistry {
       try {
         const raw = fs.readFileSync(path.join(dir, file), "utf8");
         const parsed = parseFrontmatter(raw);
-        if (parsed) {
-          this.owned.add(parsed.name);
-          this.skills.set(parsed.name, parsed);
-        }
+        if (parsed) this.skills.set(parsed.name, parsed);
       } catch {
         /* skip unreadable/malformed skills */
       }

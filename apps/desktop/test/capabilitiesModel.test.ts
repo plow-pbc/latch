@@ -18,7 +18,6 @@ import {
   LABEL_IN_SETTINGS,
   LABEL_VIA_PROMPT,
   paneFor,
-  permissionStatuses,
   SETTINGS_PANES,
 } from "../src/capabilitiesModel.js";
 
@@ -132,12 +131,6 @@ describe("capabilitiesView", () => {
     expect(rows.find((r) => r.key === "calendars")).toMatchObject({ status: "granted", action: "none" });
     // Accessibility is not under the umbrella: its own answer stands.
     expect(rows.find((r) => r.key === "accessibility")).toMatchObject({ status: "denied", action: "grant" });
-    // The one map the Plugins tab reads, saying what the rows say.
-    const statuses = permissionStatuses(view);
-    expect(statuses.contacts!.status).toBe("granted");
-    expect(statuses.accessibility!.status).toBe("denied");
-    // The folders keep no row once it is on, so the map answers for them here.
-    expect(statuses.files_downloads!.status).toBe("granted");
     // Off, each row the umbrella answered for shows its OWN answer again. The
     // covered set is not uniform, so one blanket expectation would be wrong:
     // contacts was never asked, calendars really is granted on its own, and a
@@ -163,23 +156,13 @@ describe("capabilitiesView", () => {
     expect(rows.find((r) => r.key === "calendars")).toMatchObject({ status: "granted" });
     // The folders keep their rows, so the owner still has a switch to flip.
     expect(rows.map((r) => r.key)).toContain("files_downloads");
-    // One definition of the switch, and it is effective access. A plugin may
-    // require full_disk_access DIRECTLY, so this status is a readiness answer
-    // too — "denied" is what keeps such a plugin off Ready (pluginsModel's
-    // table covers a not-granted permission reading needs-setup).
-    const statuses = permissionStatuses(view);
-    expect(statuses.full_disk_access!.status).toBe("denied");
-    expect(statuses.contacts!.status).toBe("not_asked");
+    expect(rows.find((r) => r.key === "full_disk_access")).toMatchObject({ status: "denied" });
     // And the row says what to DO, so "denied" beside a System Settings list
     // showing it granted is not a contradiction the owner resolves alone —
     // and it is the re-add, not the relaunch a fresh grant would ask for.
     expect(rows.find((r) => r.key === "full_disk_access")!.hint).toContain("add it again");
     const fresh = capabilitiesView(input()).sections.flatMap((s) => s.rows);
     expect(fresh.find((r) => r.key === "full_disk_access")!.hint).toBe("Quit and reopen after granting.");
-    // And the Plugins tab is handed that same sentence, so a plugin requiring
-    // full_disk_access directly is told to re-add the app rather than to grant
-    // a switch the owner can plainly see is already on.
-    expect(statuses.full_disk_access!.repair).toContain("add it again");
   });
 
   it("the banner counts rows that are off AND were hit; a switch nobody hit does not", () => {

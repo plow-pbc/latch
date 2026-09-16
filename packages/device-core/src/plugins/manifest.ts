@@ -7,36 +7,11 @@
  * because a PluginError reaches the owner directly — the installer's caller,
  * or launch-time stderr — never the audit log or an agent.
  */
-import { CONSENT_FOLDERS } from "../hostGate/folderAccess.js";
-import { QUERYABLE_PERMISSIONS } from "../hostGate/inventory.js";
 
-/**
- * The account connectors this Mac can actually connect — the desktop's
- * `ConnectorsState` has one, and "Connect Google" is the only button the
- * Plugins tab can offer. A manifest naming anything else declares a
- * requirement nothing on this Mac can ever meet, and the plugin sits on
- * "Needs setup" forever with no way out. Refused here, at the boundary.
- */
+/** The account connectors this Mac can connect — "Connect Google" is the only
+ *  button the Plugins tab can offer, so any other id is a requirement nothing
+ *  can ever meet. Refused at the boundary. */
 const ACCOUNT_IDS: ReadonlySet<string> = new Set(["google"]);
-/**
- * The switches the Permissions section has a button for — off the lists that
- * build those rows, not a second list. Full Disk Access is the one literal:
- * it is a single row built by hand, and everything else comes from the code
- * that acts on it (`capabilities:act` dispatches a folder through
- * CONSENT_FOLDERS and the rest through the queryable three).
- *
- * The domain is narrower than every switch macOS has. A manifest naming
- * Reminders or Photos was accepted and rendered with a "Grant Reminders"
- * button that dispatched to no row and did nothing — a fix offered that
- * isn't. The rest of these resolve through Full Disk Access when it is on
- * and have no row of their own when it is off, which reads as permanently
- * unmet with nothing to press.
- */
-const PERMISSION_IDS: ReadonlySet<string> = new Set<string>([
-  "full_disk_access",
-  ...CONSENT_FOLDERS.map((f) => f.permission),
-  ...QUERYABLE_PERMISSIONS,
-]);
 
 export class PluginError extends Error {
   constructor(message: string) {
@@ -47,14 +22,11 @@ export class PluginError extends Error {
 
 export type EnvSource = { fixed: string } | { secret: string } | { mint: string };
 
-/** What a plugin needs before it can work: a connector the owner must
- *  connect, a macOS switch, and filesystem it reads. Every list is present
- *  and empty when the manifest omits it, so a consumer never branches on
- *  absence. */
+/** What a plugin needs before it can work. One kind today — a connector the
+ *  owner must connect — keyed so another is a field added, not a reshaping.
+ *  Present and empty when the manifest omits it. */
 export interface PluginRequires {
   accounts: string[]; // a connector id the app can connect, e.g. "google"
-  permissions: string[]; // a HostPermission id, e.g. "contacts"
-  paths: string[]; // paths the plugin needs, e.g. "~/Plow/wiki"
 }
 
 export interface PluginManifest {
@@ -235,40 +207,11 @@ export function parseManifest(raw: string): PluginManifest {
     }
   }
 
-  // Every refusal names the field, never the value: a requirement id is
-  // third-party text like the rest of the manifest. The domain is closed on
-  // purpose — an id outside it is not an unknown requirement to show the
-  // owner, it is one the app has no action for, which reads as permanently
-  // unmet and is indistinguishable from a real blocker.
+  // Names the field, never the value: a requirement id is third-party text.
   const req = typedObj(m.requires, "requires");
-  const idList = (v: unknown, field: string, allowed: ReadonlySet<string>, what: string): string[] =>
-    strList(v, field).map((e) => {
-      if (!allowed.has(e)) fail(`${field} entries must name ${what}`);
-      return e;
-    });
   const requires: PluginRequires = {
-    accounts: idList(req.accounts, "requires.accounts", ACCOUNT_IDS, "an account connector this Mac offers"),
-    permissions: idList(req.permissions, "requires.permissions", PERMISSION_IDS, "a macOS permission this Mac has a button for"),
-    // Not an id and not INSIDE: a required path is the owner's, outside the
-    // plugin's tree by design (`~/Plow/wiki`). It is still the one requirement
-    // whose raw text reaches the owner — the Plugins tab renders it as "Create
-    // <path>" — so a control character, which would let a manifest forge a
-    // second line in that sentence, is refused here at the boundary rather
-    // than trusted to every consumer downstream.
-    paths: strList(req.paths, "requires.paths").map((e) => {
-      if (!e) fail("requires.paths entries must not be empty");
-      // Wider than C0 on purpose. Every character in this set can end a line
-      // in text layout, so refusing only \n would leave the same forged
-      // second line one character away: NEL and the rest of C1, plus LINE
-      // SEPARATOR and PARAGRAPH SEPARATOR.
-      // eslint-disable-next-line no-control-regex
-      if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(e)) fail("requires.paths entries must not contain control characters");
-      // Rooted at the owner's home or the filesystem: a bare relative segment
-      // has no base to resolve against, and `..` names a path by where it is
-      // NOT. Every other path field in this parser is shape-checked; this one
-      // differs only in being allowed outside the plugin's tree.
-      if (!e.startsWith("~/") && !e.startsWith("/")) fail("requires.paths entries must start with ~/ or /");
-      if (!NO_DOTDOT.test(e)) fail("requires.paths entries must not contain a .. segment");
+    accounts: strList(req.accounts, "requires.accounts").map((e) => {
+      if (!ACCOUNT_IDS.has(e)) fail("requires.accounts entries must name an account connector this Mac offers");
       return e;
     }),
   };
