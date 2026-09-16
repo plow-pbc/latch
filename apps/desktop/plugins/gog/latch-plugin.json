@@ -18,6 +18,7 @@
     ],
     "sources": []
   },
+  "requires": { "accounts": ["google"] },
   "exec": { "cwd": "plugin", "argv": ["gog", "--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"] },
   "env": {},
   "argv": { "read": [], "write": [] },
