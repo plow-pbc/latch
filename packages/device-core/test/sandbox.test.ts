@@ -69,6 +69,28 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
     expect(result.output.toString()).toContain("hello-sandbox");
   });
 
+  // A PyInstaller onefile binary (the wiki plugin) coordinates its bootloader
+  // and the Python child through a SysV semaphore; `semctl` is what the
+  // profile used to deny, so a create-set-remove round trip is the behavior
+  // that has to hold, not just `semget`.
+  it("lets a child use a SysV semaphore", async () => {
+    const executor = new Executor(tempDir());
+    const result = await executor.run({
+      argv: [
+        "/usr/bin/perl",
+        "-e",
+        'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT IPC_RMID SETVAL); my $id = semget(IPC_PRIVATE, 1, 0600|IPC_CREAT); defined $id or die "semget: $!"; semctl($id, 0, SETVAL, 1) or die "semctl: $!"; semctl($id, 0, IPC_RMID, 0); print "SEM_OK\n"',
+      ],
+      readPaths: [],
+      writePaths: [],
+      network: false,
+      appleEvents: false,
+      waitMs: 10_000,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.output.toString()).toContain("SEM_OK");
+  });
+
   it("blocks a write outside the approved scope", async () => {
     const scratch = tempDir();
     const allowed = tempDir();

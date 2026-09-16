@@ -57,6 +57,11 @@ exactly the approved capabilities**".
   same reason writes and network do: an Apple event is a side effect — a sent message — that a
   15-minute kill must not truncate, so such a run is never reaped and keeps the housekeeping writes.)
 
+- **`(allow ipc-sysv-sem)`** — every child may create and operate SysV semaphores. Added for the
+  wiki plugin: a PyInstaller onefile binary on macOS syncs its bootloader with the Python child
+  through one, and `semctl` under `(deny default)` failed before Python started. Semaphores only —
+  SysV shared memory and message queues stay denied.
+
 - **the declared-read loop** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.
 
