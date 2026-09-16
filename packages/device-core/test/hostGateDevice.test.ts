@@ -9,7 +9,7 @@
  * tree is driven end to end without a real grant in play. The audit log is
  * the oracle throughout.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -64,11 +64,9 @@ function intentFor(d: DeviceAgent, request: string, capabilities: Capability[]):
 }
 
 const events = (d: DeviceAgent) => d.audit.entries().map((e) => jv(e as JSONValue).get("event").str);
-/** The audit log carries `event` — bounded, for a run that ends on its own clock. */
-const untilEvent = async (d: DeviceAgent, event: string) => {
-  const done = Date.now() + 5_000;
-  while (!events(d).includes(event) && Date.now() < done) await new Promise((r) => setTimeout(r, 50));
-};
+/** The audit log carries `event` — a run ends on its own clock, so the wait is generous. */
+const untilEvent = (d: DeviceAgent, event: string) =>
+  vi.waitFor(() => expect(events(d)).toContain(event), { timeout: 5_000 });
 const lastBlocked = (d: DeviceAgent) =>
   jv([...d.audit.entries()].reverse().find((e) => jv(e as JSONValue).get("event").str === "host_permission_blocked") ?? null);
 
