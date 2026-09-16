@@ -91,8 +91,8 @@ contextBridge.exposeInMainWorld("domo", {
   capabilitiesBannerSeen: () => ipcRenderer.invoke("capabilities:bannerSeen"),
   // The Plugins tab (pluginsModel.ts): one row per staged plugin and what it
   // still needs, in one whole-state shape per read. `setEnabled` is the
-  // owner's off switch and
-  // answers with the fresh state, like every other act on this bridge.
+  // owner's off switch and answers with the fresh state, like every other
+  // act on this bridge.
   pluginsGet: () => ipcRenderer.invoke("plugins:get"),
   pluginsSetEnabled: (name: string, on: boolean) => ipcRenderer.invoke("plugins:setEnabled", name, on),
   // A block by this Mac lands the tray item and the notification here, with
