@@ -26,7 +26,7 @@ import {
   type Provider,
   type StagedPlugin,
 } from "@domo/device-core";
-import { fakePlugin, localGitSource } from "./pluginFixtures.js";
+import { fakePlugin, localGitSource, tarball } from "./pluginFixtures.js";
 
 /**
  * Only the tests that SPAWN need macOS — /usr/bin/sandbox-exec exists nowhere
@@ -648,6 +648,47 @@ describe("a source-rooted plugin dispatched from a staged source (the wiki shape
       expect(out).not.toContain(resolved);
       expect(JSON.stringify(response)).not.toContain(resolved);
       expect(fs.readFileSync(d.audit.file, "utf8")).not.toContain(resolved);
+    },
+  );
+
+  // A manifest may declare BOTH a staged binary and a source-rooted cwd, and
+  // name the staged binary as its entrypoint — manifest.ts imposes no
+  // restriction against it. `plugin.binDir` is then a SIBLING of the
+  // source's own staged directory, not a subdirectory of `cwd`, so the
+  // executor's auto-grant on `cwd` alone no longer reaches it; without an
+  // explicit read grant this spawns EPERM instead of running.
+  itSpawns(
+    "reads a staged binary named as the entrypoint even when cwd is a different, source-rooted directory",
+    async () => {
+      const { git, commit } = localGitSource(tmp, { "README.md": "just a source, no install step\n" });
+      const { file, sha256 } = tarball(tmp); // a real "tool" archive: `stageBinaries` verifies its sha
+      const root = tmp();
+      const dir = path.join(root, "hybrid");
+      fs.mkdirSync(dir, { recursive: true });
+      const rawManifest = {
+        name: "hybrid", version: "test", command: "hybrid",
+        runtime: {
+          binaries: [{
+            name: "tool",
+            url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" },
+            sha256: { arm64: sha256, x64: sha256 },
+          }],
+          sources: [{ name: "repo", git, commit }],
+        },
+        exec: { cwd: "repo", argv: ["tool"] },
+        env: {}, argv: { read: [["say"]], write: [] },
+      };
+      fs.writeFileSync(path.join(dir, "latch-plugin.json"), JSON.stringify(rawManifest));
+      const manifest = parseManifest(JSON.stringify(rawManifest));
+      // Stages BOTH the real binary (verified sha, tarball's own script) and
+      // the source in one call — the same real path a bundled plugin ships
+      // through, not a fixture shortcut for either half.
+      await stageBinaries(manifest, dir, process.arch, tmp(), async () => fs.readFileSync(file));
+      const plugins = loadPlugins([root]);
+      const d = device(null, plugins);
+      const runCwd = sourceDir(plugins[0]!.dir, process.arch as Arch, "repo");
+      const out = String(jv(await run(d, ["hybrid", "say", "hi"], 8000, undefined, runCwd)).get("output").str ?? "");
+      expect(out).toContain("ARGV=say hi");
     },
   );
 });

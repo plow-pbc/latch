@@ -966,7 +966,8 @@ export class DeviceAgent {
    *
    * `cwd` is a caller-supplied `plow_run_command` argument, never the
    * plugin's own `manifest.exec.cwd` — a plugin's own dispatch always execs
-   * in the plugin's own directory and never reads it, so folding it into the
+   * in the plugin's own directory or a manifest-declared source's staged
+   * directory, NEVER the caller's, so folding this argument into the
    * capability would show the owner an approval card asserting a run
    * location that could never happen. Refused by name, same as a manifest
    * declaring env this Mac cannot resolve (below): a silent drop would leave
@@ -1068,6 +1069,7 @@ export class DeviceAgent {
     const plugin = pluginFor(this.plugins, argv[0] ?? "");
     let runArgv = argv;
     let runEnv: Record<string, string> | undefined;
+    let runReadPaths = readPaths;
     if (plugin !== null) {
       // The manifest's own belt (`argv.read`/`argv.write`) is checked before
       // anything spawns, the same defense-in-depth shape as `providerRefusal`
@@ -1083,7 +1085,13 @@ export class DeviceAgent {
         // source (wiki's WIKI_PATH among them) now resolves for real.
         try {
           runEnv = await resolveEnv(plugin.manifest, this.pluginEnvContext(plugin));
-        } catch {
+        } catch (error) {
+          // Only a PluginError is an env this Mac cannot resolve — the one
+          // thing `resolveEnv`, `substitute`, and `pluginEnvContext`'s own
+          // `secret`/`mint` throw today. Anything else is a real bug in this
+          // Mac's own code, and swallowing it here would report it as an
+          // unresolvable manifest instead of surfacing it to fail loudly.
+          if (!(error instanceof PluginError)) throw error;
           // The underlying PluginError's own message names the placeholder or
           // the source kind — safe today (manifest.ts's env values are typed,
           // no caller text reaches it), but the fixed sentence is what every
@@ -1136,6 +1144,14 @@ export class DeviceAgent {
           ? entry
           : path.join(runCwd, ".venv", "bin", entry);
       runArgv = [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)];
+      // The executor auto-grants a sandbox read on `cwd` alone (recursively),
+      // which used to be enough because `cwd` was always `plugin.dir` and
+      // `plugin.binDir` is always a subdirectory of it. A source-rooted `cwd`
+      // breaks that: `plugin.binDir` is a SIBLING of `runtime/<arch>/<source>`,
+      // not inside it, so a manifest naming a staged binary as its entry
+      // while also declaring a source-rooted cwd needs the grant explicit —
+      // the same thing `executePlowGog` already does for its own binary.
+      if (isStagedBinary) runReadPaths = [...readPaths, plugin.binDir];
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
@@ -1143,7 +1159,7 @@ export class DeviceAgent {
       const result = await this.executor.run({
         argv: runArgv,
         cwd: exec.cwd,
-        readPaths,
+        readPaths: runReadPaths,
         writePaths,
         network,
         appleEvents,
@@ -1153,7 +1169,7 @@ export class DeviceAgent {
       return this.finishRun(intent.intentId, result, {
         argv,
         cwd: exec.cwd,
-        readPaths,
+        readPaths: runReadPaths,
         writePaths,
         automationTarget: appleEvents ? appleEventTarget(argv) : null,
         sandboxed: true,
