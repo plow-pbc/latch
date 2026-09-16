@@ -65,6 +65,31 @@ describe("loadPlugins", () => {
     expect(loaded.map((p) => p.manifest.version)).toEqual(["first"]);
   });
 
+  it("omits a plugin whose declared source tree is not staged", () => {
+    const root = tmp();
+    const withSource = {
+      ...MINIMAL,
+      runtime: { binaries: [], sources: [{ name: "src", git: "https://x/repo", commit: "a".repeat(40) }] },
+    };
+    fakePlugin(root, withSource, SCRIPT);
+    expect(loadPlugins([root])).toEqual([]);
+  });
+
+  it("is present once its source tree is staged, not before — an empty directory still counts as unstaged", () => {
+    const root = tmp();
+    const withSource = {
+      ...MINIMAL,
+      runtime: { binaries: [], sources: [{ name: "src", git: "https://x/repo", commit: "a".repeat(40) }] },
+    };
+    const dir = fakePlugin(root, withSource, SCRIPT);
+    const srcDir = path.join(dir, "runtime", process.arch, "src");
+    fs.mkdirSync(srcDir, { recursive: true });
+    expect(loadPlugins([root])).toEqual([]);
+    fs.writeFileSync(path.join(srcDir, "README.md"), "");
+    const [p] = loadPlugins([root]);
+    expect(p.manifest.name).toBe("fix");
+  });
+
   it("refuses a manifest whose name is not its directory", () => {
     const root = tmp();
     fakePlugin(root, MINIMAL, SCRIPT);

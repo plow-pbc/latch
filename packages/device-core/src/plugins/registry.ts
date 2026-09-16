@@ -3,10 +3,12 @@
  *
  * One on-disk shape for every root: `<root>/<name>/latch-plugin.json`, and
  * `<root>/<name>/runtime/<arch>/bin/<binary name>` for each binary the
- * manifest declares — exactly what stageBinaries writes. A plugin is present
- * when its manifest parses AND every declared binary is staged there; a plugin
- * declaring none (its argv[0] falls through to PATH) is present on its
- * manifest alone. Staged-ness says nothing about exec.argv[0] — that's
+ * manifest declares, and `<root>/<name>/runtime/<arch>/<source name>` for
+ * each source tree — exactly what stageBinaries writes. A plugin is present
+ * when its manifest parses AND every declared binary AND every declared
+ * source tree is staged there; a plugin declaring neither (its argv[0] falls
+ * through to PATH) is present on its manifest alone. Staged-ness says nothing
+ * about exec.argv[0] — that's
  * resolved at exec time, not here: a plugin driven by a provider row
  * (plow-gog) has its argv[0] joined under `binDir` by the exec path, so that
  * one must be relative and name a staged binary.
@@ -32,6 +34,16 @@ function executable(file: string): boolean {
   }
 }
 
+/** A staged source tree: a clone landed there, not just an empty directory a
+ * partial stage left behind. */
+function sourceStaged(dir: string): boolean {
+  try {
+    return fs.statSync(dir).isDirectory() && fs.readdirSync(dir).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
   const arch = process.arch as Arch;
   const out: StagedPlugin[] = [];
@@ -51,6 +63,7 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
       if (manifest.name !== name) throw new PluginError("plugin directory must be named after its manifest");
       const bin = binDir(dir, arch);
       if (!manifest.runtime.binaries.every((b) => executable(path.join(bin, b.name)))) continue;
+      if (!manifest.runtime.sources.every((s) => sourceStaged(path.join(dir, "runtime", arch, s.name)))) continue;
       out.push({ manifest, dir, binDir: bin });
     }
   }

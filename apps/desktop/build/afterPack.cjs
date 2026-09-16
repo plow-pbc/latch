@@ -197,6 +197,19 @@ module.exports = async function afterPack(context) {
         );
       }
     }
+    // A source tree lands directly at runtime/<arch>/<source name> (stageSource),
+    // not under bin/ — the same silent half-install hazard as a binary: a source
+    // staged for only one arch clears every other gate and reaches the other
+    // arch's users with nothing.
+    for (const source of manifest.runtime.sources ?? []) {
+      const missingArches = ["arm64", "x64"].filter((a) => bare(path.join(dir, "runtime", a, source.name)));
+      if (missingArches.length > 0) {
+        throw new Error(
+          `[afterPack] the packed app has no ${name} plugin's ${source.name} for ${missingArches.join(", ")} — ` +
+            `run \`just stage-plugins ${name}\``,
+        );
+      }
+    }
   }
   // camoufox's interior: a fuse that stopped partway leaves files behind but no
   // bundle to sign.

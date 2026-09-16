@@ -25,14 +25,13 @@ const PAYLOADS = ["camoufox"];
  * hook does: from disk, not a fixture list, so a new plugin's manifest is
  * covered here without a matching edit to this file. */
 const PLUGINS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins");
-const PLUGINS: { name: string; binaries: { name: string }[] }[] = fs
+const PLUGINS: { name: string; binaries: { name: string }[]; sources: { name: string }[] }[] = fs
   .readdirSync(PLUGINS_DIR)
   .filter((name) => fs.existsSync(path.join(PLUGINS_DIR, name, "latch-plugin.json")))
-  .map((name) => ({
-    name,
-    binaries:
-      JSON.parse(fs.readFileSync(path.join(PLUGINS_DIR, name, "latch-plugin.json"), "utf8")).runtime.binaries ?? [],
-  }));
+  .map((name) => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(PLUGINS_DIR, name, "latch-plugin.json"), "utf8"));
+    return { name, binaries: manifest.runtime.binaries ?? [], sources: manifest.runtime.sources ?? [] };
+  });
 
 const IDENTITY = "Developer ID Application: Nobody (TEAMID)";
 
@@ -55,14 +54,23 @@ describe("the packaging hook refuses before it signs", () => {
   const runtimeDir = () => path.join(resourcesDir(), "browser-runtime");
 
   /** Every bundled plugin as production stages it: one executable per binary,
-   * per arch, at runtime/<arch>/bin/<binary name> — what stageBinaries writes. */
+   * per arch, at runtime/<arch>/bin/<binary name> — what stageBinaries writes —
+   * and one non-empty tree per source, per arch, at runtime/<arch>/<source
+   * name> — what stageSource writes. */
   const packPlugins = () => {
-    for (const { name, binaries } of PLUGINS) {
+    for (const { name, binaries, sources } of PLUGINS) {
       for (const { name: binary } of binaries) {
         for (const arch of ["arm64", "x64"]) {
           const bin = path.join(resourcesDir(), "plugins", name, "runtime", arch, "bin", binary);
           fs.mkdirSync(path.dirname(bin), { recursive: true });
           fs.writeFileSync(bin, "#!/bin/sh\n");
+        }
+      }
+      for (const { name: source } of sources) {
+        for (const arch of ["arm64", "x64"]) {
+          const src = path.join(resourcesDir(), "plugins", name, "runtime", arch, source);
+          fs.mkdirSync(src, { recursive: true });
+          fs.writeFileSync(path.join(src, "README.md"), "");
         }
       }
     }
@@ -318,6 +326,41 @@ describe("the packaging hook refuses before it signs", () => {
     // passes — a refusal enumerating missing binary PATHS would, without the
     // gate ever emitting its summary.
     expect((failure as Error).message).toContain(`no ${name} plugin's ${binary} for ${arches}`);
+  });
+
+  // The same hazard, for a runtime.sources entry: a source tree lands at
+  // runtime/<arch>/<source name> directly (stageSource), not under bin/, so
+  // this is a parallel loop over directories rather than files. `absent` is
+  // both the never-staged case AND the stray-directory-with-nothing-in-it
+  // case a `bare` check on the plugin's own directory would wave through.
+  it.each(
+    PLUGINS.flatMap(({ name, sources }) =>
+      sources.flatMap((source) => {
+        const treeDir = (root: string, arch: string) => path.join(root, "runtime", arch, source.name);
+        return [
+          ...["arm64", "x64"].map((arch) => ({
+            name, source: source.name, how: `absent for ${arch}`, arches: arch,
+            damage: (root: string) => fs.rmSync(treeDir(root, arch), { recursive: true, force: true }),
+          })),
+          {
+            name, source: source.name, how: "an empty directory for arm64", arches: "arm64",
+            damage: (root: string) => fs.rmSync(path.join(treeDir(root, "arm64"), "README.md")),
+          },
+          {
+            name, source: source.name, how: "absent for both arches", arches: "arm64, x64",
+            damage: (root: string) => {
+              for (const arch of ["arm64", "x64"]) fs.rmSync(treeDir(root, arch), { recursive: true, force: true });
+            },
+          },
+        ];
+      }),
+    ),
+  )("refuses $name/$source when it is $how", async ({ name, source, arches, damage }) => {
+    pack();
+    damage(path.join(resourcesDir(), "plugins", name));
+    const failure = await afterPack(contextFor(dir)).catch((e: Error) => e);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(`no ${name} plugin's ${source} for ${arches}`);
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {
