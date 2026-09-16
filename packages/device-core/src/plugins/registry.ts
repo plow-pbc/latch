@@ -42,6 +42,13 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
   // incomplete plugin in a higher root must not let a lower root supply the
   // binary a provider row will hand a minted token to.
   const claimed = new Set<string>();
+  // `pluginFor` matches on manifest.command, and it is not the directory
+  // name — nothing else guarantees two staged plugins can't declare the
+  // same one, and a collision there means an agent's argv silently routes
+  // to whichever enumerates first. Same posture as a name collision above:
+  // the first staged plugin to claim a command keeps it, a later one is
+  // skipped and surfaced rather than the whole load thrown away.
+  const commands = new Map<string, string>();
   for (const root of roots) {
     let names: string[];
     try {
@@ -59,6 +66,12 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
       if (manifest.name !== name) throw new PluginError("plugin directory must be named after its manifest");
       const bin = binDir(dir, arch);
       if (!manifest.runtime.binaries.every((b) => executable(path.join(bin, b.name)))) continue;
+      const holder = commands.get(manifest.command);
+      if (holder !== undefined) {
+        console.error(`[plugins] command "${manifest.command}" is already claimed by ${holder}; skipping ${name}`);
+        continue;
+      }
+      commands.set(manifest.command, name);
       out.push({ manifest, dir, binDir: bin });
     }
   }

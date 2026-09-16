@@ -259,6 +259,32 @@ describe("a provider through the exec path", () => {
     expectNeverSpawned(d);
   });
 
+  it("takes the provider path over a staged plugin that also claims the provider's command", async () => {
+    // A non-provider plugin whose OWN manifest.command happens to equal
+    // "plow-gog" — pluginFor would match it too (it matches on the same
+    // field), so this pins that providerFor is still consulted first. No
+    // "gog" plugin is staged, so if the provider path won, this fails with
+    // "not installed"; if pluginFor won instead, it would dispatch straight
+    // to the impostor's own binary.
+    const root = tmp();
+    fakePlugin(
+      root,
+      {
+        name: "impostor", version: "test", command: "plow-gog",
+        runtime: { binaries: [], sources: [] },
+        exec: { cwd: "plugin", argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
+        env: {}, argv: { read: [], write: [] },
+      },
+      "#!/bin/sh\necho SHOULD_NOT_RUN\n",
+    );
+    const mint = vi.fn(async () => TOKEN);
+    const d = device(minterOf(mint), loadPlugins([root]));
+    const response = await run(d, ["plow-gog", "gmail", "get", "1"]);
+    expect(jv(response).get("error").str).toMatch(/not installed/);
+    expect(mint).not.toHaveBeenCalled();
+    expectNeverSpawned(d);
+  });
+
   it("refuses bare gog before minting or spawning, naming plow-gog", async () => {
     const d = device(okMinter(), gogPlugin());
     const r = jv(await run(d, ["gog", "gmail", "get", "1"]));
@@ -351,6 +377,23 @@ describe("a staged non-provider plugin through the exec path", () => {
     expect(device(null, []).skills.manifest().map((s) => s.name)).not.toContain("echoer");
   });
 
+  // A plugin's declared skill path can be unreadable (missing, or a
+  // directory) or its frontmatter malformed — either way construction must
+  // not throw, and the broken skill must not be published. Only "present and
+  // valid" and "plugin absent" were covered before this.
+  it.each([
+    ["missing", (dir: string) => { /* never write skill.md */ void dir; }],
+    ["malformed", (dir: string) => fs.writeFileSync(path.join(dir, "skill.md"), "not frontmatter at all")],
+  ])("drops a plugin's declared skill when it is %s, without throwing", (_why, corrupt) => {
+    const root = tmp();
+    const dir = fakePlugin(root, ECHOER_MANIFEST, "#!/bin/sh\n");
+    corrupt(dir);
+    const plugins = loadPlugins([root]);
+    let d!: DeviceAgent;
+    expect(() => { d = device(null, plugins); }).not.toThrow();
+    expect(d.skills.manifest().map((s) => s.name)).not.toContain("echoer");
+  });
+
   it("refuses an argv the manifest does not allow, before spawning", async () => {
     const d = device(null, echoerPlugin('#!/bin/sh\necho SHOULD_NOT_RUN\n'));
     const r = jv(await run(d, ["echoer", "shout", "hi"]));
@@ -405,6 +448,29 @@ describe("a staged non-provider plugin through the exec path", () => {
     const d = device(null, loadPlugins([root]));
     const r = jv(await run(d, ["sourcey", "say", "hi"]));
     expect(r.get("error").str).toContain("sourcey needs a source-rooted cwd this Mac cannot resolve yet");
+    expectNeverSpawned(d);
+  });
+
+  // No secret store, mint scope, or Plow API base is wired to a plugin's env
+  // yet, so a manifest declaring one is refused by name before anything
+  // spawns — handing a plugin a guessed or fake credential value would be a
+  // silent wrong answer, and this Mac fails loud instead.
+  it("refuses a manifest declaring env this Mac cannot resolve, before spawning", async () => {
+    const root = tmp();
+    fakePlugin(
+      root,
+      {
+        name: "envy", version: "test", command: "envy",
+        runtime: { binaries: [], sources: [] },
+        exec: { cwd: "plugin", argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
+        env: { ENVY_TOKEN: { fixed: "x" } },
+        argv: { read: [["say"]], write: [] },
+      },
+      "#!/bin/sh\necho SHOULD_NOT_RUN\n",
+    );
+    const d = device(null, loadPlugins([root]));
+    const r = jv(await run(d, ["envy", "say", "hi"]));
+    expect(r.get("error").str).toContain("envy needs env this Mac cannot resolve yet");
     expectNeverSpawned(d);
   });
 });

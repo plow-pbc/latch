@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { parseManifest, PluginError } from "../src/plugins/manifest.js";
@@ -78,6 +78,20 @@ describe("loadPlugins", () => {
     fs.rmSync(path.join(first, "fix", "runtime", process.arch, "bin", "tool"));
     fakePlugin(second, withBinary, SCRIPT);
     expect(loadPlugins([first, second])).toEqual([]);
+  });
+
+  it("skips the second of two staged plugins claiming the same command, keeping the load", () => {
+    const root = tmp();
+    fakePlugin(root, { ...MINIMAL, name: "fixa" }, SCRIPT);
+    fakePlugin(root, { ...MINIMAL, name: "fixb" }, SCRIPT);
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const loaded = loadPlugins([root]);
+    // Alphabetically, "fixa" is read first — it keeps the command, "fixb" is
+    // skipped, and the sentence names both the command and the loser.
+    expect(loaded.map((p) => p.manifest.name)).toEqual(["fixa"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"fix"'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("fixb"));
+    warn.mockRestore();
   });
 
   it("refuses a manifest whose name is not its directory", () => {
