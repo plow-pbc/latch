@@ -17,6 +17,7 @@ import {
   impliesNetwork,
   loadPlugins,
   MintError,
+  providerFor,
   type Minter,
   type Provider,
   type StagedPlugin,
@@ -782,5 +783,32 @@ esac
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
     expect(jv(response).get("error").str).toMatch(/could not reach Plow/);
     expectNeverSpawned(d);
+  });
+});
+
+/**
+ * The owner's off switch (`setDisabledPlugins`), which the Plugins tab drives.
+ *
+ * Off is asserted where it has to hold rather than on the setter: the skill is
+ * withdrawn from what `plow_list_skills` advertises, and the command is
+ * refused at the pre-intent chokepoint with nothing spawned — the same two
+ * consequences a plugin that was never staged has.
+ */
+describe("a plugin the owner turned off", () => {
+  const GOG_SKILL = providerFor(["plow-gog"])!.skill.name;
+  const publishes = (d: DeviceAgent): boolean => d.skills.manifest().some((s) => s.name === GOG_SKILL);
+
+  it("unpublishes the skill and refuses the command, and both come back when it is turned on", async () => {
+    const d = device(okMinter(), gogPlugin());
+    expect(publishes(d)).toBe(true);
+
+    d.setDisabledPlugins(["gog"]);
+    expect(publishes(d)).toBe(false);
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(jv(response).get("error").str).toBe("plow-gog is not installed on this Mac");
+    expectNeverSpawned(d);
+
+    d.setDisabledPlugins([]);
+    expect(publishes(d)).toBe(true);
   });
 });

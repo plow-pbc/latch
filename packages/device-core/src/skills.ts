@@ -36,6 +36,13 @@ export class SkillRegistry {
     this.skills.set(skill.name, skill);
   }
 
+  /** Withdraw a skill — the owner turned off the plugin it documents, and a
+   *  skill for a CLI the exec path now refuses teaches an agent nothing but
+   *  a dead end. */
+  unregister(name: string): void {
+    this.skills.delete(name);
+  }
+
   skill(name: string): Skill | null {
     return this.skills.get(name) ?? null;
   }

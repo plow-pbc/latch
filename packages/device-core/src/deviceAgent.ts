@@ -258,6 +258,8 @@ export class DeviceAgent {
   readonly executor: Executor;
   /** Owner-published skills (how-to guides), surfaced via plow_list_skills/plow_read_skill. */
   readonly skills: SkillRegistry;
+  /** Staged plugins the owner has turned off — see `setDisabledPlugins`. */
+  private disabledPlugins = new Set<string>();
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
   /** Exposed so the approval UI can resolve credential item titles locally. */
@@ -400,7 +402,7 @@ export class DeviceAgent {
     // path refuses unconditionally. The SAME predicate that gate uses — two
     // sites answering one question two ways is what produces that gap — and
     // driven off the registry, so a provider's name has one spelling.
-    for (const p of PROVIDERS) if (this.plugin(p.plugin) !== null) this.skills.register(p.skill);
+    this.syncPluginSkills();
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -864,7 +866,32 @@ export class DeviceAgent {
    * as present — publishing its skill and minting for it.
    */
   private plugin(name: string): StagedPlugin | null {
+    if (this.disabledPlugins.has(name)) return null;
     return this.plugins.find((p) => p.manifest.name === name) ?? null;
+  }
+
+  /**
+   * The plugins the owner has turned off, by name.
+   *
+   * Off is one fact with three consequences, and they all fall out of
+   * `plugin()` answering null: the plugin is not staged as far as this device
+   * is concerned, its skill is unpublished (below), and its commands are
+   * refused at the same pre-intent chokepoint that already refuses a provider
+   * with nothing staged. The app calls this at startup with what it read from
+   * settings and again on every toggle, so there is one code path, not a
+   * start-time filter and a live one.
+   */
+  setDisabledPlugins(names: readonly string[]): void {
+    this.disabledPlugins = new Set(names);
+    this.syncPluginSkills();
+  }
+
+  /** Publish a provider's skill exactly while its plugin is staged AND on. */
+  private syncPluginSkills(): void {
+    for (const p of PROVIDERS) {
+      if (this.plugin(p.plugin) !== null) this.skills.register(p.skill);
+      else this.skills.unregister(p.skill.name);
+    }
   }
 
   /** Every connected account's token, for the provider's fan-out. */
