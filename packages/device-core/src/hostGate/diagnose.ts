@@ -439,6 +439,13 @@ async function parentOpen(probes: HostProbes, p: string): Promise<OpenOutcome> {
  * a hang says more than an errno, the app's own attempt says more than the
  * path's prefix, and a prefix says more than nothing.
  */
+/** Full Disk Access is on, and the refusal is a sandboxed run failing to
+ *  inherit it — a different state, and a different remedy, from never having
+ *  been granted. Read by both the sentence and `requires_relaunch`. */
+function grantNotInherited(permission: HostPermission | null, f: HostFacts): boolean {
+  return permission === "full_disk_access" && f.full_disk_access_granted === true;
+}
+
 export function diagnose(f: HostFacts): Diagnosis {
   const evidence: string[] = [];
   const ruledOut: string[] = [];
@@ -455,7 +462,12 @@ export function diagnose(f: HostFacts): Diagnosis {
     ruled_out: ruledOut,
     owner_action: ownerAction(cause, permission, f),
     retry: retryFor(cause),
-    requires_relaunch: cause === "macos_permission" && permission === "full_disk_access",
+    // A relaunch is the remedy for a FRESH Full Disk Access grant a running
+    // process did not pick up. It is NOT the remedy when the grant is there
+    // and a sandboxed child cannot inherit it — that needs the app removed
+    // and re-added, which is what `owner_action` says. One predicate, so the
+    // structured field and the sentence cannot advise different things.
+    requires_relaunch: cause === "macos_permission" && permission === "full_disk_access" && !grantNotInherited(permission, f),
   });
 
   // 1. Apple events are their own service with their own evidence, and none
@@ -724,7 +736,7 @@ export function ownerAction(
       // Two remedies behind one switch: granting it again does nothing when
       // the grant is already there and a sandboxed run cannot inherit it.
       // Same substance as the Full Disk Access row's own repair line.
-      if (permission === "full_disk_access" && f.full_disk_access_granted === true) {
+      if (grantNotInherited(permission, f)) {
         return `${app} is already turned on in System Settings > Privacy & Security > Full Disk Access, but a sandboxed run cannot inherit it — remove ${app} from the list and add it again.`;
       }
       if (permission === "full_disk_access" || permission === null) {

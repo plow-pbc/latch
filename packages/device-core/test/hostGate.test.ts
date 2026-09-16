@@ -361,6 +361,10 @@ describe("diagnose — the tree, one leaf per case", () => {
     // The repair the Full Disk Access row shows for the same state: granting
     // it again is what the owner must NOT be told to do.
     expect(d.owner_action).toMatch(/remove Plow Latch from the list and add it again/);
+    // And the structured field agrees with that sentence: a relaunch is the
+    // remedy for a grant a running process missed, not for one a child cannot
+    // inherit, so an agent reading the flag is not sent the other way.
+    expect(d.requires_relaunch).toBe(false);
     expect(d.owner_action).not.toMatch(/turn on/);
     expect(isHostGate(d.cause)).toBe(true);
   });
