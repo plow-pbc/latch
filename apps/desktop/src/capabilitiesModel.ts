@@ -262,6 +262,10 @@ export interface CapabilitiesBanner {
 export interface CapabilitiesView {
   banner: CapabilitiesBanner | null;
   sections: CapabilitySection[];
+  /** Full Disk Access is granted AND a child of this app inherits it. Only
+   *  then are the folder rows dropped, so only then does a row-less folder
+   *  mean "covered" rather than "unknown". */
+  fdaInherited: boolean;
 }
 
 export interface CapabilitiesInput {
@@ -314,6 +318,12 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   );
   const inv = input.inventory;
   const fda = inv?.full_disk_access.granted ?? null;
+  // Full Disk Access only answers for a plugin if a CHILD of this app really
+  // inherits it, which is exactly what `child_attribution` measures — it reads
+  // a protected file through a real child. Granted-but-broken (a signature
+  // change between builds is the usual cause) means the grant is on the app
+  // and useless to the run, so the umbrella must not open on `granted` alone.
+  const inherited = fda === true && inv?.child_attribution.status === "ok";
 
   const row = (
     key: string,
@@ -355,7 +365,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       "grant",
     ),
   );
-  if (fda !== true) {
+  if (!inherited) {
     const folders: CapabilityRow[] = [];
     // What the log says the folders answered, newest last: a confirmed
     // refusal, or a run let through the dialog / a touch that got through
@@ -423,13 +433,13 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     // Full Disk Access covers Contacts and Calendars exactly as it covers the
     // folders above. What a run reads is the store's FILES — the contacts
     // skill opens AddressBook-v22.abcddb with sqlite3 — and a child of this
-    // app inherits its Full Disk Access (the inventory's `child_attribution`
-    // is the check that it does). The switch this row otherwise reads is
+    // app inherits its Full Disk Access, which `inherited` above has already
+    // confirmed against the inventory. The switch this row otherwise reads is
     // CNContactStore's / EKEventStore's authorization, which nothing on this
     // Mac calls for data. A red row here while the Plugins tab said Ready was
     // the section refusing something that works. Accessibility is not under
     // the umbrella and keeps its own answer.
-    const covered = fda === true && COVERED_BY_FULL_DISK_ACCESS.has(permission);
+    const covered = inherited && COVERED_BY_FULL_DISK_ACCESS.has(permission);
     const status = covered ? "granted" : ((queryable.get(permission) ?? "unknown") as RowStatus);
     const detail =
       permission === "contacts"
@@ -479,7 +489,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     // A folder (or any other switch Full Disk Access covers) that was refused
     // before Full Disk Access was granted is in good shape now: the umbrella
     // answers for it, so there is nothing for the owner to flip.
-    if (fda === true && COVERED_BY_FULL_DISK_ACCESS.has(g.key as HostPermission)) continue;
+    if (inherited && COVERED_BY_FULL_DISK_ACCESS.has(g.key as HostPermission)) continue;
     if (g.key === "automation" && fda !== null) {
       // An Automation block for an app the tab does not list.
       yourself.push(row(g.key, "Automation for another app", "denied", "An app the list above does not offer.", "open"));
@@ -502,7 +512,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     },
   ];
 
-  return { banner: banner(sections, input.bannerSeenAt), sections };
+  return { banner: banner(sections, input.bannerSeenAt), sections, fdaInherited: inherited };
 }
 
 /**
@@ -519,7 +529,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
 export function permissionStatuses(view: CapabilitiesView): Record<string, RowStatus> {
   const statuses: Record<string, RowStatus> = {};
   for (const section of view.sections) for (const r of section.rows) statuses[r.key] = r.status;
-  if (statuses.full_disk_access === "granted") {
+  if (view.fdaInherited) {
     for (const id of COVERED_BY_FULL_DISK_ACCESS) statuses[id] ??= "granted";
   }
   return statuses;

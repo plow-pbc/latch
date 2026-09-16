@@ -148,6 +148,26 @@ describe("capabilitiesView", () => {
     expect(off.find((r) => r.key === "files_desktop")).toMatchObject({ status: "not_asked", action: "ask" });
   });
 
+  it("a Full Disk Access grant a child cannot inherit answers for nothing", () => {
+    // The grant is on the app and useless to the run — `child_attribution`
+    // proves it by reading a protected file through a real child. Opening the
+    // umbrella on `granted` alone would tell the owner Contacts is fine and
+    // the Plugins tab a plugin is Ready, both while every read still fails.
+    const broken = inventory({
+      full_disk_access: { granted: true, probes: [] },
+      child_attribution: { status: "broken", detail: "a child could not read it" },
+    });
+    const view = capabilitiesView(input({ inventory: broken }));
+    const rows = view.sections.flatMap((s) => s.rows);
+    expect(rows.find((r) => r.key === "contacts")).toMatchObject({ status: "not_asked" });
+    expect(rows.find((r) => r.key === "calendars")).toMatchObject({ status: "granted" });
+    // The folders keep their rows, so the owner still has a switch to flip.
+    expect(rows.map((r) => r.key)).toContain("files_downloads");
+    // And the map the Plugins tab reads never says granted on the grant alone.
+    expect(view.fdaInherited).toBe(false);
+    expect(permissionStatuses(view).contacts).toBe("not_asked");
+  });
+
   it("the banner counts rows that are off AND were hit; a switch nobody hit does not", () => {
     const view = capabilitiesView(
       input({
