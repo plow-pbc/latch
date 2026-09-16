@@ -5,8 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { JSONValue, jv } from "@domo/protocol";
-import type { HostInventory } from "@domo/device-core";
 import { AUTOMATION_APPS, automationApp } from "../src/automation.js";
+import { inventory } from "./hostFixtures.js";
 import {
   actionLabel,
   blockedGroups,
@@ -25,24 +25,6 @@ import {
  *  that care about order; `section.rows` is the same list. */
 const groupOf = (section: { items: unknown[] }, key: string): CapabilityGroup =>
   section.items.find((i) => isGroup(i as never) && (i as CapabilityGroup).key === key) as CapabilityGroup;
-
-function inventory(overrides: Partial<HostInventory> = {}): HostInventory {
-  return {
-    checked_at: "2026-09-02T08:00:00Z",
-    full_disk_access: { granted: false, probes: [] },
-    automation: [],
-    automation_queryable: true,
-    permissions: [
-      { permission: "accessibility", status: "denied" },
-      { permission: "contacts", status: "not_asked" },
-      { permission: "calendars", status: "granted" },
-    ],
-    sandbox: { status: "ok", detail: null },
-    child_attribution: { status: "not_applicable", detail: null },
-    vault_key: { status: "ok", reason: null },
-    ...overrides,
-  };
-}
 
 function block(
   intentId: string,
