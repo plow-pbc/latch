@@ -127,6 +127,36 @@ url, title, links, forms, tables, pages.
   either. Screenshot, then click the banner's or modal's own button: a real click on
   whatever is on top lands.
 
+## A hard block: the owner's own Safari
+
+Some sites refuse this browser outright — "You have been blocked", "Access denied", a
+Cloudflare page that never finishes. Screenshot and look: a challenge has something to click or type (a CAPTCHA, "confirm you are human", a code prompt) and you complete it;
+a hard block does not, and it often arrives as a plain 200 with no \`failed_requests\`.
+Neither a retry of the same URL in this session, nor waiting, nor a public web search
+answers a question about the OWNER's own account ("did my review post?") — the owner's
+real Safari, with their real fingerprint and cookies, usually loads what this browser
+cannot. Drive it with \`plow_run_applescript\`; the owner approves each script.
+
+1. **Open the page.** Pass the URL in \`args\`, never pasted into the script:
+   \`plow_run_applescript {app: "Safari", args: ["<url>"], script: 'on run argv\\ntell application "Safari"\\n  activate\\n  if (count of windows) = 0 then make new document with properties {URL:item 1 of argv}\\n  set URL of front document to item 1 of argv\\nend tell\\nend run'}\`
+2. **Read it.** Try \`do JavaScript "document.body.innerText" in front document\` first. Expect
+   it to fail with "You must enable 'Allow JavaScript from Apple Events'" — that Safari
+   Developer setting is off by default and the error is not a dead end. Fall back to the
+   accessibility tree, which needs no setting: \`tell application "System Events" to tell process "Safari"\`, take \`entire contents of front window\`, keep the elements whose
+   \`role is "AXStaticText"\` and collect their \`value\`. The walk of a content-heavy page
+   takes a minute or more and comes back as a pending handle — poll \`plow_get_result\`
+   then \`plow_get_output\`; it is working, not failed.
+3. **Act, when you must.** Roles are uppercase \`AXButton\` / \`AXTextField\` / \`AXStaticText\`
+   — the lowercase names in some dictionaries match nothing. A control's label is in
+   \`title\` OR \`AXDescription\`; check both. Click the cookie banner's own button before
+   anything under it. A React-controlled field responds to \`keystroke\`, not \`set value\` —
+   \`click\` it, then \`keystroke\` the text, which is what its listeners hear — and do not
+   name a variable \`result\`, it is reserved. Verify the way you would in this browser:
+   read the URL, the title, and the confirmation text back out of the tree.
+4. **Consent.** The first System Events script raises a macOS Automation dialog that
+   asks the owner; the call sits 'running' with a diagnosis until they click. Leave it
+   running and tell them. Report the site as blocked only after Safari itself fails to load the page — not after a JavaScript read fails.
+
 ## Credentials (logins, cards, identities) — the value is never handed back to you
 
 **This machine has its own password vault — do not go looking for 1Password or ask the
