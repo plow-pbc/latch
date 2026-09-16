@@ -312,17 +312,24 @@ describe("a provider through the exec path", () => {
  * beside providers.
  */
 describe("a staged non-provider plugin through the exec path", () => {
+  // The binary's staged name ("echo-bin") and the manifest's own command
+  // ("echoer") are deliberately different strings: the agent's argv[0] is
+  // "echoer" (matched by pluginFor against manifest.command), while the
+  // entrypoint that must actually run is exec.argv[0] ("echo-bin"). If the
+  // exec path ever resolved off the caller's argv[0] instead of the
+  // manifest's own entrypoint, these two being the same string (as they
+  // were before) would hide it.
   const ECHOER_MANIFEST = {
     name: "echoer", version: "test", command: "echoer",
     runtime: {
       binaries: [{
-        name: "echoer", version: "test",
+        name: "echo-bin", version: "test",
         url: { arm64: "https://example.invalid/e-arm64.tar.gz", x64: "https://example.invalid/e-x64.tar.gz" },
         sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
       }],
       sources: [],
     },
-    exec: { cwd: "plugin", argv: ["echoer", "--quiet"] },
+    exec: { cwd: "plugin", argv: ["echo-bin", "--quiet"] },
     env: {}, argv: { read: [["say"]], write: [] },
     skill: "skill.md",
   };
@@ -354,17 +361,52 @@ describe("a staged non-provider plugin through the exec path", () => {
   itSpawns(
     "dispatches a staged non-provider plugin's command to its manifest entrypoint, and audits it",
     async () => {
-      const d = device(null, echoerPlugin('#!/bin/sh\necho "ARGV=$*"\n'));
+      const plugins = echoerPlugin('#!/bin/sh\necho "ARGV=$*"\necho "CWD=$(pwd)"\n');
+      const d = device(null, plugins);
       const out = String(jv(await run(d, ["echoer", "say", "hello"])).get("output").str ?? "");
       // The manifest's own belt (`--quiet`) leads the agent's argv, exactly
       // as plow-gog's does — proof the entrypoint resolved against the
       // staged tree, not PATH, and ran with the manifest's fixed prefix.
       expect(out).toContain("ARGV=--quiet say hello");
+      // exec.cwd: "plugin" must resolve to the plugin's own staged
+      // directory, not wherever the parent process happens to be running
+      // (cwd: undefined would have handed the child the executor's scratch
+      // dir instead). Compared through realpath because the executor
+      // canonicalizes cwd before exec, and a tmp dir root can itself be a
+      // symlink (macOS's /var -> /private/var).
+      expect(out).toContain(`CWD=${fs.realpathSync(plugins[0]!.dir)}`);
       const events = d.audit.entries().map((e) => jv(e).get("event").str);
       expect(events).toContain("exec_start");
       expect(events).toContain("exec_end");
     },
   );
+
+  // A manifest may declare exec.cwd as a source name rather than "plugin"
+  // (manifest.ts validates it against runtime.sources), but nothing on this
+  // Mac clones a source anywhere yet — there is no staged directory to
+  // resolve it to. Same standard as env: refused by name, never handed a
+  // guessed path.
+  it("refuses a source-rooted cwd this Mac cannot resolve, before spawning", async () => {
+    const root = tmp();
+    const dir = fakePlugin(
+      root,
+      {
+        name: "sourcey", version: "test", command: "sourcey",
+        runtime: {
+          binaries: [],
+          sources: [{ name: "repo", git: "https://example.invalid/repo.git", commit: "0".repeat(40) }],
+        },
+        exec: { cwd: "repo", argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
+        env: {}, argv: { read: [["say"]], write: [] },
+      },
+      "#!/bin/sh\necho SHOULD_NOT_RUN\n",
+    );
+    fs.mkdirSync(path.join(dir, "runtime", "repo"), { recursive: true });
+    const d = device(null, loadPlugins([root]));
+    const r = jv(await run(d, ["sourcey", "say", "hi"]));
+    expect(r.get("error").str).toContain("sourcey needs a source-rooted cwd this Mac cannot resolve yet");
+    expectNeverSpawned(d);
+  });
 });
 
 /**

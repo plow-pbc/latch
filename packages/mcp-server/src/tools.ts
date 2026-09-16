@@ -473,6 +473,18 @@ export const TOOLS: ToolSpec[] = [
       if (refusal !== null) throw new ToolError(refusal);
       const provider = providerFor(argv);
 
+      // Same chokepoint, for a staged non-provider plugin's own manifest
+      // belt: an argv the plugin's argv.read/argv.write would refuse must
+      // never reach an approval card, or the card the owner approved and
+      // what could actually run would silently disagree. Checked only when
+      // it isn't a provider's own command — pluginFor matches on
+      // manifest.command, which for a provider-driven plugin (gog) IS the
+      // provider's own command, and that path is providerRefusal's above.
+      if (provider === null) {
+        const pluginRefusal = ctx.device.pluginRefusal(argv);
+        if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
+      }
+
       // Resolve every declared or provider-derived path before it becomes the
       // bound the human approves and the sandbox enforces.
       const rawCwd = a.get("cwd").str;

@@ -16,6 +16,7 @@ import {
   DENIAL_SOURCE_NO_REVIEWER,
   DeviceAgent,
   HeadlessPolicy,
+  loadPlugins,
   MAX_FILE_BYTES,
   PolicyDelegate,
 } from "@domo/device-core";
@@ -853,6 +854,59 @@ describe("review findings", () => {
         handle: first.handle,
       });
       expect((store.get("agent-1", second.handle) as { status: string }).status).toBe("ready");
+    });
+  });
+
+  // A staged non-provider plugin's own manifest belt (argv.read/argv.write)
+  // is checked at execution time (deviceAgent.ts's executePlugin). Without
+  // this same check before an intent exists, an owner could be shown — and
+  // approve — a card for an invocation the device would then refuse: the
+  // capability the card displayed never matched what could run. Same
+  // chokepoint shape as providerRefusal, just above in this file's tools.ts.
+  describe("a staged plugin's own argv belt gates before an intent exists too", () => {
+    function stagePlugin(root: string): void {
+      const dir = path.join(root, "echoer");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "latch-plugin.json"),
+        JSON.stringify({
+          name: "echoer", version: "test", command: "echoer",
+          runtime: { binaries: [], sources: [] },
+          exec: { cwd: "plugin", argv: ["/bin/echo"] },
+          env: {}, argv: { read: [["say"]], write: [] },
+        }),
+      );
+    }
+
+    it("refuses an off-allowlist argv before an intent is ever built, never reaching approval", async () => {
+      const root = tempDir();
+      stagePlugin(root);
+      let decided = false;
+      const home = tempDir();
+      const device = new DeviceAgent(
+        home,
+        "Test Mac",
+        {
+          async decideIntent() {
+            decided = true;
+            return "allow_once" as const;
+          },
+        },
+        null,
+        undefined,
+        null,
+        loadPlugins([root]),
+      );
+      const server = createDomoMcpServer(device, {});
+      cleanups.push(() => server.close());
+
+      const { isError, payload } = await callTool(server, "plow_run_command", { argv: ["echoer", "shout", "hi"] }, AGENT);
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("echoer allows: say");
+      // The refusal never became an approval decision, and nothing was audited.
+      expect(decided).toBe(false);
+      expect(events(device)).not.toContain("exec_start");
     });
   });
 });

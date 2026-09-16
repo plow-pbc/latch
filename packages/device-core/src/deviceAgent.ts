@@ -885,6 +885,24 @@ export class DeviceAgent {
     return this.plugins.find((p) => p.manifest.name === name) ?? null;
   }
 
+  /**
+   * An argv a staged non-provider plugin's own manifest would refuse, or
+   * null when argv doesn't name a staged plugin at all (falls through to the
+   * ordinary exec path) or the plugin allows it.
+   *
+   * The mcp-server tool calls this BEFORE an intent exists — the same
+   * pre-intent chokepoint `providerRefusal` gives provider commands — so an
+   * owner is never shown an approval card for an invocation `executePlugin`
+   * would then refuse at execution time. This device checks again there
+   * regardless: it is the chokepoint and cannot rely on the caller.
+   */
+  pluginRefusal(argv: readonly string[]): string | null {
+    const plugin = pluginFor(this.plugins, argv[0] ?? "");
+    if (plugin === null) return null;
+    const verdict = classifyArgv(plugin.manifest, argv);
+    return verdict.kind === "refused" ? verdict.reason : null;
+  }
+
   /** Every connected account's token, for the provider's fan-out. */
   private async mintAllFor(provider: Provider): Promise<MintedAccounts> {
     if (this.minter === null) throw MintError.unpaired();
@@ -1506,10 +1524,26 @@ export class DeviceAgent {
     if (Object.keys(plugin.manifest.env).length > 0) {
       return this.execError(intent.intentId, `${plugin.manifest.command} needs env this Mac cannot resolve yet`);
     }
+    // exec.cwd is required on every manifest (manifest.ts) and validated to
+    // be either the literal "plugin" or a declared source's name — but
+    // nothing on this Mac clones a source anywhere yet (stage.ts only ever
+    // stages binaries), so there is no staged directory to resolve a source
+    // name to. Same standard as env just above: a plugin declaring a cwd
+    // this Mac cannot resolve is refused BY NAME, never handed a guessed
+    // path — silently running it somewhere else would be the wrong kind of
+    // wrong answer.
+    if (plugin.manifest.exec.cwd !== "plugin") {
+      return this.execError(
+        intent.intentId,
+        `${plugin.manifest.command} needs a source-rooted cwd this Mac cannot resolve yet`,
+      );
+    }
+    const cwd = plugin.dir;
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     try {
       const result = await this.executor.run({
         argv: [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)],
+        cwd,
         // The binary must be readable to exec it, and a staged plugin lives
         // inside the .app bundle, which the profile's home grant does not reach.
         readPaths: [...opts.readPaths, plugin.binDir],
@@ -1520,7 +1554,7 @@ export class DeviceAgent {
       });
       return this.finishRun(intent.intentId, result, {
         argv,
-        cwd: undefined,
+        cwd,
         readPaths: opts.readPaths,
         writePaths: opts.writePaths,
         automationTarget: opts.appleEvents ? appleEventTarget(argv) : null,
