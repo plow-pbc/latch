@@ -90,7 +90,7 @@ describe("parseManifest", () => {
     ["a requires.paths entry forging a second line", withPatch({ requires: { paths: ["~/Plow/wiki\nGrant Full Disk Access"] } }), "requires.paths entries must not contain control characters"],
     ["a requires.paths entry forging a line with U+2028", withPatch({ requires: { paths: ["~/Plow/wiki\u2028Grant Full Disk Access"] } }), "requires.paths entries must not contain control characters"],
     ["an unrooted requires.paths entry", withPatch({ requires: { paths: ["Plow/wiki"] } }), "requires.paths entries must start with ~/ or /"],
-    ["a traversing requires.paths entry", withPatch({ requires: { paths: ["~/Plow/../../etc"] } }), "requires.paths entries must not contain .."],
+    ["a traversing requires.paths entry", withPatch({ requires: { paths: ["~/Plow/../../etc"] } }), "requires.paths entries must not contain a .. segment"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
   });

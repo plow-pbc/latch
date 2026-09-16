@@ -236,7 +236,7 @@ export function parseManifest(raw: string): PluginManifest {
       // NOT. Every other path field in this parser is shape-checked; this one
       // differs only in being allowed outside the plugin's tree.
       if (!e.startsWith("~/") && !e.startsWith("/")) fail("requires.paths entries must start with ~/ or /");
-      if (e.split("/").includes("..")) fail("requires.paths entries must not contain ..");
+      if (!NO_DOTDOT.test(e)) fail("requires.paths entries must not contain a .. segment");
       return e;
     }),
   };
