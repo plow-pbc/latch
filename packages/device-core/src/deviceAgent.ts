@@ -398,11 +398,6 @@ export class DeviceAgent {
     ensurePlowFolder(ownerHome);
     registerPlowFolderSkill(this.skills, ownerHome);
     registerContactsSkill(this.skills, ownerHome);
-    // Registered only when the CLI it documents is actually staged: a skill
-    // for a binary this Mac does not have teaches an agent commands the exec
-    // path refuses unconditionally — through the SAME predicate the exec gate
-    // uses, so a plugin that is off is absent everywhere at once.
-    this.syncPluginSkills();
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -483,6 +478,9 @@ export class DeviceAgent {
         approval,
       );
     }
+    // Last, after every built-in: plugin skills exactly while their plugin is
+    // staged and on, then the owner's own files over all of it (see the doc).
+    this.syncPluginSkills();
   }
 
   /**
