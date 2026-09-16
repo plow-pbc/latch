@@ -62,7 +62,7 @@ import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { blockedGroups, capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
-import { permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge } from "./pluginsModel.js";
+import { blockDestination, permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge } from "./pluginsModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -2670,11 +2670,13 @@ function clearHostGateAttention(fields: { [k: string]: unknown }): void {
 }
 
 /**
- * The tray item's and the notification's one destination. A block that names
- * a switch lands on the Plugins tab, which lists the plugins that switch is
- * stopping and offers the grant. One that names none — a locked file, a SIP
- * root, POSIX permissions — is nothing a plugin requires, so it lands on the
- * Audit tab's Blocked view, where the row carries the sentence that fixes it.
+ * The tray item's and the notification's one destination, decided here
+ * because here is where the staged plugins are: `blockDestination` routes a
+ * block by who owns the permission it names — the Plugins tab when a staged
+ * plugin declares it, Settings when nobody does and the switch is all there
+ * is, and the Audit tab's Blocked view when the block names no switch at all
+ * (a locked file, a SIP root, POSIX permissions), where the row carries the
+ * sentence that fixes it.
  */
 function showCapabilitiesForHostGate(block?: NonNullable<typeof hostGateAttention>): void {
   const permission = block ? block.permission : (hostGateAttention?.permission ?? null);
@@ -2684,7 +2686,11 @@ function showCapabilitiesForHostGate(block?: NonNullable<typeof hostGateAttentio
   if (!block || hostGateAttention === block) hostGateAttention = null;
   refreshTray();
   gate.sync();
-  const send = () => mainWindow?.webContents.send(permission ? "ui:showCapabilities" : "ui:showAuditBlocked");
+  const tab = blockDestination(permission, stagedPlugins);
+  const send = () =>
+    tab === "audit"
+      ? mainWindow?.webContents.send("ui:showAuditBlocked")
+      : mainWindow?.webContents.send("ui:showCapabilities", tab);
   if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
   else send();
 }

@@ -3099,11 +3099,12 @@ window.domo.onConfirmLeave(async (hasPendingAgentSetup) => {
 window.domo.onShowSettings(async () => {
   if (await selectTab("settings")) window.domo.updatesCheck();
 });
-// The tray item and the notification for a block by this Mac land here —
-// on the switch's row when the block named one, else on the Audit tab's
-// Blocked view, where the row carries the sentence that fixes it.
-window.domo.onShowCapabilities(async () => {
-  if (await selectTab("plugins")) window.domo.uiSetTab("plugins");
+// The tray item and the notification for a block by this Mac land here — on
+// the tab main says owns the remedy: Plugins when a staged plugin declares
+// the permission, Settings when nobody does and the switch is all there is.
+// A block that named no permission goes to onShowAuditBlocked instead.
+window.domo.onShowCapabilities(async (tab) => {
+  if (await selectTab(tab)) window.domo.uiSetTab(tab);
 });
 window.domo.onShowAuditBlocked(() => showAuditBlocked());
 // Another app handed main a credential exchange (Apple Passwords' export):

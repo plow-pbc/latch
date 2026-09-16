@@ -163,3 +163,22 @@ export function permissionUsers(
   }
   return users;
 }
+
+/**
+ * Where a block by this Mac sends the owner. A block names the permission it
+ * was refused for, and the remedy lives with whoever owns that permission: a
+ * switch some staged plugin declares is on the Plugins tab, which says what
+ * it is stopping and offers the grant; one nobody declares — Contacts, from
+ * the built-in skill — is only ever a switch, and the switch is in Settings.
+ * A block that names no permission at all (a locked file, a SIP root) is
+ * nothing a switch fixes, so it lands on the Audit tab's Blocked view, where
+ * the row carries the sentence that fixes it.
+ */
+export type BlockDestination = "plugins" | "settings" | "audit";
+export function blockDestination(
+  permission: string | null,
+  plugins: readonly { manifest: PluginManifest }[],
+): BlockDestination {
+  if (permission === null) return "audit";
+  return (permissionUsers(plugins)[permission]?.length ?? 0) > 0 ? "plugins" : "settings";
+}

@@ -95,8 +95,11 @@ contextBridge.exposeInMainWorld("domo", {
   // answers with the fresh state, like every other act on this bridge.
   pluginsGet: () => ipcRenderer.invoke("plugins:get"),
   pluginsSetEnabled: (name: string, on: boolean) => ipcRenderer.invoke("plugins:setEnabled", name, on),
-  // A block by this Mac lands the tray item and the notification here.
-  onShowCapabilities: (cb: () => void) => ipcRenderer.on("ui:showCapabilities", cb),
+  // A block by this Mac lands the tray item and the notification here, with
+  // the tab main decided the remedy lives on ("plugins" or "settings") —
+  // main holds the staged plugins, so the renderer never has to guess.
+  onShowCapabilities: (cb: (tab: string) => void) =>
+    ipcRenderer.on("ui:showCapabilities", (_e, tab: string) => cb(tab)),
   onShowAuditBlocked: (cb: () => void) => ipcRenderer.on("ui:showAuditBlocked", cb),
   // The floating panel's own poll: which switch it points at, and whether
   // that grant has landed.
