@@ -45,6 +45,23 @@ async function output(exec: Executor, argv: string[], env?: Record<string, strin
 }
 
 describe.skipIf(!ON_MAC)("Executor.run", () => {
+  // The guard is the caller's last word, asked after the executor's own
+  // waits (the conflicting-hold loop) and before anything launches.
+  it("a guard's sentence refuses the launch, and nothing spawns", async () => {
+    const exec = new Executor(tmp());
+    const marker = path.join(tmp(), "ran");
+    await expect(exec.run({
+      argv: ["/usr/bin/touch", marker],
+      readPaths: [],
+      writePaths: [path.dirname(marker)],
+      network: false,
+      appleEvents: false,
+      waitMs: 8000,
+      guard: () => "turned off",
+    })).rejects.toThrow("turned off");
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
   it("merges stderr into output for the stream, and keeps stdout alone for a parser", async () => {
     const exec = new Executor(tmp());
     const result = await exec.run({

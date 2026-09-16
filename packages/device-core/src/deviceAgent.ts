@@ -1050,7 +1050,12 @@ export class DeviceAgent {
       if (plugin === null) {
         return this.execError(intent.intentId, this.pluginRefusal(argv) ?? `${provider.command} is not installed on this Mac`);
       }
-      return this.executePlowGog(intent, plugin, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
+      try {
+        return await this.executePlowGog(intent, plugin, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
+      } catch (error: unknown) {
+        // A refused launch (the guard above), audited like the plain path's.
+        return this.execError(intent.intentId, error instanceof Error ? error.message : String(error));
+      }
     }
 
     // A staged plugin with no PROVIDERS row: reachable on its manifest alone.
@@ -1127,6 +1132,7 @@ export class DeviceAgent {
         sysvSemaphores: runSysvSemaphores,
         waitMs,
         env: runEnv,
+        guard: () => this.pluginRefusal(argv),
       });
       return this.finishRun(intent.intentId, result, {
         argv,
@@ -1435,6 +1441,10 @@ export class DeviceAgent {
         waitMs: opts.waitMs,
         // A help run gets no token, same as the gog path.
         env: token === null ? undefined : { [provider.tokenEnv]: token },
+        // Off NOW, not off at approval: the mint, the conflict probe and the
+        // executor's own hold are all waits the owner can flip the switch
+        // during, and this is the one seam every launch passes through.
+        guard: () => this.pluginRefusal(argv),
       });
     // An inner run that outlives wait_ms is WAITED OUT, not abandoned: the
     // per-account children have no public handle — the outer call owns the
@@ -1466,10 +1476,6 @@ export class DeviceAgent {
       const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
       return this.execError(intent.intentId, message);
     }
-    // The owner may have flipped the switch while the mint was out: nothing
-    // credentialed launches for a plugin that is off NOW, not off at approval.
-    const off = this.pluginRefusal(argv);
-    if (off !== null) return this.execError(intent.intentId, off);
 
     if (plan.kind === "accounts") {
       // Answered from the mint — no gog run, no further network.
@@ -1635,8 +1641,6 @@ export class DeviceAgent {
       // The create child's own outcome gets the one exec_end, in finishRun.
       if (refusal !== null) return this.execError(intent.intentId, refusal);
     }
-    const offSince = this.pluginRefusal(argv); // the probe was another wait
-    if (offSince !== null) return this.execError(intent.intentId, offSince);
     return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
   }
 

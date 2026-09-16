@@ -1167,10 +1167,13 @@ describe("a plugin the owner turned off", () => {
   it("never launches a credentialed child for a plugin turned off during the mint", async () => {
     let d: DeviceAgent | null = null;
     const flipsDuringMint = minterOf(async () => { d!.setDisabledPlugins(["gog"]); return TOKEN; });
-    d = device(flipsDuringMint, gogPlugin());
+    const ran = path.join(tmp(), "ran");
+    d = device(flipsDuringMint, stagedGog(`#!/bin/sh\ntouch "${ran}"\n`));
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
     expect(jv(response).get("error").str).toBe("plow-gog is turned off on this Mac");
-    expectNeverSpawned(d);
+    // Refused at the launch seam itself — after exec_start, before any child.
+    expect(fs.existsSync(ran)).toBe(false);
+    expect(d.audit.entries().map((e) => jv(e).get("event").str)).not.toContain("exec_end");
   });
 
   // A non-provider plugin has no PROVIDERS row to refuse through, and its
