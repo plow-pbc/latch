@@ -1090,8 +1090,20 @@ export class DeviceAgent {
           // thing `resolveEnv`, `substitute`, and `pluginEnvContext`'s own
           // `secret`/`mint` throw today. Anything else is a real bug in this
           // Mac's own code, and swallowing it here would report it as an
-          // unresolvable manifest instead of surfacing it to fail loudly.
-          if (!(error instanceof PluginError)) throw error;
+          // unresolvable manifest instead of surfacing it to fail loudly. It
+          // still fails loud, but never with the bug's own message: that
+          // message could name a resolved local filesystem path, and the MCP
+          // tool handler's generic catch would hand it straight to the
+          // calling agent. The detail goes to the audit log, which only the
+          // owner reads; the agent gets the same detail-free shape every
+          // other unresolvable-plugin refusal here uses.
+          if (!(error instanceof PluginError)) {
+            this.audit.record("exec_error", {
+              intentId: intent.intentId,
+              error: `${plugin.manifest.command} env resolution bug: ${error instanceof Error ? error.message : String(error)}`,
+            });
+            throw new Error(`${plugin.manifest.command} failed to resolve its env`);
+          }
           // The underlying PluginError's own message names the placeholder or
           // the source kind — safe today (manifest.ts's env values are typed,
           // no caller text reaches it), but the fixed sentence is what every
