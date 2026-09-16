@@ -433,10 +433,9 @@ describe("a staged non-provider plugin through the exec path", () => {
       // exec.cwd: "plugin" must resolve to the plugin's own staged
       // directory, not wherever the parent process happens to be running
       // (cwd: undefined would have handed the child the executor's scratch
-      // dir instead). Compared through realpath because the executor
-      // canonicalizes cwd before exec, and a tmp dir root can itself be a
-      // symlink (macOS's /var -> /private/var).
-      expect(out).toContain(`CWD=${fs.realpathSync(plugins[0]!.dir)}`);
+      // dir instead). `plugin.dir` is canonical by construction — loadPlugins
+      // resolves it once — so it compares directly against the child's pwd.
+      expect(out).toContain(`CWD=${plugins[0]!.dir}`);
       const events = d.audit.entries().map((e) => jv(e).get("event").str);
       expect(events).toContain("exec_start");
       expect(events).toContain("exec_end");
