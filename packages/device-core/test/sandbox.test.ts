@@ -7,6 +7,7 @@
  *     DeviceCoreTests sandbox assertions (DESIGN.md §10).
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -74,15 +75,27 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
   // profile used to deny, so a create-set-remove round trip is the behavior
   // that has to hold, not just `semget` — seatbelt gates the operations, not
   // creation, so every `*get` returns an id under any profile. The grant is
-  // semaphores ONLY: the same script proves attaching SysV shared memory is
-  // still refused, so a future `ipc-sysv-*` generalization fails here.
-  it("lets a child use a SysV semaphore, and still refuses SysV shared memory", async () => {
+  // semaphores ONLY: a shared-memory segment and a message queue made OUTSIDE
+  // the sandbox (removal is gated too, so the child could never clean up its
+  // own) must still refuse attach and send inside it, so a future
+  // `ipc-sysv-*` generalization fails here.
+  const perl = (script: string): string =>
+    execFileSync("/usr/bin/perl", ["-e", script], { encoding: "utf8" }).trim();
+  it("lets a child use a SysV semaphore, and still refuses shared memory and message queues", async () => {
+    const [shm, queue] = perl(
+      'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT); print shmget(IPC_PRIVATE, 4096, 0600|IPC_CREAT), " ", msgget(IPC_PRIVATE, 0600|IPC_CREAT)',
+    ).split(" ");
+    cleanups.push(() => {
+      perl(`use IPC::SysV qw(IPC_RMID); shmctl(${shm}, IPC_RMID, 0); msgctl(${queue}, IPC_RMID, 0)`);
+    });
     const executor = new Executor(tempDir());
     const result = await executor.run({
       argv: [
         "/usr/bin/perl",
         "-e",
-        'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT IPC_RMID SETVAL); my $id = semget(IPC_PRIVATE, 1, 0600|IPC_CREAT); defined $id or die "semget: $!"; semctl($id, 0, SETVAL, 1) or die "semctl: $!"; semctl($id, 0, IPC_RMID, 0); print "SEM_OK\n"; my $shm = shmget(IPC_PRIVATE, 4096, 0600|IPC_CREAT); defined $shm or die "shmget: $!"; my $b; my $r = shmread($shm, $b, 0, 4); shmctl($shm, IPC_RMID, 0); $r and die "shm attach succeeded"; print "SHM_DENIED\n"',
+        'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT IPC_RMID SETVAL); my $id = semget(IPC_PRIVATE, 1, 0600|IPC_CREAT); defined $id or die "semget: $!"; semctl($id, 0, SETVAL, 1) or die "semctl: $!"; semctl($id, 0, IPC_RMID, 0); print "SEM_OK\n"; ' +
+          `my $b; shmread(${shm}, $b, 0, 4) and die "shm attach succeeded"; print "SHM_DENIED\n"; ` +
+          `msgsnd(${queue}, pack("l! a*", 1, "x"), 0) and die "msgsnd succeeded"; print "MSG_DENIED\n"`,
       ],
       readPaths: [],
       writePaths: [],
@@ -93,6 +106,7 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
     expect(result.exitCode).toBe(0);
     expect(result.output.toString()).toContain("SEM_OK");
     expect(result.output.toString()).toContain("SHM_DENIED");
+    expect(result.output.toString()).toContain("MSG_DENIED");
   });
 
   it("blocks a write outside the approved scope", async () => {

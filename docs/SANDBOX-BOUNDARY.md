@@ -61,7 +61,8 @@ exactly the approved capabilities**".
   wiki plugin: a PyInstaller onefile binary on macOS syncs its bootloader with the Python child
   through one, and `semctl` under `(deny default)` failed before Python started. Semaphores only:
   seatbelt gates the operations rather than creation (`shmget`, `msgget` and `semget` all return an
-  id under any profile), and attaching SysV shared memory stays denied. SBPL has no filter for this
+  id under any profile), and attaching SysV shared memory, sending on a message queue, and removing
+  either stay denied. SBPL has no filter for this
   operation, so the grant is the host's whole SysV semaphore namespace, not the child's own sets: a
   child can reach a semaphore an unrelated process created. Accepted, like `signal (target
   children)` above it.
