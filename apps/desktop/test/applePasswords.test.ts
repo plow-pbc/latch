@@ -39,7 +39,7 @@ function makeManager(overrides: { warmupProbeHosts?: string[] } = {}): ApplePass
     // Empty by default so tests exercise probing only when they mean to.
     warmupProbeHosts: overrides.warmupProbeHosts ?? [],
     // Hermetic: never read this machine's real /Applications or profiles.
-    prereqs: () => ({ browser: "Google Chrome", browserApp: "Google Chrome", extensionInstalled: true }),
+    prereqs: () => ({ browser: "Google Chrome" }),
     loadWarmup: () => warmup,
     saveWarmup: (w) => {
       warmup = w;
@@ -87,39 +87,18 @@ describe("settings default", () => {
 describe("checkApwPrereqs", () => {
   function roots() {
     const applicationsDir = path.join(dir, "Applications");
-    const appSupportDir = path.join(dir, "AppSupport");
-    const apwDataDir = path.join(dir, "apw-data");
     fs.mkdirSync(applicationsDir, { recursive: true });
-    fs.mkdirSync(appSupportDir, { recursive: true });
-    return { applicationsDir, appSupportDir, apwDataDir };
+    return { applicationsDir };
   }
 
-  it("reports no browser and no extension on a bare Mac", () => {
-    expect(checkApwPrereqs(roots())).toEqual({ browser: null, browserApp: null, extensionInstalled: false });
+  it("reports no browser on a bare Mac", () => {
+    expect(checkApwPrereqs(roots())).toEqual({ browser: null });
   });
 
-  it("finds a supported browser without the extension", () => {
+  it("finds a supported browser; the extension is apw's job, not a prerequisite", () => {
     const r = roots();
     fs.mkdirSync(path.join(r.applicationsDir, "Google Chrome.app"), { recursive: true });
-    expect(checkApwPrereqs(r)).toEqual({ browser: "Google Chrome", browserApp: "Google Chrome", extensionInstalled: false });
-  });
-
-  it("finds the extension in a browser profile", () => {
-    const r = roots();
-    fs.mkdirSync(path.join(r.applicationsDir, "Google Chrome.app"), { recursive: true });
-    fs.mkdirSync(
-      path.join(r.appSupportDir, "Google/Chrome/Default/Extensions/pejdijmoenmkgeppbflobdenhhabjlaj"),
-      { recursive: true },
-    );
-    expect(checkApwPrereqs(r).extensionInstalled).toBe(true);
-  });
-
-  it("apw's own cached extension copy satisfies the prerequisite", () => {
-    const r = roots();
-    // Removed from the browser, but apw already copied it (the live setup).
-    fs.mkdirSync(path.join(r.apwDataDir, "extension"), { recursive: true });
-    fs.writeFileSync(path.join(r.apwDataDir, "extension", "background.js.orig"), "");
-    expect(checkApwPrereqs(r).extensionInstalled).toBe(true);
+    expect(checkApwPrereqs(r)).toEqual({ browser: "Google Chrome" });
   });
 });
 
