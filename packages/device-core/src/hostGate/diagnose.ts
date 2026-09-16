@@ -56,7 +56,8 @@ export const APP_DISPLAY_NAME = "Plow Latch";
  * `blocked` (see `isHostGate`).
  */
 export type BlockedCause =
-  /** A macOS privacy switch (TCC) the owner has not flipped for this app. */
+  /** A macOS privacy switch (TCC) this app does not effectively have: never
+   *  flipped, or flipped and not reaching the sandboxed run. */
   | "macos_permission"
   /** A consent dialog is open on the Mac's screen and nobody has answered. */
   | "prompt_waiting"
@@ -611,6 +612,25 @@ export function diagnose(f: HostFacts): Diagnosis {
     }
 
     if (f.ran_sandboxed && f.app_process_open === "ok") {
+      // The grant is there and it reaches the app, but not the run. Nothing
+      // left explains the refusal: the location is one Full Disk Access
+      // covers, the grant is on, the app itself opens the path, and the
+      // profile the run was given allows it. What remains is macOS not
+      // attributing the sandboxed child to the app's entry — the state the
+      // owner's own Full Disk Access row names — and the remedy is not a
+      // second grant but removing the app from the list and adding it again.
+      if (
+        f.tcc_guarded_prefix !== null &&
+        COVERED_BY_FULL_DISK_ACCESS.has(f.tcc_guarded_prefix) &&
+        f.full_disk_access_granted === true &&
+        f.sandbox_allows_read === true &&
+        f.sandbox_allows_write === true
+      ) {
+        evidence.push(`${APP_DISPLAY_NAME} itself can open ${where}, and Full Disk Access is granted, which covers that location`);
+        evidence.push("the run's sandbox profile allows the path too, so the grant did not reach the sandboxed run itself");
+        ruledOut.push("sandbox bound", "Full Disk Access not granted");
+        return verdict("macos_permission", "confirmed", "full_disk_access");
+      }
       evidence.push(`${APP_DISPLAY_NAME} itself can open ${where}, so macOS is not refusing it`);
       ruledOut.push("macOS permission");
       if (f.sandbox_allows_write === false) {
@@ -700,6 +720,12 @@ export function ownerAction(
       if (permission === "automation") {
         const target = f.automation_target ?? "that application";
         return `In System Settings > Privacy & Security > Automation, allow ${app} to control ${target}.`;
+      }
+      // Two remedies behind one switch: granting it again does nothing when
+      // the grant is already there and a sandboxed run cannot inherit it.
+      // Same substance as the Full Disk Access row's own repair line.
+      if (permission === "full_disk_access" && f.full_disk_access_granted === true) {
+        return `${app} is already turned on in System Settings > Privacy & Security > Full Disk Access, but a sandboxed run cannot inherit it — remove ${app} from the list and add it again.`;
       }
       if (permission === "full_disk_access" || permission === null) {
         return `In System Settings > Privacy & Security > Full Disk Access, turn on ${app}, then quit and reopen it.`;
