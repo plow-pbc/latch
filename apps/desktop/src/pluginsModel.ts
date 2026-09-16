@@ -28,7 +28,12 @@ export type PluginStatus = "off" | "needs-setup" | "ready";
 export interface UnmetRequirement {
   kind: "account" | "permission" | "path";
   id: string;
-  /** What the owner's button does, in their words: "Connect Google". */
+  /**
+   * What the owner's button does, in their words: "Connect Google". The
+   * `path` kind carries manifest text, so a renderer sets this with
+   * `textContent` and never as HTML — the same rule the approval window
+   * follows for every agent-controlled string.
+   */
   action: string;
 }
 
@@ -92,9 +97,11 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
 
 /**
  * The `blocked` input, from the audit log's own grouping: a group counts for
- * every enabled plugin that requires the permission it names. Automation
- * groups key on `automation:<bundle id>`, so the bare permission id is
- * compared against the part before the colon.
+ * every plugin that requires the permission it names. Whether a plugin is
+ * enabled is not this function's question — `pluginRows` zeroes the count for
+ * any status but `needs-setup`. Automation groups key on
+ * `automation:<bundle id>`, so the bare permission id is compared against the
+ * part before the colon.
  */
 export function pluginBlockCounts(
   groups: readonly BlockedGroup[],

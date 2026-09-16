@@ -93,3 +93,11 @@ it("counts a permission's blocks against every plugin that requires it", () => {
   const plugins = [{ manifest: manifest({ permissions: ["contacts"] }) }, { manifest: manifest({ permissions: ["photos"] }, "photo") }];
   expect(pluginBlockCounts(blockedGroups(events), plugins)).toEqual({ wiki: 1 });
 });
+
+it("attributes an automation block by its permission, not its bundle id", () => {
+  const events = [
+    { event: "host_permission_blocked", permission: "automation:com.apple.Notes", intentId: "i1", handle: "h1", ts: "2026-09-02T09:00:00Z" },
+  ];
+  const plugins = [{ manifest: manifest({ permissions: ["automation"] }) }];
+  expect(pluginBlockCounts(blockedGroups(events), plugins)).toEqual({ wiki: 1 });
+});

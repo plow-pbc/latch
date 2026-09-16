@@ -228,6 +228,12 @@ export function parseManifest(raw: string): PluginManifest {
       if (!e) fail("requires.paths entries must not be empty");
       // eslint-disable-next-line no-control-regex
       if (/[\u0000-\u001f\u007f]/.test(e)) fail("requires.paths entries must not contain control characters");
+      // Rooted at the owner's home or the filesystem: a bare relative segment
+      // has no base to resolve against, and `..` names a path by where it is
+      // NOT. Every other path field in this parser is shape-checked; this one
+      // differs only in being allowed outside the plugin's tree.
+      if (!e.startsWith("~/") && !e.startsWith("/")) fail("requires.paths entries must start with ~/ or /");
+      if (e.split("/").includes("..")) fail("requires.paths entries must not contain ..");
       return e;
     }),
   };
