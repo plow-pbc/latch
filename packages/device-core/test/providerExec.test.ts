@@ -352,6 +352,33 @@ describe("a provider through the exec path", () => {
  * closes: reachable on the manifest alone, not a second dispatch system
  * beside providers.
  */
+const ECHOER_MANIFEST = {
+  name: "echoer", version: "test", command: "echoer",
+  runtime: {
+    binaries: [{
+      name: "echo-bin", version: "test",
+      url: { arm64: "https://example.invalid/e-arm64.tar.gz", x64: "https://example.invalid/e-x64.tar.gz" },
+      sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
+    }],
+    sources: [],
+  },
+  exec: { cwd: "plugin", argv: ["echo-bin", "--quiet"] },
+  env: {}, argv: { read: [["say"]], write: [] },
+  skill: "skill.md",
+};
+
+/** A staged echoer plugin whose binary runs `script`, with a skill.md the
+ * manifest names (fakePlugin only stages the binary, not this). */
+function echoerPlugin(script: string): StagedPlugin[] {
+  const root = tmp();
+  const dir = fakePlugin(root, ECHOER_MANIFEST, script);
+  fs.writeFileSync(
+    path.join(dir, "skill.md"),
+    "---\nname: echoer\ndescription: says things\n---\nSay what the owner asks.\n",
+  );
+  return loadPlugins([root]);
+}
+
 describe("a staged non-provider plugin through the exec path", () => {
   // The binary's staged name ("echo-bin") and the manifest's own command
   // ("echoer") are deliberately different strings: the agent's argv[0] is
@@ -360,33 +387,6 @@ describe("a staged non-provider plugin through the exec path", () => {
   // exec path ever resolved off the caller's argv[0] instead of the
   // manifest's own entrypoint, these two being the same string (as they
   // were before) would hide it.
-  const ECHOER_MANIFEST = {
-    name: "echoer", version: "test", command: "echoer",
-    runtime: {
-      binaries: [{
-        name: "echo-bin", version: "test",
-        url: { arm64: "https://example.invalid/e-arm64.tar.gz", x64: "https://example.invalid/e-x64.tar.gz" },
-        sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
-      }],
-      sources: [],
-    },
-    exec: { cwd: "plugin", argv: ["echo-bin", "--quiet"] },
-    env: {}, argv: { read: [["say"]], write: [] },
-    skill: "skill.md",
-  };
-
-  /** A staged echoer plugin whose binary runs `script`, with a skill.md the
-   * manifest names (fakePlugin only stages the binary, not this). */
-  function echoerPlugin(script: string): StagedPlugin[] {
-    const root = tmp();
-    const dir = fakePlugin(root, ECHOER_MANIFEST, script);
-    fs.writeFileSync(
-      path.join(dir, "skill.md"),
-      "---\nname: echoer\ndescription: says things\n---\nSay what the owner asks.\n",
-    );
-    return loadPlugins([root]);
-  }
-
   it("publishes the plugin's own manifest-declared skill only when it is staged", () => {
     expect(device(null, echoerPlugin("#!/bin/sh\n")).skills.manifest().map((s) => s.name)).toContain("echoer");
     expect(device(null, []).skills.manifest().map((s) => s.name)).not.toContain("echoer");
@@ -1146,6 +1146,19 @@ describe("a plugin the owner turned off", () => {
 
     d.setDisabledPlugins([]);
     expect(publishes(d)).toBe(true);
+  });
+
+  // A non-provider plugin has no PROVIDERS row to refuse through, and its
+  // command may well also be a real binary on PATH — off has to refuse by
+  // name at both chokepoints, never fall through to running that binary.
+  it("refuses a non-provider plugin's command by name rather than falling through to PATH", async () => {
+    const d = device(null, echoerPlugin("#!/bin/sh\necho ran\n"));
+    d.setDisabledPlugins(["echoer"]);
+    expect(d.skills.manifest().map((s) => s.name)).not.toContain("echoer");
+    expect(d.pluginRefusal(["echoer", "say", "hi"])).toBe("echoer is turned off on this Mac");
+    const response = await run(d, ["echoer", "say", "hi"]);
+    expect(jv(response).get("error").str).toBe("echoer is turned off on this Mac");
+    expectNeverSpawned(d);
   });
 
   /**

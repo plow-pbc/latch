@@ -104,9 +104,8 @@ it("shows a disabled plugin's requirements to nobody", () => {
   expect(row!.unmet).toEqual([]);
 });
 
-it("marks a plugin that declares exec.argv as a CLI and carries its skill's description", () => {
+it("carries its skill's description", () => {
   const [row] = pluginRows(build({ requires: none, enabled: true }));
-  expect(row!.isCli).toBe(true);
   expect(row!.description).toBe("Keeps a wiki.");
 });
 

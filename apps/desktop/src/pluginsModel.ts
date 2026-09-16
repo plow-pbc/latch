@@ -36,11 +36,6 @@ export interface UnmetRequirement {
 
 export interface PluginRow {
   name: string;
-  /** Derived, never declared: a manifest that declares `exec.argv` IS a CLI,
-   *  so there is no `kind` field to keep in sync and the badge is right the
-   *  day a plugin isn't one. Every manifest carries one today — parseManifest
-   *  requires it — so this reads true until a non-exec runtime kind lands. */
-  isCli: boolean;
   /** The plugin's skill's `description:`, as SkillRegistry parsed it — the
    *  caller passes it through. Deliberately NOT a manifest field: a second
    *  place to write the same sentence is a second place for it to drift. */
@@ -87,7 +82,6 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
     const status: PluginStatus = !enabled ? "off" : unmet.length > 0 ? "needs-setup" : "ready";
     return {
       name: manifest.name,
-      isCli: manifest.exec.argv.length > 0,
       description: description ?? null,
       status,
       unmet: status === "off" ? [] : unmet,

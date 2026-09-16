@@ -868,28 +868,25 @@ export class DeviceAgent {
    * as present — publishing its skill and minting for it.
    */
   private plugin(name: string): StagedPlugin | null {
-    return this.activePlugins.find((p) => p.manifest.name === name) ?? null;
+    if (this.disabledPlugins.has(name)) return null;
+    return this.plugins.find((p) => p.manifest.name === name) ?? null;
   }
 
   /**
    * The plugins the owner has turned off, by name.
    *
    * Off is one fact with three consequences, and they all fall out of
-   * `activePlugins` omitting it: the plugin is not staged as far as this
+   * `plugin()` answering null: the plugin is not staged as far as this
    * device is concerned, its skill is unpublished (below), and its commands
    * are refused at the same pre-intent chokepoint that already refuses a
-   * provider with nothing staged. The app calls this at startup with what it
+   * provider with nothing staged — by name, never by falling through to
+   * PATH, which is where a bare command of the same spelling would run. The app calls this at startup with what it
    * read from settings and again on every toggle, so there is one code path,
    * not a start-time filter and a live one.
    */
   setDisabledPlugins(names: readonly string[]): void {
     this.disabledPlugins = new Set(names);
     this.syncPluginSkills();
-  }
-
-  /** The staged plugins the owner has not turned off — the one predicate every "is it here" answer runs through. */
-  private get activePlugins(): StagedPlugin[] {
-    return this.plugins.filter((p) => !this.disabledPlugins.has(p.manifest.name));
   }
 
   /** Publish each staged plugin's skill exactly while the plugin is on. */
@@ -900,6 +897,18 @@ export class DeviceAgent {
       if (this.plugin(staged.manifest.name) !== null) this.skills.register(skill);
       else this.skills.unregister(skill.name);
     }
+  }
+
+  /**
+   * A plugin's one-line description for the owner: its published skill's,
+   * so an owner's override shows the owner what it shows the agent — and the
+   * declared one while the plugin is off, so the row offering to turn it
+   * back on is not blank.
+   */
+  pluginDescription(name: string): string | null {
+    const staged = this.plugins.find((p) => p.manifest.name === name);
+    const declared = staged ? this.pluginSkill(staged) : null;
+    return declared ? (this.skills.skill(declared.name)?.description ?? declared.description) : null;
   }
 
   /**
@@ -938,7 +947,7 @@ export class DeviceAgent {
     const cap = intent.capabilities.find((c) => c.kind === "process.exec");
     const argv = cap?.argv;
     if (cap === undefined || argv === undefined || argv.length === 0) return intent;
-    const plugin = pluginFor(this.activePlugins, argv[0] ?? "");
+    const plugin = pluginFor(this.plugins, argv[0] ?? "");
     if (plugin === null) return intent;
     const viewed = ruleArgv(plugin.manifest, argv);
     if (viewed === argv) return intent;
@@ -965,8 +974,9 @@ export class DeviceAgent {
    * the caller believing it chose a cwd it didn't.
    */
   pluginRefusal(argv: readonly string[], cwd?: string): string | null {
-    const plugin = pluginFor(this.activePlugins, argv[0] ?? "");
+    const plugin = pluginFor(this.plugins, argv[0] ?? "");
     if (plugin === null) return null;
+    if (this.plugin(plugin.manifest.name) === null) return `${plugin.manifest.command} is turned off on this Mac`;
     if (cwd !== undefined) return "cwd is refused for a plugin; it always runs in its own directory";
     const verdict = classifyArgv(plugin.manifest, argv);
     return verdict.kind === "refused" ? verdict.reason : null;
@@ -983,7 +993,7 @@ export class DeviceAgent {
    * when it disagrees.
    */
   pluginDir(argv: readonly string[]): string | null {
-    return pluginFor(this.activePlugins, argv[0] ?? "")?.dir ?? null;
+    return pluginFor(this.plugins, argv[0] ?? "")?.dir ?? null;
   }
 
   /** Every connected account's token, for the provider's fan-out. */
@@ -1056,9 +1066,12 @@ export class DeviceAgent {
     // approved `cwd` disagrees with this plugin's own directory (below) —
     // the audit, the executor call and the error handling are the ordinary
     // command's own, unchanged.
-    const plugin = pluginFor(this.activePlugins, argv[0] ?? "");
+    const plugin = pluginFor(this.plugins, argv[0] ?? "");
     let runArgv = argv;
     if (plugin !== null) {
+      if (this.plugin(plugin.manifest.name) === null) {
+        return this.execError(intent.intentId, `${plugin.manifest.command} is turned off on this Mac`);
+      }
       // The manifest's own belt (`argv.read`/`argv.write`) is checked before
       // anything spawns, the same defense-in-depth shape as `providerRefusal`
       // above — the device is the chokepoint regardless of what a caller

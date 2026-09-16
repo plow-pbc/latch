@@ -2661,7 +2661,7 @@ async function renderPlugins() {
       el("div", {}, [
         el("div", { class: "cap-name plugin-name" }, [
           el("span", { text: r.name }),
-          r.isCli ? badge("zinc", "CLI") : null,
+          badge("zinc", "CLI"),
         ]),
         r.description ? el("div", { class: "cap-sub", text: r.description }) : null,
       ]),

@@ -46,7 +46,6 @@ import {
   parsePasswordExport,
   PluginError,
   pluginRoots,
-  PROVIDERS,
   readCredentialsState,
   resolveBrowserRuntime,
   totpCode,
@@ -1536,17 +1535,6 @@ ipcMain.handle("capabilities:bannerSeen", async () => {
 
 // MARK: The Plugins tab (pluginsModel.ts)
 
-/**
- * A plugin's one-line description: its skill's, as the registry holds it.
- * Deliberately not a manifest field — a second place to write the same
- * sentence is a second place for it to drift — and read off the provider row
- * rather than the device's live registry, so turning a plugin off (which
- * unpublishes the skill) does not blank the row that offers to turn it on.
- */
-function pluginDescription(name: string): string | null {
-  return PROVIDERS.find((p) => p.plugin === name)?.skill.description ?? null;
-}
-
 /** The declared requirement paths that are really there. `~` is the OWNER's
  *  home, the same one every skill names, not the app's DOMO_HOME. */
 async function availablePaths(declared: readonly string[]): Promise<string[]> {
@@ -1565,7 +1553,7 @@ async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows> }> {
     plugins: stagedPlugins.map((p) => ({
       manifest: p.manifest,
       enabled: !disabled.has(p.manifest.name),
-      description: pluginDescription(p.manifest.name),
+      description: device?.pluginDescription(p.manifest.name) ?? null,
     })),
     // Settings' own answer for every switch, not a second reading of the
     // inventory: the pane folds the audit log and the folder memos into it,
