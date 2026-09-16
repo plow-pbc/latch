@@ -37,10 +37,8 @@ export function onboardingFixtures(now) {
       state: { ...base, step: "welcome" },
       cloud: noAgents,
       expect: [
-        "Presents",
-        "Plow Latch",
-        "The privacy and security layer for agents",
-        "nothing you don't want to share ever leaves your computer",
+        "Keep your passwords.",
+        "Lose the busywork.",
         "Get started",
       ],
       expectFocus: "Get started",

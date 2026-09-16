@@ -130,12 +130,10 @@ function welcomeScreen() {
   return el("div", { class: "welcome-wrap" }, [
     el("div", { class: "welcome-glow", attrs: { "aria-hidden": "true" } }),
     makeLogo(),
-    el("p", { class: "welcome-eyebrow", text: "Presents" }),
-    el("h1", { text: "Plow Latch" }),
-    el("p", {
-      class: "welcome-lead",
-      text: "The privacy and security layer for agents. Plow Latch lives on your Mac, so nothing you don't want to share ever leaves your computer.",
-    }),
+    el("h1", {}, [
+      el("span", { text: "Keep your passwords." }),
+      el("span", { class: "kick", text: "Lose the busywork." }),
+    ]),
     note(state),
   ]);
 }
