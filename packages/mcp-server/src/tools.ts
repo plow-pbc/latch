@@ -545,10 +545,9 @@ export const TOOLS: ToolSpec[] = [
       // still resolved above and used to make relative provider file args
       // absolute; only the capability (and therefore the card) never sees it.
       // A staged plugin's own cwd is never the caller's `cwd` (refused
-      // above) — it is always this plugin's own directory, resolved through
-      // the same `resolved()` every other path in this call goes through so
-      // the card shows a true physical path.
-      const execCwd = provider !== null ? undefined : pluginDir !== null ? await resolved(pluginDir) : cwd;
+      // above) — it is always this plugin's own directory. `pluginDir` is
+      // already canonical (registry.ts, at load), so no second resolution.
+      const execCwd = provider !== null ? undefined : pluginDir ?? cwd;
       const capabilities: Capability[] = [
         { kind: "process.exec", argv, cwd: execCwd },
         // A provider implies network. Its whole purpose is to reach

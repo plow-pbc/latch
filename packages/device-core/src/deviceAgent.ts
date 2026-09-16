@@ -11,7 +11,7 @@
  * key to pin. That is provenance, not confinement — DESIGN.md §4 *The intent
  * object* owns where an intent's contents go.
  */
-import { AlwaysAllowRule, canonicalize, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
+import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
 import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
 import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
@@ -1065,29 +1065,23 @@ export class DeviceAgent {
       const bin = isStagedBinary ? path.join(plugin.binDir, entry) : entry;
       runArgv = [bin, ...plugin.manifest.exec.argv.slice(1), ...argv.slice(1)];
       // exec.cwd: "plugin" means this plugin's own dispatch runs in its own
-      // staged directory, and nowhere else. `mcp-server`'s tool resolves and
-      // offers that directory before the intent is built (`pluginDir`), so
-      // the owner approves a card naming it — this is the enforcement half:
-      // the approved `cwd` must be exactly this, or refuse. Refusing rather
-      // than substituting `plugin.dir` here is the point of this check —
-      // the device must never grant a wider sandbox than the card it showed.
+      // staged directory, and nowhere else. `mcp-server`'s tool offers that
+      // directory before the intent is built (`pluginDir`), so the owner
+      // approves a card naming it — this is the enforcement half: the
+      // approved `cwd` must be exactly this, or refuse. Refusing rather than
+      // substituting `plugin.dir` here is the point of this check — the
+      // device must never grant a wider sandbox than the card it showed.
       // No separate read grant for the binary: the executor already reads
       // `cwd` recursively to exec anything under it, and `plugin.binDir` is
       // always a subdirectory of it.
-      // `plugin.dir` is a lexical join (registry.ts), never realpath'd, so
-      // canonicalize once and use THAT for both the comparison and the run.
-      const canonicalDir = canonicalize(plugin.dir);
-      if (exec.cwd === undefined || canonicalize(exec.cwd) !== canonicalDir) {
+      // `plugin.dir` is canonicalized once, at load, in registry.ts — the
+      // one owner of that fact. mcp-server's `pluginDir` hands back that
+      // same canonical string unchanged, so plain equality refuses no less
+      // than resolve-and-compare would: a non-canonical spelling only fails
+      // closed instead of passing, never the reverse.
+      if (exec.cwd !== plugin.dir) {
         return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
       }
-      // Having proved it EQUALS the plugin's directory, run and audit the
-      // device's own canonical form rather than the caller's spelling of it.
-      // Today's only producer sends an already-resolved path, but the check
-      // above exists for an intent built some other way — and a symlinked
-      // spelling that passes it would otherwise land in `audit.ndjson`, the
-      // project's test oracle, as something other than the true physical
-      // path everything else here is written against.
-      exec = { ...exec, cwd: canonicalDir };
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });

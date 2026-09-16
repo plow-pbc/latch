@@ -480,7 +480,9 @@ describe("a staged non-provider plugin through the exec path", () => {
       const root = tmp();
       const dir = fakePlugin(root, RELAY_MANIFEST, "#!/bin/sh\n"); // no binaries declared: no bin/ ever staged
       const d = device(null, loadPlugins([root]));
-      const out = String(jv(await run(d, ["relay", "say", "hi"], 8000, undefined, dir)).get("output").str ?? "");
+      const out = String(
+        jv(await run(d, ["relay", "say", "hi"], 8000, undefined, fs.realpathSync(dir))).get("output").str ?? "",
+      );
       // /bin/echo, found via the curated PATH (device()'s plugin has no
       // runtime/<arch>/bin at all, so a binDir join would have ENOENTed).
       expect(out).toContain("RELAY say hi");
@@ -578,7 +580,7 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
     const root = tmp();
     const dir = fakePlugin(root, READ_WRITE_MANIFEST, '#!/bin/sh\necho "ARGV=$*"\n');
     const plugins = loadPlugins([root]);
-    return { device: new DeviceAgent(tmp(), "Test Mac", delegate, null, undefined, null, plugins), dir };
+    return { device: new DeviceAgent(tmp(), "Test Mac", delegate, null, undefined, null, plugins), dir: plugins[0]!.dir };
   }
 
   itSpawns(

@@ -16,7 +16,7 @@ describe("loadPlugins", () => {
     const dir = fakePlugin(root, MINIMAL, SCRIPT);
     const [p] = loadPlugins([root]);
     expect(p.manifest.name).toBe("fix");
-    expect(p.binDir).toBe(path.join(dir, "runtime", process.arch, "bin"));
+    expect(p.binDir).toBe(path.join(fs.realpathSync(dir), "runtime", process.arch, "bin"));
   });
 
   it("omits a plugin whose declared binary is not staged, and a directory with no manifest", () => {
@@ -53,7 +53,7 @@ describe("loadPlugins", () => {
     await stageBinaries(manifest, dir, process.arch as Arch, tmp(), async () => fs.readFileSync(file));
     const [p] = loadPlugins([root]);
     expect(p.manifest.name).toBe(manifest.name);
-    expect(p.binDir).toBe(path.join(dir, "runtime", process.arch, "bin"));
+    expect(p.binDir).toBe(path.join(fs.realpathSync(dir), "runtime", process.arch, "bin"));
   });
 
   it("takes the first root that has a name, and a missing root is not an error", () => {

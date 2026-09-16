@@ -20,7 +20,7 @@ export interface StagedPlugin {
   manifest: PluginManifest;
   /** The plugin's own root directory — where `latch-plugin.json` and a
    * manifest-declared `skill` path live. Not `binDir`, which is one level
-   * (arch-specific) below it. */
+   * (arch-specific) below it. Canonical (realpath'd) physical path. */
   dir: string;
   binDir: string;
 }
@@ -64,7 +64,10 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
       claimed.add(name);
       const manifest = parseManifest(fs.readFileSync(file, "utf8"));
       if (manifest.name !== name) throw new PluginError("plugin directory must be named after its manifest");
-      const bin = binDir(dir, arch);
+      // Canonicalized once, here, at load — staging is startup work, not
+      // call-path work, so this realpathSync never blocks a call budget.
+      const canonicalDir = fs.realpathSync(dir);
+      const bin = binDir(canonicalDir, arch);
       if (!manifest.runtime.binaries.every((b) => executable(path.join(bin, b.name)))) continue;
       const holder = commands.get(manifest.command);
       if (holder !== undefined) {
@@ -72,7 +75,7 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
         continue;
       }
       commands.set(manifest.command, name);
-      out.push({ manifest, dir, binDir: bin });
+      out.push({ manifest, dir: canonicalDir, binDir: bin });
     }
   }
   return out;
