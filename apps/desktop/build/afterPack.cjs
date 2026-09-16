@@ -109,7 +109,17 @@ function* walk(root) {
 // (see its doc comment), and packages/device-core/test/stagedSourceAgreement.test.ts
 // pins the two together on identical tree shapes so they can't drift apart.
 function bare(d) {
-  return !fs.existsSync(d) || walk(d).next().done === true;
+  // A path that exists but is NOT a directory reads bare rather than throwing:
+  // walk() would call readdirSync on it and raise ENOTDIR, turning a clear
+  // "this plugin did not stage" refusal into an opaque pack crash. registry.ts's
+  // sourceStaged() already answers false here, and the two must agree.
+  let dir;
+  try {
+    dir = fs.statSync(d).isDirectory();
+  } catch {
+    return true;
+  }
+  return !dir || walk(d).next().done === true;
 }
 
 module.exports = async function afterPack(context) {

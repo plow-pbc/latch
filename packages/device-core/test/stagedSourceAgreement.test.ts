@@ -27,6 +27,16 @@ describe("bare() and sourceStaged() agree on what counts as a staged source tree
     expect(sourceStaged(dir)).toBe(false);
   });
 
+  it("reads a path that exists but is a file as NOT staged on both sides", () => {
+    // The asymmetry that outlasted the port: sourceStaged() stat-checked for a
+    // directory, while bare() went straight to readdirSync and raised ENOTDIR —
+    // an opaque pack crash where a clear refusal belongs.
+    const dir = path.join(tmp(), "not-a-dir");
+    fs.writeFileSync(dir, "i am a file");
+    expect(bare(dir)).toBe(true);
+    expect(sourceStaged(dir)).toBe(false);
+  });
+
   it("reads a tree of only empty directories as NOT staged on both sides", () => {
     const dir = tmp();
     fs.mkdirSync(path.join(dir, "a", "b"), { recursive: true });
