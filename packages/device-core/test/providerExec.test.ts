@@ -523,8 +523,11 @@ describe("a staged non-provider plugin through the exec path", () => {
   /**
    * Every way env resolution can fail ends the same way for the CALLING
    * AGENT: one fixed sentence per cause, nothing spawned, and no trace of the
-   * underlying detail — the secret's name, the mint scope, a resolved local
-   * filesystem path. No secret store or mint scope is wired to a plugin's env
+   * underlying detail — the secret's name, a resolved local filesystem path.
+   * Only the secret row threads the sentinel into a real thrown message
+   * today; the mint row carries it against the day `mint`'s own refusal names
+   * the scope it could not reach, which is exactly the drift the fixed
+   * sentence exists to absorb. No secret store or mint scope is wired to a plugin's env
    * yet, and handing a plugin a guessed credential would be a silent wrong
    * answer where this Mac fails loud instead; a `fixed` source no longer
    * belongs in that refusal at all (see the resolution test below).
