@@ -99,6 +99,19 @@ function* walk(root) {
   }
 }
 
+// Absent and empty are one condition: a payload carrying nothing signs
+// nothing, verifies vacuously, and ships the same app. walk() recurses and
+// stops at the first file, so a tree of empty directories still reads bare.
+// This is the ONE definition of "is this tree actually staged" — the same
+// question packages/device-core/src/plugins/registry.ts's sourceStaged() asks
+// about a plugin's source tree; that one is a deliberate port of this exact
+// walk-skip-symlinks-stop-at-first-file logic across the CJS/ESM boundary
+// (see its doc comment), and packages/device-core/test/stagedSourceAgreement.test.ts
+// pins the two together on identical tree shapes so they can't drift apart.
+function bare(d) {
+  return !fs.existsSync(d) || walk(d).next().done === true;
+}
+
 module.exports = async function afterPack(context) {
   // Only the final universal app matters; the per-arch temp packs are deleted
   // right after the merge.
@@ -137,10 +150,6 @@ module.exports = async function afterPack(context) {
   // is now just the Camoufox tree; the server ships in app.asar.unpacked and the
   // vault ships no payload (TypeScript + a Keychain item).
   const camoufox = path.join(runtime, "camoufox");
-  // Absent and empty are one condition: a payload carrying nothing signs
-  // nothing, verifies vacuously, and ships the same app. walk() recurses and
-  // stops at the first file, so a tree of empty directories still reads bare.
-  const bare = (d) => !fs.existsSync(d) || walk(d).next().done === true;
   if (bare(camoufox)) {
     throw new Error(
       "[afterPack] the packed app is missing the camoufox browser payload — " +
@@ -349,6 +358,9 @@ module.exports = async function afterPack(context) {
       `verified ${verified} Mach-O (Developer ID + hardened runtime + timestamp)`,
   );
 };
+
+// Exposed only for the cross-runtime agreement test named above `bare`.
+module.exports.bare = bare;
 
 /** Every Camoufox.app under a dir (the fused universal tree ships one). */
 function findApps(root) {

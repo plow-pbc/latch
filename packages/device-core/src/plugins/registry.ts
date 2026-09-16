@@ -4,7 +4,8 @@
  * One on-disk shape for every root: `<root>/<name>/latch-plugin.json`, and
  * `<root>/<name>/runtime/<arch>/bin/<binary name>` for each binary the
  * manifest declares, and `<root>/<name>/runtime/<arch>/<source name>` for
- * each source tree — exactly what stageBinaries writes. A plugin is present
+ * each source tree — exactly what stageSource writes (stageBinaries calls it
+ * in a loop after staging binaries). A plugin is present
  * when its manifest parses AND every declared binary AND every declared
  * source tree is staged there; a plugin declaring neither (its argv[0] falls
  * through to PATH) is present on its manifest alone. Staged-ness says nothing
@@ -34,14 +35,41 @@ function executable(file: string): boolean {
   }
 }
 
-/** A staged source tree: a clone landed there, not just an empty directory a
- * partial stage left behind. */
-function sourceStaged(dir: string): boolean {
+/** Whether a real file exists anywhere under `dir`, symlinks not counting as
+ * content — a deliberate port of apps/desktop/build/afterPack.cjs's `walk()`
+ * across the CJS/ESM boundary (that file is plain build tooling `require`d
+ * by electron-builder, not a workspace package device-core can import).
+ * packages/device-core/test/stagedSourceAgreement.test.ts pins this and
+ * `bare()` together on identical tree shapes. */
+function hasRealFile(dir: string): boolean {
+  let entries: fs.Dirent[];
   try {
-    return fs.statSync(dir).isDirectory() && fs.readdirSync(dir).length > 0;
+    entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
     return false;
   }
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (hasRealFile(p)) return true;
+    } else if (entry.isFile()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** A staged source tree: a real file landed somewhere within it, not just an
+ * empty directory — or one hollowed out to symlinks — that a partial stage
+ * left behind. Same definition as afterPack.cjs's `bare()`, inverted. */
+export function sourceStaged(dir: string): boolean {
+  try {
+    if (!fs.statSync(dir).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  return hasRealFile(dir);
 }
 
 export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
