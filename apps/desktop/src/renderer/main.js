@@ -2599,14 +2599,31 @@ async function renderPlugins() {
     }
   };
 
-  const unmetRow = (u) => {
-    const action = el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } });
-    action.addEventListener("click", () => busy(action, "Connecting…", () => window.domo.connectorsConnect()));
+  // A row with no action (e.g. the Browser row's missing runtime) shows
+  // just the sub text; one with an action gets a button whose click routes
+  // to the Browser row's own flow or the existing account-connect flow.
+  const unmetRow = (u, r) => {
+    const isBrowser = r.kind === "Browser";
+    const action = u.action
+      ? el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } })
+      : null;
+    if (action) {
+      action.addEventListener("click", () =>
+        isBrowser
+          ? busy(action, "Enabling…", async () => {
+              const v = await window.domo.pluginsAct(r.name, u.id);
+              if (v.error) throw new Error(v.error);
+            })
+          : busy(action, "Connecting…", () => window.domo.connectorsConnect()));
+    }
     return el("div", { class: "cap-row plugin-req" }, [
       el("span", { class: "status-dot off" }),
       el("div", {}, [
-        el("div", { class: "cap-name", text: "Account" }),
-        el("div", { class: "cap-sub", text: u.id }),
+        el("div", { class: "cap-name", text: isBrowser ? "Safari" : "Account" }),
+        el("div", {
+          class: "cap-sub",
+          text: isBrowser && u.action ? "Allow JavaScript from Apple Events — Safari relaunches" : u.id,
+        }),
       ]),
       action,
     ]);
@@ -2629,8 +2646,8 @@ async function renderPlugins() {
       el("span", { class: "status-dot" + s.dot, attrs: { title: s.word } }),
       el("div", {}, [
         el("div", { class: "cap-name plugin-name" }, [
-          el("span", { text: r.name }),
-          badge("zinc", "CLI"),
+          el("span", { text: r.title || r.name }),
+          badge("zinc", r.kind),
         ]),
         r.description ? el("div", { class: "cap-sub", text: r.description }) : null,
       ]),
@@ -2639,17 +2656,18 @@ async function renderPlugins() {
     ]);
     return el("div", { class: "cap-group open" }, [
       head,
-      r.unmet.length ? el("div", { class: "cap-group-rows" }, r.unmet.map(unmetRow)) : null,
+      r.unmet.length ? el("div", { class: "cap-group-rows" }, r.unmet.map((u) => unmetRow(u, r))) : null,
     ]);
   };
 
   const draw = (state) => {
+    const rows = state.rows.length
+      ? state.rows.map(pluginRow)
+      : [el("p", { class: "faint", text: "No plugins are installed on this Mac." })];
     panel.replaceChildren(group(
       "Plugins",
       "The tools agents can run on this Mac. Turning one off unpublishes its skill and refuses its commands.",
-      state.rows.length
-        ? state.rows.map(pluginRow)
-        : [el("p", { class: "faint", text: "No plugins are installed on this Mac." })],
+      state.error ? [el("div", { class: "cap-sub attention", text: state.error }), ...rows] : rows,
     ));
   };
 

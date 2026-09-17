@@ -26,6 +26,8 @@ import { Intent, JSONValue } from "@domo/protocol";
 import {
   ApprovalStore,
   LEGACY_VAULT_SERVER_FRAGMENTS,
+  BROWSER_PLUGIN,
+  BROWSING_SKILL,
   DeviceAgent,
   PaymentApprovalClient,
   PaymentApprovalRequest,
@@ -61,7 +63,8 @@ import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
-import { pluginRows } from "./pluginsModel.js";
+import { browserPluginRow, pluginRows, SAFARI_JAVASCRIPT } from "./pluginsModel.js";
+import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -1572,8 +1575,21 @@ ipcMain.handle("capabilities:bannerSeen", async () => {
 
 // MARK: The Plugins tab (pluginsModel.ts)
 
+/** A runner Task 3's safariJavaScript.ts drives directly against this Mac —
+ *  never the device's sandboxed inventory runner, which runs under seatbelt
+ *  and cannot write into Safari's container. */
+const unsandboxedRunner: Runner = async (argv) => {
+  try {
+    const { stdout, stderr } = await promisify(execFile)(argv[0]!, argv.slice(1), { timeout: 30_000 });
+    return { exitCode: 0, stdout, stderr };
+  } catch (e) {
+    const err = e as { code?: unknown; stdout?: string; stderr?: string };
+    return { exitCode: typeof err.code === "number" ? err.code : 1, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
+  }
+};
+
 /** The whole tab, fresh: what is staged, and what each plugin still needs. */
-function pluginsNow(): { rows: ReturnType<typeof pluginRows> } {
+async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; error: string | null }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
   const rows = pluginRows({
     plugins: stagedPlugins.map((p) => ({
@@ -1584,7 +1600,13 @@ function pluginsNow(): { rows: ReturnType<typeof pluginRows> } {
     // One connector today, and it is connected exactly when an account is.
     connectedAccounts: (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [],
   });
-  return { rows };
+  rows.push(browserPluginRow({
+    enabled: !disabled.has(BROWSER_PLUGIN),
+    runtimePresent: device !== null && device.browserSessions !== null,
+    safariJavaScript: process.platform === "darwin" ? await safariJavaScriptEnabled(unsandboxedRunner) : false,
+    description: BROWSING_SKILL.description,
+  }));
+  return { rows, error: null };
 }
 
 ipcMain.handle("plugins:get", async () => pluginsNow());
@@ -1593,7 +1615,7 @@ ipcMain.handle("plugins:get", async () => pluginsNow());
  *  by default), and the device is told in the same breath, so the skill and
  *  the exec gate follow without a relaunch. */
 ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
-  if (stagedPlugins.some((p) => p.manifest.name === name)) {
+  if (stagedPlugins.some((p) => p.manifest.name === name) || name === BROWSER_PLUGIN) {
     const settings = loadSettings(home);
     const disabled = new Set(settings.disabledPlugins ?? []);
     if (on) disabled.delete(name);
@@ -1602,6 +1624,22 @@ ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
     device?.setDisabledPlugins([...disabled]);
   }
   return pluginsNow();
+});
+
+/** A requirement row's one action: the Browser row's Safari switch is
+ *  performed here; every other row's is the existing "Connect Google" flow
+ *  the account button already used. */
+ipcMain.handle("plugins:act", async (_e, rawName: unknown, rawId: unknown) => {
+  const name = typeof rawName === "string" ? rawName : "";
+  const id = typeof rawId === "string" ? rawId : "";
+  try {
+    if (name === BROWSER_PLUGIN && id === SAFARI_JAVASCRIPT) await enableSafariJavaScript(unsandboxedRunner);
+    else if (id.length > 0 && name !== BROWSER_PLUGIN) await connectors?.connect();
+    else return { ...(await pluginsNow()), error: "nothing to do" };
+    return pluginsNow();
+  } catch (error) {
+    return { ...(await pluginsNow()), error: error instanceof Error ? error.message : String(error) };
+  }
 });
 // The floating panel's poll: has the switch it points at landed?
 ipcMain.handle("grant:state", async () => {
