@@ -1079,9 +1079,10 @@ describe.skipIf(!ON_MAC)("every browser opens as the user, already signed in", (
    *  decides which way ensureReady() settles: fast (the default) lands it
    *  on the resolve path; held past when the off switch's own "quit" has
    *  already killed the pre-ready child (SLOW_START) lands it on the
-   *  reject path instead — the fake server writes its ready line before it
-   *  wires up stdin, so "quit before ready" is deterministic once SLOW_START
-   *  holds it. Both must answer the owner the same way. */
+   *  reject path instead — the fake server wires up stdin at once and only
+   *  delays the ready line under SLOW_START, so a "quit" sent while that
+   *  delay is pending is guaranteed to arrive before ready. Both must answer
+   *  the owner the same way. */
   function raceOffSwitchAgainstOpen(env: Record<string, string> = {}) {
     const sessions = new BrowserSessions(
       { ...ctx.browsers, env: { ...ctx.browsers.env, ...env } },
