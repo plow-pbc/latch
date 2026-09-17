@@ -175,8 +175,10 @@ you opened.
    acts is that script — same window id, same origin check — with a different expression
    in \`do JavaScript\`; never a bare expression without the check around it. Click with
    \`document.querySelector("<selector>").click()\`. Text you type rides in \`args\`,
-   percent-encoded so no quote in it can break the script, and the expression decodes it:
-   \`decodeURIComponent(item 3 of argv)\`, spliced as \`"…set.call(el, decodeURIComponent('" & item 3 of argv & "'))…"\`.
+   percent-encoded with \`encodeURIComponent\` so no quote in it can break the script, and
+   the expression decodes it from a DOUBLE-quoted literal — \`encodeURIComponent\` leaves
+   an apostrophe alone, so a single-quoted one would not hold:
+   \`"…set.call(el, decodeURIComponent(\\"" & item 3 of argv & "\\"))…"\`.
    A React-controlled field ignores a plain \`value =\` — set it through the native setter
    and fire \`input\`: \`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, <text>); el.dispatchEvent(new Event("input", {bubbles: true}))\`.
    Dismiss a cookie banner's own button before anything under it. Verify the way you would

@@ -95,7 +95,8 @@ describe("SkillRegistry", () => {
     ["building the origin from a host, so no calling convention carries the bound", /set origin to "https:\/\/" & item 2 of argv & "\/"/],
     ["refusing unless the window is on the expected origin", /if URL of current tab of win does not start with origin then error "window is not on the expected origin"/],
     ["every acting script carrying the same check", /Every script that\s+acts is that script — same window id, same origin check/is],
-    ["typed text riding in args, encoded", /percent-encoded so no quote in it can break the script/],
+    ["typed text riding in args, encoded", /percent-encoded with `encodeURIComponent` so no quote in it can break the script/],
+    ["the decoded literal being double-quoted", /decodeURIComponent\(\\"" & item 3 of argv & "\\"\)/],
     ["the first Safari script asking the owner", /Automation dialog that asks the\s+owner/is],
     ["when to finally report the site as blocked", /only after Safari itself fails to load/i],
   ])("the built-in browsing skill documents %s", (_what, pattern) => {
@@ -107,6 +108,15 @@ describe("SkillRegistry", () => {
   // window 1 — each a page the owner could have open elsewhere. Every script
   // now addresses the window step 1 opened, by Safari's id, and Safari's own
   // do JavaScript is the only read and act path — this guards the class.
+  // The typing recipe's claim, exercised: encodeURIComponent leaves ' ( ) ! * ~
+  // alone, so only a double-quoted literal survives hostile text. Node's
+  // encodeURIComponent is the browser's.
+  it("the built-in browsing skill's typing recipe survives quotes and backslashes", () => {
+    const hostile = `it's "quoted" \\ back ') + alert(1) + ('`;
+    const expression = `decodeURIComponent("${encodeURIComponent(hostile)}")`;
+    expect(new Function(`return ${expression}`)()).toBe(hostile);
+  });
+
   it("the built-in browsing skill reads Safari only through its own scripting seam, by window id", () => {
     expect(BROWSING_SKILL.body).not.toMatch(/front (document|window)/);
     expect(BROWSING_SKILL.body).not.toMatch(/tell application "System Events"/);
