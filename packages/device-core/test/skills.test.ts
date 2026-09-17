@@ -88,6 +88,7 @@ describe("SkillRegistry", () => {
     ["telling a hard block from a challenge", /a challenge has something to click or type.*a hard block does not/is],
     ["not retrying the wall or substituting search", /neither a retry of the same URL.*nor a public web search/is],
     ["opening the page in the owner's Safari", /tell application "Safari"/],
+    ["binding a read to the requested URL, never the front page", /first document whose URL starts with item 1 of argv/],
     ["the JavaScript-from-Apple-Events error being expected", /Allow JavaScript from Apple Events.*not a dead end/is],
     ["reading the page through the accessibility tree", /tell application "System Events" to tell process "Safari"/],
     ["that the tree walk is slow and returns a handle", /entire contents.*pending handle/is],
@@ -95,9 +96,18 @@ describe("SkillRegistry", () => {
     ["a label living in either of two attributes", /`title` OR `value of attribute "AXDescription"`/],
     ["React fields needing real keystrokes", /keystroke.*not `set value`/is],
     ["the first System Events use asking the owner", /Automation dialog that\s+asks the owner/is],
+    ["that an Accessibility refusal is not yet diagnosed", /not allowed assistive access.*'host_gate': 'none'/is],
     ["when to finally report the site as blocked", /only after Safari itself fails to load/i],
   ])("the built-in browsing skill documents %s", (_what, pattern) => {
     expect(BROWSING_SKILL.body).toMatch(pattern);
+  });
+
+  // The old step 2 read `front document` / `front window`, so a tab the owner
+  // switched to between two script approvals was silently what got read.
+  // Every recipe now selects the document by the requested URL instead — this
+  // guards the class, not one call site.
+  it("the built-in browsing skill documents that nothing in the recipe reads whatever is in front", () => {
+    expect(BROWSING_SKILL.body).not.toMatch(/front (document|window)/);
   });
 });
 

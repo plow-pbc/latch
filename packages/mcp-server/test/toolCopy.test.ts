@@ -19,6 +19,7 @@ import {
   HeadlessPolicy,
   INTERACTIVE_VERIFICATION,
   LIVE_WEB_ROUTING,
+  SAFARI_HARD_BLOCK_ROUTING,
 } from "@domo/device-core";
 import {
   BLOCKED_COPY,
@@ -274,10 +275,11 @@ describe("every tool this Mac can stop says so", () => {
   it("the browser tool sends a hard block to the owner's Safari, and the script tool names it", async () => {
     const d = await descriptions(makeServer());
     expect(d.plow_browser).toMatch(/hard block/i);
-    expect(d.plow_browser).toMatch(/owner's own Safari/i);
-    expect(d.plow_browser).toMatch(/plow_run_applescript/);
-    expect(d.plow_run_applescript).toMatch(/Safari/);
-    expect(d.plow_run_applescript).toMatch(/bot-walled|blocked as a bot/i);
+    // Seam, not words (see the live-web seam test below): one routing
+    // sentence, three consumers.
+    expect(d.plow_browser).toContain(SAFARI_HARD_BLOCK_ROUTING);
+    expect(d.plow_run_applescript).toContain(SAFARI_HARD_BLOCK_ROUTING);
+    expect(BROWSING_SKILL.body).toContain(SAFARI_HARD_BLOCK_ROUTING);
   });
 
   it("plow_run_command explains a running result that carries a diagnosis", async () => {
