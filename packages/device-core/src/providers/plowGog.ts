@@ -39,9 +39,8 @@ export type PlowGogPlan =
       sort: PlowGogSort;
       accounts: string[] | null;
       /** A calendar event list the agent did not project itself: its merged
-       * items go through `compactCalendarEvents`, in this time zone — the
-       * same one gog was asked for. */
-      compact?: string;
+       * items go through `compactCalendarEvents`. */
+      compact?: true;
     }
   /**
    * Everything else: ONE run, on ONE account. Which account is the runtime's
@@ -111,15 +110,6 @@ export const CALENDAR_EVENTS_MAX = "100";
  */
 export function ownerTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
-}
-
-function isTimeZone(zone: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: zone });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** The value of `--<name> v` / `--<name>=v` in an argv, or null. Last wins,
@@ -252,19 +242,11 @@ export function planPlowGog(argv: readonly string[], timeZone: string = ownerTim
   // and a fan-out's --results-only drops the page token that would say so, so
   // a cut-off calendar read as free time.
   if (sort === "cal-start" && flagValue(stripped, "max") === null) gogArgv.push("--max", CALENDAR_EVENTS_MAX);
-  // gog labels each event's day and local time in that EVENT's zone unless
-  // told otherwise, so a 9pm meeting set in São Paulo came back as the next
-  // day for an owner in California.
-  let zone = timeZone;
-  if (sort === "cal-start") {
-    const asked = flagValue(stripped, "timezone");
-    if (asked === null) gogArgv.push("--timezone", timeZone);
-    // gog's own spelling for this machine's zone, which is the owner's.
-    else if (asked !== "local") zone = asked;
-    if (!isTimeZone(zone)) {
-      return { kind: "refused", reason: "--timezone needs an IANA zone name (e.g. America/New_York) or local" };
-    }
-  }
+  // gog labels each event's day and local time (`startDayOfWeek`,
+  // `startLocal`, `endLocal`) in that EVENT's zone unless told otherwise, so a
+  // 9pm meeting set in São Paulo came back as the next day for an owner in
+  // California.
+  if (sort === "cal-start" && flagValue(stripped, "timezone") === null) gogArgv.push("--timezone", timeZone);
   if (sort !== undefined && account === null) {
     // Every account asked, or the several named. A calendar id under that
     // has no owner to send it to — forwarded, it reached every account, the
@@ -290,7 +272,7 @@ export function planPlowGog(argv: readonly string[], timeZone: string = ownerTim
       gogArgv: [...gogArgv, ...extras],
       sort,
       accounts: accounts.length > 1 ? accounts : null,
-      ...(sort === "cal-start" && !projected ? { compact: zone } : {}),
+      ...(sort === "cal-start" && !projected ? { compact: true as const } : {}),
     };
   }
   if (accounts.length > 1) {
@@ -375,14 +357,13 @@ function startOf(item: Record<string, unknown>, sort: PlowGogSort): number {
 export const CALENDAR_ITEMS_BUDGET = 40_000;
 
 /**
- * A merged calendar event list, cut down to what scheduling needs, with every
- * day and time stated in `timeZone`.
+ * A merged calendar event list, cut down to what scheduling needs.
  *
- * Raw Google events run about 2 KB each, so a busy week across a few accounts
+ * Raw Google events run 2-5 KB each, so a busy week across a few accounts
  * overflowed the agent's tool output — and an agent re-reading an overflow
- * keeps what it thinks matters, not the day name. Here the day name is
- * computed from the event's instant, never from the zone the event was
- * written in, and travels beside the time it names.
+ * keeps what it thinks matters, not the day name. The day and local times are
+ * gog's own, already in the zone the planner asked for, and travel beside
+ * each other.
  *
  * Items arrive sorted by start. Past `budget` the rest are dropped and
  * `truncated` says how many, and `after`: the earliest start among them — a
@@ -393,45 +374,54 @@ export const CALENDAR_ITEMS_BUDGET = 40_000;
  */
 export function compactCalendarEvents(
   items: readonly Record<string, unknown>[],
-  timeZone: string,
   budget: number = CALENDAR_ITEMS_BUDGET,
 ): { items: Record<string, unknown>[]; truncated: { omitted: number; after: string | null } | null } {
   const kept: Record<string, unknown>[] = [];
   let used = 0;
   for (const item of items) {
-    const event = compactEvent(item, timeZone);
+    const event = compactEvent(item);
     used += JSON.stringify(event).length + 1;
     if (used > budget) {
       const omitted = items.slice(kept.length);
-      const starts = omitted.map((o) => localTime(o.start, timeZone)).filter((t) => t !== null);
-      const earliest = starts.reduce<LocalTime | null>((a, b) => (a === null || startsBefore(b, a) ? b : a), null);
-      return { items: kept, truncated: { omitted: omitted.length, after: earliest?.local ?? null } };
+      const earliest = omitted.reduce<Record<string, unknown> | null>(
+        (a, b) => (typeof b.startLocal === "string" && (a === null || startsBefore(b, a)) ? b : a),
+        null,
+      );
+      return { items: kept, truncated: { omitted: omitted.length, after: (earliest?.startLocal as string) ?? null } };
     }
     kept.push(event);
   }
   return { items: kept, truncated: null };
 }
 
-/** Whether `a` starts before `b`: by local day, an all-day date first (it
- * covers that day from midnight), then by instant. */
-function startsBefore(a: LocalTime, b: LocalTime): boolean {
-  const dayA = a.local.slice(0, 10);
-  const dayB = b.local.slice(0, 10);
+/** Whether raw item `a` starts before `b`, both carrying a `startLocal`: by
+ * local day, an all-day date first (it covers that day from midnight), then
+ * by instant. */
+function startsBefore(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const dayA = (a.startLocal as string).slice(0, 10);
+  const dayB = (b.startLocal as string).slice(0, 10);
   if (dayA !== dayB) return dayA < dayB;
-  if (a.allDay !== b.allDay) return a.allDay;
-  return a.instant < b.instant;
+  if (isAllDay(a) !== isAllDay(b)) return isAllDay(a);
+  return instantOf(a) < instantOf(b);
 }
 
-function compactEvent(item: Record<string, unknown>, timeZone: string): Record<string, unknown> {
-  const start = localTime(item.start, timeZone);
-  const end = localTime(item.end, timeZone);
+function isAllDay(item: Record<string, unknown>): boolean {
+  return typeof (item.start as Record<string, unknown> | undefined)?.date === "string";
+}
+
+function instantOf(item: Record<string, unknown>): number {
+  const parsed = Date.parse(String((item.start as Record<string, unknown> | undefined)?.dateTime));
+  return Number.isNaN(parsed) ? Infinity : parsed;
+}
+
+function compactEvent(item: Record<string, unknown>): Record<string, unknown> {
   const event: Record<string, unknown> = {
     summary: item.summary ?? null,
-    startDayOfWeek: start?.weekday ?? null,
-    startLocal: start?.local ?? null,
-    endLocal: end?.local ?? null,
+    startDayOfWeek: item.startDayOfWeek ?? null,
+    startLocal: item.startLocal ?? null,
+    endLocal: item.endLocal ?? null,
   };
-  if (start?.allDay) event.allDay = true;
+  if (isAllDay(item)) event.allDay = true;
   const attendees = Array.isArray(item.attendees) ? (item.attendees as unknown[]) : [];
   if (attendees.length > 0) event.attendees = attendees.length;
   // The two ways an event on the calendar leaves the owner free.
@@ -443,53 +433,6 @@ function compactEvent(item: Record<string, unknown>, timeZone: string): Record<s
   event.id = item.id ?? null;
   event.account = item.account;
   return event;
-}
-
-/**
- * A Google event time (`{dateTime}` or all-day `{date}`) as a local ISO time
- * with offset and a weekday name, both in `timeZone`. An all-day date names
- * its own day, whatever the zone.
- */
-type LocalTime = { local: string; weekday: string; allDay: boolean; instant: number };
-
-function localTime(when: unknown, timeZone: string): LocalTime | null {
-  if (when === null || typeof when !== "object") return null;
-  const { dateTime, date } = when as Record<string, unknown>;
-  if (typeof dateTime === "string") {
-    const instant = new Date(dateTime);
-    if (Number.isNaN(instant.getTime())) return null;
-    const p = Object.fromEntries(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone,
-        weekday: "long",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hourCycle: "h23",
-        timeZoneName: "longOffset",
-      })
-        .formatToParts(instant)
-        .map((part) => [part.type, part.value]),
-    );
-    // "GMT-07:00", or a bare "GMT" at offset zero.
-    const offset = p.timeZoneName === "GMT" ? "+00:00" : p.timeZoneName!.slice("GMT".length);
-    return {
-      local: `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}${offset}`,
-      weekday: p.weekday!,
-      allDay: false,
-      instant: instant.getTime(),
-    };
-  }
-  if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long" }).format(
-      new Date(`${date}T12:00:00Z`),
-    );
-    return { local: date, weekday, allDay: true, instant: Date.parse(`${date}T00:00:00Z`) };
-  }
-  return null;
 }
 
 /**

@@ -1566,8 +1566,8 @@ export class DeviceAgent {
         intentId: intent.intentId,
         exit_code: answered === 0 && allDegraded.length > 0 ? 1 : 0,
       });
-      const shown = plan.compact !== undefined
-        ? compactCalendarEvents(merged.items, plan.compact)
+      const shown = plan.compact
+        ? compactCalendarEvents(merged.items)
         : { items: merged.items, truncated: null };
       return {
         status: "completed",

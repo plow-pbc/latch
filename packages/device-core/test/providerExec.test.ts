@@ -679,7 +679,7 @@ case "$*" in
     esac ;;
   *"calendar calendars"*) echo '[{"id":"primary","summary":"Calendar"}]' ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
-  *"calendar events"*) echo '[{"summary":"argv: '"$*"'","start":{"dateTime":"2026-01-01T00:00:00Z"}}]' ;;
+  *"calendar events"*) echo '[{"summary":"argv: '"$*"'","start":"2026-01-01T00:00:00Z"}]' ;;
   *"gmail search"*)
     case "$GOG_ACCESS_TOKEN" in
       tok-a) echo '[{"id":"a1","date":"Mon, 16 Mar 2026 10:00:00 +0000"}]' ;;
@@ -912,15 +912,6 @@ esac
       // The fake echoes its argv into the summary.
       expect(item.summary).toContain(`--timezone ${ownerTimeZone()}`);
     }
-  });
-
-  itSpawns("names days in the agent's own --timezone, the one gog was asked for", async () => {
-    const d = device(accountsMinter([AB[0]!]), plowGogPlugin());
-    const response = await run(d, ["plow-gog", "calendar", "events", "--timezone", "Asia/Tokyo"]);
-    expect(response).toMatchObject({
-      status: "completed",
-      items: [{ startDayOfWeek: "Thursday", startLocal: "2026-01-01T09:00:00+09:00" }],
-    });
   });
 
   itSpawns("carries a named-but-degraded account as degraded, and queries only the healthy one", async () => {

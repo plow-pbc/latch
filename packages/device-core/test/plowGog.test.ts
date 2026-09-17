@@ -127,7 +127,7 @@ describe("planPlowGog", () => {
         ],
         sort: "cal-start",
         accounts: null,
-        compact: PACIFIC,
+        compact: true,
       },
     },
     {
@@ -145,25 +145,14 @@ describe("planPlowGog", () => {
     },
     {
       // The zone the agent asked gog for is the one the days are named in.
-      why: "compacts in the agent's own --timezone",
+      why: "keeps the agent's own --timezone on a compacted list",
       argv: ["plow-gog", "calendar", "events", "--timezone", "Asia/Tokyo"],
       expected: {
         kind: "fanout",
         gogArgv: ["plow-gog", "calendar", "events", "--timezone", "Asia/Tokyo", "--max", "100", "--json", "--results-only"],
         sort: "cal-start",
         accounts: null,
-        compact: "Asia/Tokyo",
-      },
-    },
-    {
-      why: "reads gog's --timezone=local as the owner's zone",
-      argv: ["plow-gog", "calendar", "events", "--timezone=local"],
-      expected: {
-        kind: "fanout",
-        gogArgv: ["plow-gog", "calendar", "events", "--timezone=local", "--max", "100", "--json", "--results-only"],
-        sort: "cal-start",
-        accounts: null,
-        compact: PACIFIC,
+        compact: true,
       },
     },
     {
@@ -174,7 +163,7 @@ describe("planPlowGog", () => {
         gogArgv: ["plow-gog", "cal", "ls", "--max=5", "--timezone", PACIFIC, "--json", "--results-only"],
         sort: "cal-start",
         accounts: null,
-        compact: PACIFIC,
+        compact: true,
       },
     },
     {
@@ -464,11 +453,6 @@ describe("planPlowGog", () => {
       reason: "--account a@x,b@y",
     },
     {
-      why: "refuses a --timezone no clock knows",
-      argv: ["plow-gog", "calendar", "events", "--timezone", "Mars/sneakyagenttext"],
-      reason: "IANA zone name",
-    },
-    {
       why: "refuses several --account emails on a single-account command",
       argv: ["plow-gog", "gmail", "get", "msg-1", "--account=a@example.com,sneakyagenttext"],
       reason: "one email",
@@ -585,43 +569,45 @@ describe("gog exit reasons", () => {
 
 describe("compactCalendarEvents", () => {
   const ACCOUNTS = ["a@example.com", "b@example.com", "c@example.com"];
+  const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
-  // A raw Google event, padded the way real ones are (description, attendee
-  // list, conference data) to roughly the 2 KB each that overflowed.
-  const rawEvent = (i: number, dateTime: string, timeZone: string) => ({
-    kind: "calendar#event",
-    id: `evt-${i}`,
-    status: "confirmed",
-    htmlLink: `https://www.google.com/calendar/event?eid=${"x".repeat(60)}${i}`,
-    summary: `Meeting ${i}`,
-    description: "Agenda. ".repeat(80),
-    start: { dateTime, timeZone },
-    end: { dateTime, timeZone },
-    attendees: Array.from({ length: 8 }, (_, n) => ({ email: `person${n}@example.com`, responseStatus: "accepted" })),
-    conferenceData: { entryPoints: [{ uri: `https://meet.google.com/${"abc-".repeat(20)}` }] },
-    startDayOfWeek: "Wrongday",
-    account: ACCOUNTS[i % ACCOUNTS.length],
-  });
+  // A raw event as gog prints it under --timezone: Google's own fields,
+  // padded the way real ones are (description, attendees, conference data)
+  // to the 2-5 KB each that overflowed, plus gog's localized fields.
+  const rawEvent = (i: number) => {
+    const day = 14 + (i % 5);
+    const local = `2026-09-${day}T${String(8 + (i % 9)).padStart(2, "0")}:00:00-07:00`;
+    return {
+      kind: "calendar#event",
+      id: `evt-${i}`,
+      status: "confirmed",
+      htmlLink: `https://www.google.com/calendar/event?eid=${"x".repeat(60)}${i}`,
+      summary: `Meeting ${i}`,
+      description: "Agenda. ".repeat(80),
+      start: { dateTime: local, timeZone: "America/Sao_Paulo" },
+      end: { dateTime: local, timeZone: "America/Sao_Paulo" },
+      attendees: Array.from({ length: 8 }, (_, n) => ({ email: `person${n}@example.com`, responseStatus: "accepted" })),
+      conferenceData: { entryPoints: [{ uri: `https://meet.google.com/${"abc-".repeat(20)}` }] },
+      startDayOfWeek: DAYS[i % 5],
+      startLocal: local,
+      endDayOfWeek: DAYS[i % 5],
+      endLocal: local,
+      timezone: PACIFIC,
+      account: ACCOUNTS[i % ACCOUNTS.length],
+    };
+  };
 
-  it("renders a 63-event, 3-account week under the tool output limit, with each event's weekday", () => {
-    // Mon 2026-09-14 .. Fri 2026-09-18, Pacific daylight time.
-    const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-    const items = Array.from({ length: 63 }, (_, i) => {
-      const day = 14 + (i % 5);
-      const hour = String(8 + (i % 9)).padStart(2, "0");
-      return rawEvent(i, `2026-09-${day}T${hour}:00:00-07:00`, PACIFIC);
-    });
+  it("renders a 63-event, 3-account week under the tool output limit, each with its own weekday", () => {
+    const items = Array.from({ length: 63 }, (_, i) => rawEvent(i));
     expect(JSON.stringify(items).length).toBeGreaterThan(100_000);
 
-    const { items: compact, truncated } = compactCalendarEvents(items, PACIFIC);
+    const { items: compact, truncated } = compactCalendarEvents(items);
 
     expect(truncated).toBeNull();
     expect(compact).toHaveLength(63);
     expect(JSON.stringify({ status: "completed", items: compact, degraded: [] }).length).toBeLessThan(50_000);
     compact.forEach((event, i) => {
-      const day = 14 + (i % 5);
-      expect(event.startDayOfWeek).toBe(days[i % 5]);
-      expect(String(event.startLocal).startsWith(`2026-09-${day}T`)).toBe(true);
+      expect(event.startDayOfWeek).toBe(DAYS[i % 5]);
       expect(event.account).toBe(ACCOUNTS[i % ACCOUNTS.length]);
     });
     expect(compact[0]).toEqual({
@@ -635,45 +621,20 @@ describe("compactCalendarEvents", () => {
     });
   });
 
-  it("names the owner's weekday for an event written in another zone", () => {
-    // 21:00 Tuesday in São Paulo is 17:00 Tuesday in California, and
-    // 23:30 Wednesday in São Paulo is 19:30 Wednesday there — but 01:00
-    // Thursday in São Paulo is 21:00 WEDNESDAY in California.
-    const { items } = compactCalendarEvents(
-      [
-        { summary: "sp", start: { dateTime: "2026-09-17T01:00:00-03:00", timeZone: "America/Sao_Paulo" }, account: "a" },
-        { summary: "sp9pm", start: { dateTime: "2026-09-15T21:00:00-03:00", timeZone: "America/Sao_Paulo" }, account: "a" },
-      ],
-      PACIFIC,
-    );
-    expect(items[0]).toMatchObject({ startDayOfWeek: "Wednesday", startLocal: "2026-09-16T21:00:00-07:00" });
-    expect(items[1]).toMatchObject({ startDayOfWeek: "Tuesday", startLocal: "2026-09-15T17:00:00-07:00" });
-  });
-
-  it("reports an owner-side weekday for a São Paulo 21:00 start when the owner is east of it", () => {
-    // The same 21:00 São Paulo start is 01:00 the NEXT day for an owner in
-    // Lisbon: the day follows the owner, not the event's zone.
-    const { items } = compactCalendarEvents(
-      [{ summary: "sp", start: { dateTime: "2026-09-16T21:00:00-03:00", timeZone: "America/Sao_Paulo" }, account: "a" }],
-      "Europe/Lisbon",
-    );
-    expect(items[0]).toMatchObject({ startDayOfWeek: "Thursday", startLocal: "2026-09-17T01:00:00+01:00" });
-  });
-
   it("keeps an all-day date as its own day, and marks the ways an event leaves the owner free", () => {
-    const { items } = compactCalendarEvents(
-      [
-        {
-          summary: "holiday",
-          start: { date: "2026-09-16" },
-          end: { date: "2026-09-17" },
-          transparency: "transparent",
-          attendees: [{ email: "me@example.com", self: true, responseStatus: "declined" }],
-          account: "a",
-        },
-      ],
-      "Pacific/Auckland",
-    );
+    const { items } = compactCalendarEvents([
+      {
+        summary: "holiday",
+        start: { date: "2026-09-16" },
+        end: { date: "2026-09-17" },
+        startDayOfWeek: "Wednesday",
+        startLocal: "2026-09-16",
+        endLocal: "2026-09-17",
+        transparency: "transparent",
+        attendees: [{ email: "me@example.com", self: true, responseStatus: "declined" }],
+        account: "a",
+      },
+    ]);
     expect(items[0]).toEqual({
       summary: "holiday",
       startDayOfWeek: "Wednesday",
@@ -688,13 +649,18 @@ describe("compactCalendarEvents", () => {
     });
   });
 
+  const timed = (local: string, summary = "x".repeat(200)) => ({
+    summary,
+    start: { dateTime: local },
+    startLocal: local,
+    account: "a",
+  });
+
   it("cuts by size, saying how many were dropped and from which start", () => {
-    const items = Array.from({ length: 10 }, (_, i) => ({
-      summary: "x".repeat(200),
-      start: { dateTime: `2026-09-16T${String(8 + i).padStart(2, "0")}:00:00-07:00` },
-      account: "a",
-    }));
-    const { items: kept, truncated } = compactCalendarEvents(items, PACIFIC, 1_000);
+    const items = Array.from({ length: 10 }, (_, i) =>
+      timed(`2026-09-16T${String(8 + i).padStart(2, "0")}:00:00-07:00`),
+    );
+    const { items: kept, truncated } = compactCalendarEvents(items, 1_000);
     expect(kept.length).toBeGreaterThan(0);
     expect(kept.length).toBeLessThan(10);
     expect(JSON.stringify(kept).length).toBeLessThanOrEqual(1_000);
@@ -708,14 +674,13 @@ describe("compactCalendarEvents", () => {
     // In Auckland the merge's UTC-midnight reading of an all-day 2026-09-16
     // falls at noon, after a 09:00 meeting that day — but the all-day event
     // covers the morning too.
-    const auckland = "Pacific/Auckland";
     const items = [
-      { summary: "x".repeat(200), start: { dateTime: "2026-09-16T08:00:00+12:00" }, account: "a" },
-      { summary: "x".repeat(200), start: { dateTime: "2026-09-16T09:00:00+12:00" }, account: "a" },
-      { summary: "offsite", start: { date: "2026-09-16" }, end: { date: "2026-09-17" }, account: "b" },
-      { summary: "x".repeat(200), start: { dateTime: "2026-09-16T13:00:00+12:00" }, account: "a" },
+      timed("2026-09-16T08:00:00+12:00"),
+      timed("2026-09-16T09:00:00+12:00"),
+      { summary: "offsite", start: { date: "2026-09-16" }, startLocal: "2026-09-16", account: "b" },
+      timed("2026-09-16T13:00:00+12:00"),
     ];
-    const { items: kept, truncated } = compactCalendarEvents(items, auckland, 700);
+    const { items: kept, truncated } = compactCalendarEvents(items, 700);
     expect(kept.map((k) => k.startLocal)).toEqual(["2026-09-16T08:00:00+12:00", "2026-09-16T09:00:00+12:00"]);
     expect(truncated).toEqual({ omitted: 2, after: "2026-09-16" });
   });
