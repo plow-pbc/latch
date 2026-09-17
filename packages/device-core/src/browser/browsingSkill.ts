@@ -158,7 +158,8 @@ not yours to lift out of the tree.
    Safari Developer setting is off by default and the error is not a dead end. Fall back to
    the accessibility tree, which needs no Safari setting; these scripts go to
    \`plow_run_applescript\` as \`app: "System Events"\`. A window's title is its CURRENT tab's,
-   so first have Safari make the tab you asked for current, then find the window by that title:
+   so first have Safari make the tab you asked for current — that changes what the window
+   shows, so say so if the owner is at the Mac — then find the window by that title:
    \`on run argv\\nset u to item 1 of argv\\nset t to missing value\\ntell application "Safari"\\n  repeat with win in windows\\n    if (count of (tabs of win whose URL starts with u)) > 0 then\\n      set current tab of win to first tab of win whose URL starts with u\\n      set t to name of win\\n      exit repeat\\n    end if\\n  end repeat\\nend tell\\nif t is missing value then error "no Safari tab shows " & u\\ntell application "System Events" to tell process "Safari"\\n  set w to first window whose name is t\\n  set out to {}\\n  repeat with e in (entire contents of w)\\n    if role of e is "AXStaticText" then set end of out to value of e\\n  end repeat\\nend tell\\nreturn out\\nend run\`
    The walk of a content-heavy page takes a minute or more and comes back as a pending handle
    — poll \`plow_get_result\` then \`plow_get_output\`; it is working, not failed.
