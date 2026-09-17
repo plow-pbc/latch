@@ -17,7 +17,13 @@ import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
 import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
 import { resolveEnv } from "./plugins/env.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
-import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
+import {
+  compactCalendarEvents,
+  conflictRefusal,
+  gogExitReason,
+  mergeFanout,
+  planPlowGog,
+} from "./providers/plowGog.js";
 import fs from "node:fs";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
@@ -1560,9 +1566,13 @@ export class DeviceAgent {
         intentId: intent.intentId,
         exit_code: answered === 0 && allDegraded.length > 0 ? 1 : 0,
       });
+      const shown = plan.compact !== undefined
+        ? compactCalendarEvents(merged.items, plan.compact)
+        : { items: merged.items, truncated: null };
       return {
         status: "completed",
-        items: merged.items,
+        items: shown.items,
+        ...(shown.truncated !== null ? { truncated: shown.truncated } : {}),
         degraded: allDegraded,
       } as JSONValue;
     }

@@ -24,6 +24,7 @@ import {
   type Provider,
   type StagedPlugin,
 } from "@domo/device-core";
+import { ownerTimeZone } from "../src/providers/plowGog.js";
 import { fakePlugin } from "./pluginFixtures.js";
 
 /**
@@ -678,7 +679,7 @@ case "$*" in
     esac ;;
   *"calendar calendars"*) echo '[{"id":"primary","summary":"Calendar"}]' ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
-  *"calendar events"*) echo '[{"summary":"argv: '"$*"'","start":"2026-01-01T00:00:00Z"}]' ;;
+  *"calendar events"*) echo '[{"summary":"argv: '"$*"'","start":{"dateTime":"2026-01-01T00:00:00Z"}}]' ;;
   *"gmail search"*)
     case "$GOG_ACCESS_TOKEN" in
       tok-a) echo '[{"id":"a1","date":"Mon, 16 Mar 2026 10:00:00 +0000"}]' ;;
@@ -898,6 +899,28 @@ esac
     expect(new Set(items.map((i) => i.account))).toEqual(new Set(["a@example.com", "b@example.com"]));
     // The fake echoes its argv for calendar events; the flag is not in it.
     expect(JSON.stringify(response)).not.toContain("--account");
+  });
+
+  itSpawns("returns a fanned-out calendar read compact, asked for in the owner's zone", async () => {
+    const d = device(accountsMinter(AB), plowGogPlugin());
+    const response = await run(d, ["plow-gog", "calendar", "events", "list"]);
+    expect(response).toMatchObject({ status: "completed", degraded: [] });
+    const items = (response as { items: Record<string, unknown>[] }).items;
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(Object.keys(item)).toEqual(["summary", "startDayOfWeek", "startLocal", "endLocal", "id", "account"]);
+      // The fake echoes its argv into the summary.
+      expect(item.summary).toContain(`--timezone ${ownerTimeZone()}`);
+    }
+  });
+
+  itSpawns("names days in the agent's own --timezone, the one gog was asked for", async () => {
+    const d = device(accountsMinter([AB[0]!]), plowGogPlugin());
+    const response = await run(d, ["plow-gog", "calendar", "events", "--timezone", "Asia/Tokyo"]);
+    expect(response).toMatchObject({
+      status: "completed",
+      items: [{ startDayOfWeek: "Thursday", startLocal: "2026-01-01T09:00:00+09:00" }],
+    });
   });
 
   itSpawns("carries a named-but-degraded account as degraded, and queries only the healthy one", async () => {
