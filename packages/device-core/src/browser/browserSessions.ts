@@ -186,6 +186,10 @@ export interface BrowserSessionInfo {
  * few hundred MB, so there is a limit and it is said out loud when it is hit. */
 const DEFAULT_MAX_BROWSERS = 8;
 
+/** open() finding its own session already being closed by the off switch —
+ * one message for both shapes ensureReady() can settle with mid-race. */
+const TURNED_OFF_WHILE_STARTING = "browser use was turned off while the browser was starting";
+
 /**
  * A short one-way name for a session.
  *
@@ -317,6 +321,15 @@ export class BrowserSessions {
     try {
       await host.ensureReady(headed);
     } catch (error: unknown) {
+      // The off switch wins this race too: closeOpen() already called
+      // close() on this session, whose own "quit" is why the child died
+      // before it ever reported ready. That close owns the teardown —
+      // rollBack() would shut the same host down and remove the same
+      // profile a second time, concurrently with it.
+      if (session.closing) {
+        await session.closing;
+        return { status: "error", error: TURNED_OFF_WHILE_STARTING };
+      }
       await rollBack();
       const message = error instanceof Error ? error.message : String(error);
       return { status: "error", error: `browser failed to start: ${message}` };
@@ -327,7 +340,7 @@ export class BrowserSessions {
     // it — a browser this open must not publish as opened.
     if (session.closing) {
       await session.closing;
-      return { status: "error", error: "browser use was turned off while the browser was starting" };
+      return { status: "error", error: TURNED_OFF_WHILE_STARTING };
     }
 
     // Same order as extend(), and for the same reason: a session the owner's
