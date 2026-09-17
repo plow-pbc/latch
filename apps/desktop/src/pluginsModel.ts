@@ -15,6 +15,11 @@ export type PluginKind = "CLI" | "Browser";
 
 export interface UnmetRequirement {
   id: string;
+  /** The row's words, like the button's: what is missing ("Safari") and the
+   *  one line under it. The renderer is plain JS with no imports, so the
+   *  model carries every string it shows rather than a table keyed on ids. */
+  title: string;
+  detail: string;
   /** What the owner's button does, in their words: "Connect Google". Null
    *  when nothing the app can do for the owner here (e.g. a missing browser
    *  runtime — that is a from-source fact, not a setting to flip). */
@@ -47,7 +52,7 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
   return input.plugins.map(({ manifest, enabled, description }) => {
     const unmet: UnmetRequirement[] = manifest.requires.accounts
       .filter((id) => !accounts.has(id))
-      .map((id) => ({ id, action: "Connect Google" }));
+      .map((id) => ({ id, title: "Account", detail: id, action: "Connect Google" }));
     // Off wins: a disabled plugin's unmet requirements are not the owner's
     // problem until they turn it back on.
     const status: PluginStatus = !enabled ? "off" : unmet.length > 0 ? "needs-setup" : "ready";
@@ -77,8 +82,12 @@ export function browserPluginRow(input: {
   description: string | null;
 }): PluginRow {
   const unmet: UnmetRequirement[] = [];
-  if (!input.runtimePresent) unmet.push({ id: BROWSER_RUNTIME, action: null });
-  if (!input.safariJavaScript) unmet.push({ id: SAFARI_JAVASCRIPT, action: "Enable in Safari" });
+  if (!input.runtimePresent) {
+    unmet.push({ id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null });
+  }
+  if (!input.safariJavaScript) {
+    unmet.push({ id: SAFARI_JAVASCRIPT, title: "Safari", detail: "Allow JavaScript from Apple Events — Safari relaunches", action: "Enable in Safari" });
+  }
   const status: PluginStatus = !input.enabled ? "off" : unmet.length > 0 ? "needs-setup" : "ready";
   return {
     name: "browser",

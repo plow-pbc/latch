@@ -41,7 +41,7 @@ describe("pluginRows status", () => {
 
 it("names an unmet requirement with the action that fixes it, and stays silent once met", () => {
   const unmet = (connected: string[]) => pluginRows(build({ requires: { accounts: ["google"] }, enabled: true, connected }))[0]!.unmet;
-  expect(unmet([])).toEqual([{ id: "google", action: "Connect Google" }]);
+  expect(unmet([])).toEqual([{ id: "google", title: "Account", detail: "google", action: "Connect Google" }]);
   expect(unmet(["google"])).toEqual([]);
 });
 
