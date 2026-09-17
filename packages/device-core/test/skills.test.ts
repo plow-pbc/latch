@@ -93,8 +93,8 @@ describe("SkillRegistry", () => {
     // Exact URL, or a fixed refusal: a prefix matched /account-other, a title
     // matched another window, and an error that named the URL leaked it.
     ["refusing unless the window shows exactly the expected URL", /if URL of current tab of win is not u then error "window is not on the expected URL"/],
-    ["step 1 returning the URL the page landed on", /return \{id of window 1, URL of current tab of window 1\}/],
-    ["the refusal naming nothing", /a fixed message that names nothing/],
+    ["step 1 returning the URL the page landed on, after the redirect settles", /delay 3\\n  return \{id of window 1, URL of current tab of window 1\}/],
+    ["what a refusal on the first read means", /still redirecting when step 1\s+returned its URL/is],
     ["that nothing survives from one script to the next", /Nothing carries over between scripts.*same lookup lines/is],
     ["the raise being called out to the owner", /reorders the owner's Safari windows,\s+so say so if they are at the Mac/is],
     ["the JavaScript-from-Apple-Events error being expected", /Allow JavaScript from Apple Events.*not a dead end/is],
