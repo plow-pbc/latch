@@ -87,8 +87,6 @@ describe("browserPluginRow", () => {
   });
 
   it("every manifest plugin row is a CLI titled by its name", () => {
-    // gogManifest() doesn't exist in this file; the local manifest() fixture
-    // helper builds the same shape parseManifest expects.
     const [row] = pluginRows({ plugins: [{ manifest: manifest(none, "gog"), enabled: true }], connectedAccounts: [] });
     expect(row).toMatchObject({ kind: "CLI", title: row!.name });
   });

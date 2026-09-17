@@ -323,10 +323,13 @@ describe("browser tools (fake runtime)", () => {
     expect(JSON.stringify(denied.payload)).toContain("denied");
   });
 
-  it("plow_browser_open is refused before any intent when the owner turned the browser off", async () => {
+  it.each([
+    ["plow_browser_open", { origins: ["example.com"], goal: "x" }],
+    ["plow_browser_request", { session: "s1", origins: ["example.com"] }],
+  ])("%s is refused before any intent when the owner turned the browser off", async (tool, args) => {
     const { server, device } = makeServer();
     device.setDisabledPlugins([BROWSER_PLUGIN]);
-    const { payload, isError } = await callTool(server, "plow_browser_open", { origins: ["example.com"], goal: "x" }, AGENT);
+    const { payload, isError } = await callTool(server, tool, args, AGENT);
     expect(isError).toBe(true);
     expect(JSON.stringify(payload)).toMatch(/turned off on this Mac/);
     // Pre-intent: nothing was asked, nothing recorded.

@@ -927,6 +927,11 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const session = a.get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
+      // Same chokepoint as plow_browser_open: refused by name before an
+      // intent exists, so nobody is asked to approve a call this Mac was
+      // always going to refuse.
+      const refusal = ctx.device.browserRefusal();
+      if (refusal !== null) throw new ToolError(refusal);
       const origins = strings(a.get("origins").arr);
       const items = strings(a.get("credential_items").arr);
       const capabilities: Capability[] = [];

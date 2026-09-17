@@ -12,6 +12,17 @@ function fake(answers: Record<string, { exitCode?: number; stdout?: string; stde
   return { run, calls };
 }
 
+/** Wraps a runner so pgrep -x Safari reports "running" once (before quit) then
+ *  "gone" — the shape enableSafariJavaScript polls for once it has asked
+ *  Safari to quit. Shared by every scenario that starts with Safari open. */
+function quittingSafari(base: Runner): Runner {
+  let asked = 0;
+  return async (argv) => {
+    if (argv[0] === "/usr/bin/pgrep") return { exitCode: asked++ === 0 ? 0 : 1, stdout: asked === 1 ? "123\n" : "", stderr: "" };
+    return base(argv);
+  };
+}
+
 describe("safariJavaScriptEnabled", () => {
   it.each([["1\n", true], ["0\n", false], ["", false]])("reads %j as %s", async (out, want) => {
     const { run } = fake({ "/usr/bin/defaults read": { stdout: out, exitCode: out ? 0 : 1 } });
@@ -22,10 +33,7 @@ describe("safariJavaScriptEnabled", () => {
 describe("enableSafariJavaScript", () => {
   it("quits a running Safari before writing, writes both prefs, then relaunches it", async () => {
     const { run, calls } = fake({ "/usr/bin/pgrep -x": { stdout: "123\n" } });
-    // pgrep answers "running" once (before quit) and "gone" afterwards.
-    let asked = 0;
-    const seq: Runner = async (argv) => { if (argv[0] === "/usr/bin/pgrep") return { exitCode: asked++ === 0 ? 0 : 1, stdout: asked === 1 ? "123\n" : "", stderr: "" }; return run(argv); };
-    const result = await enableSafariJavaScript(seq);
+    const result = await enableSafariJavaScript(quittingSafari(run));
     expect(result).toEqual({ relaunched: true });
     const order = calls.map((c) => c.join(" "));
     const quit = order.findIndex((c) => c.startsWith("/usr/bin/osascript -e quit app \"Safari\""));
@@ -48,5 +56,17 @@ describe("enableSafariJavaScript", () => {
   it("fails loudly, naming Full Disk Access, when the write is refused", async () => {
     const { run } = fake({ "/usr/bin/pgrep -x": { exitCode: 1 }, "/usr/bin/defaults write": { exitCode: 1, stderr: "Could not write domain" } });
     await expect(enableSafariJavaScript(run)).rejects.toThrow(/Full Disk Access/);
+  });
+  it("still relaunches a running Safari when the write fails, and the error names Full Disk Access", async () => {
+    const { run, calls } = fake({
+      "/usr/bin/pgrep -x": { stdout: "123\n" },
+      "/usr/bin/defaults write": { exitCode: 1, stderr: "Could not write domain" },
+    });
+    await expect(enableSafariJavaScript(quittingSafari(run))).rejects.toThrow(/Full Disk Access/);
+    expect(calls.some((c) => c.join(" ") === "/usr/bin/open -a Safari")).toBe(true);
+  });
+  it("names the relaunch, not the write, when the write succeeds but the reopen fails", async () => {
+    const { run } = fake({ "/usr/bin/pgrep -x": { stdout: "123\n" }, "/usr/bin/open -a": { exitCode: 1 } });
+    await expect(enableSafariJavaScript(quittingSafari(run))).rejects.toThrow(/did not relaunch/);
   });
 });

@@ -152,7 +152,8 @@ Everything runs through Safari's own \`do JavaScript\`, which addresses a tab by
 window id and needs one Safari setting, "Allow JavaScript from Apple Events". It is off by
 default, so the first read fails with "You must enable 'Allow JavaScript from Apple
 Events'" — that is not a dead end: the owner turns it on with one click in this app's
-Plugins tab, on the **Browser use** row (Enable; Safari relaunches). Tell them that, then
+Plugins tab, on the **Browser use** row (click "Enable in Safari"; a note beside it says
+Safari relaunches). Tell them that, then
 retry. Do not fall back to System Events UI scripting: it addresses windows by position,
 which the owner's next click can change under you, and macOS gives no way to tie one to the
 window you opened.
