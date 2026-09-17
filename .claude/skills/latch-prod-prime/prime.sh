@@ -187,7 +187,9 @@ probe_client_configs() {
     # Names and hosts only — URL paths embed deviceIds; headers hold secrets.
     while IFS=$'\t' read -r server host; do
       [[ -n "$server" ]] || continue
-      names+=("$(basename "$f" .json)/$server→${host:-?}")
+      # Braced: under a UTF-8 locale bash reads the first byte of "→" as part
+      # of an unbraced name and fails on "server�: unbound variable".
+      names+=("$(basename "$f" .json)/${server}→${host:-?}")
     done < <(jq -r '.mcpServers // {} | to_entries[] | [.key, (.value.url // "" | sub("^https?://";"") | split("/")[0])] | @tsv' "$f" 2>/dev/null)
   done
   if (( ${#names[@]} == 0 )); then
