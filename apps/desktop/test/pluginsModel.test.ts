@@ -78,12 +78,14 @@ describe("browserPluginRow", () => {
   const base = { enabled: true, runtimePresent: true, safariJavaScript: true, description: "Browse websites…" };
   it.each([
     ["ready when the runtime is present and Safari allows JavaScript", base, "ready", []],
-    ["needs setup with an Enable button when Safari does not", { ...base, safariJavaScript: false }, "needs-setup", [{ id: SAFARI_JAVASCRIPT, action: "Enable in Safari" }]],
-    ["needs setup with no button when the runtime is missing", { ...base, runtimePresent: false }, "needs-setup", [{ id: BROWSER_RUNTIME, action: null }]],
+    ["needs setup with an Enable button when Safari does not", { ...base, safariJavaScript: false }, "needs-setup", [{ id: SAFARI_JAVASCRIPT, title: "Safari", detail: "Allow JavaScript from Apple Events — Safari relaunches", action: "Enable in Safari" }]],
+    ["needs setup with no button when the runtime is missing", { ...base, runtimePresent: false }, "needs-setup", [{ id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null }]],
     ["off hides its requirements", { ...base, enabled: false, safariJavaScript: false }, "off", []],
   ] as const)("is %s", (_what, input, status, unmet) => {
     const row = browserPluginRow(input);
-    expect(row).toMatchObject({ name: "browser", title: "Browser use", kind: "Browser", status, unmet });
+    expect(row).toMatchObject({ name: "browser", title: "Browser use", kind: "Browser", status });
+    // The words the owner reads, exactly — a swap of the two would otherwise pass.
+    expect(row.unmet).toEqual(unmet);
   });
 
   it("every manifest plugin row is a CLI titled by its name", () => {
