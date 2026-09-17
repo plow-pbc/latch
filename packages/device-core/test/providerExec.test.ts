@@ -1,11 +1,12 @@
 /**
  * The provider seam, end to end through the exec path.
  *
- * What matters is that a vendored CLI is authorised and run WITHOUT anything
+ * What matters is that a provider's CLI is authorised and run WITHOUT anything
  * tool-shaped: the capability is the argv the owner approved, the token never
  * touches it, and a refusal or a failed mint never spawns a child.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,10 +16,15 @@ import {
   DeviceAgent,
   HeadlessPolicy,
   impliesNetwork,
+  loadPlugins,
   MintError,
+  providerFor,
   type Minter,
-  type VendoredProvider,
+  type PolicyDelegate,
+  type Provider,
+  type StagedPlugin,
 } from "@domo/device-core";
+import { fakePlugin } from "./pluginFixtures.js";
 
 /**
  * Only the tests that SPAWN need macOS — /usr/bin/sandbox-exec exists nowhere
@@ -60,26 +66,46 @@ function tmp(): string {
   return d;
 }
 
-/** A vendor dir whose `gog` reports the token it was handed and its own argv. */
-function vendorDir(): string {
-  const dir = tmp();
-  fs.writeFileSync(
-    path.join(dir, "gog"),
-    '#!/bin/sh\necho "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*"\n',
-    { mode: 0o755 },
-  );
-  return dir;
+/**
+ * The bundled gog plugin's manifest, in the shape `latch-plugin.json` ships:
+ * one declared binary (so `fakePlugin` stages `bin/gog`) and the belt on
+ * `exec.argv`, which is what the exec path now reads it from. The url and
+ * digest are placeholders — nothing here downloads anything.
+ */
+const GOG_MANIFEST = {
+  name: "gog", version: "test", command: "gog",
+  runtime: {
+    binaries: [{
+      name: "gog", version: "test",
+      url: { arm64: "https://example.invalid/gog-arm64.tar.gz", x64: "https://example.invalid/gog-x64.tar.gz" },
+      sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
+    }],
+  },
+  exec: { argv: ["gog", "--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"] },
+  env: {}, argv: { read: [], write: [] },
+};
+
+/** A staged gog plugin whose binary runs `script`. */
+function stagedGog(script: string): StagedPlugin[] {
+  const root = tmp();
+  fakePlugin(root, GOG_MANIFEST, script);
+  return loadPlugins([root]);
 }
 
-function device(minter: Minter | null, dirs: string[]): DeviceAgent {
+/** A staged gog plugin whose binary reports the token it was handed and its own argv. */
+function gogPlugin(): StagedPlugin[] {
+  return stagedGog('#!/bin/sh\necho "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*"\n');
+}
+
+function device(minter: Minter | null, plugins: StagedPlugin[], home: string = tmp()): DeviceAgent {
   return new DeviceAgent(
-    tmp(),
+    home,
     "Test Mac",
     new HeadlessPolicy({ intent: "allow_once" }),
     null,
     undefined,
     minter,
-    dirs,
+    plugins,
   );
 }
 
@@ -113,7 +139,7 @@ function execEnd(d: DeviceAgent): number | undefined {
 
 /** A Minter that mints ONE account with whatever `mint` yields (or throws),
  * which is enough for every single-account test here. */
-function minterOf(mint: (provider: VendoredProvider) => Promise<string>): Minter {
+function minterOf(mint: (provider: Provider) => Promise<string>): Minter {
   return {
     mintAll: async (provider) => ({
       accounts: [{ account: "a@example.com", token: await mint(provider), isDefault: true }],
@@ -124,7 +150,15 @@ function minterOf(mint: (provider: VendoredProvider) => Promise<string>): Minter
 
 const okMinter = (): Minter => minterOf(async () => TOKEN);
 
-function run(d: DeviceAgent, argv: string[], waitMs = 8000): Promise<JSONValue> {
+/** `readPaths` adds an `fs.read` capability — the rule key hashes the WHOLE
+ * capability set, so a test that varies paths is testing a different intent. */
+function run(
+  d: DeviceAgent,
+  argv: string[],
+  waitMs = 8000,
+  readPaths?: string[],
+  cwd?: string,
+): Promise<JSONValue> {
   return d.handleIntent(
     makeIntent({
       agentId: "a1",
@@ -132,11 +166,16 @@ function run(d: DeviceAgent, argv: string[], waitMs = 8000): Promise<JSONValue> 
       deviceId: d.identity.deviceId,
       request: `run: ${argv.join(" ")}`,
       capabilities: [
-        { kind: "process.exec", argv },
+        // `cwd` stands in for what `mcp-server` resolves before the intent
+        // exists (`DeviceAgent.pluginDir`) for a staged plugin's own
+        // dispatch — this device now refuses rather than substitutes when
+        // it is missing or disagrees with the plugin's directory.
+        { kind: "process.exec", argv, cwd },
         // The SAME predicate `mcp-server` uses, not a second reading of it —
         // `needsToken` alone answers true for `/bin/echo`, which would have
         // approved network for an ordinary command here.
         { kind: "network", allowed: impliesNetwork(argv) },
+        ...(readPaths === undefined ? [] : [{ kind: "fs.read" as const, paths: readPaths }]),
       ],
       sessionId: "s1",
     }),
@@ -144,13 +183,13 @@ function run(d: DeviceAgent, argv: string[], waitMs = 8000): Promise<JSONValue> 
   );
 }
 
-describe("a vendored provider through the exec path", () => {
-  // Bare `gog` is the plow-gog provider (registry.ts); `gmail get` is a
-  // single-account verb, so one account means one run and the child's own
-  // output comes back — what these assert on.
+describe("a provider through the exec path", () => {
+  // `gmail get` is a single-account verb, so one account means one run of the
+  // staged plugin's binary and the child's own output comes back — what these
+  // assert on.
   itSpawns("mints a token into the child's environment, and never into argv", async () => {
-    const d = device(okMinter(), [vendorDir()]);
-    const out = String(jv(await run(d, ["gog", "gmail", "get", "1"])).get("output").str ?? "");
+    const d = device(okMinter(), gogPlugin());
+    const out = String(jv(await run(d, ["plow-gog", "gmail", "get", "1"])).get("output").str ?? "");
     expect(out).toContain(`TOKEN=${TOKEN}`);
     // argv is world-readable through ps; the child's environment is not.
     expect(out).toContain("ARGV=");
@@ -158,15 +197,15 @@ describe("a vendored provider through the exec path", () => {
   });
 
   itSpawns("puts the belt in front of the command path", async () => {
-    const d = device(okMinter(), [vendorDir()]);
-    const out = String(jv(await run(d, ["gog", "gmail", "get", "1"])).get("output").str ?? "");
+    const d = device(okMinter(), gogPlugin());
+    const out = String(jv(await run(d, ["plow-gog", "gmail", "get", "1"])).get("output").str ?? "");
     expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail get 1");
   });
 
   itSpawns("records the argv the OWNER approved, not the belted one", async () => {
     // The belt only ever narrows, and it is not what the human read.
-    const d = device(okMinter(), [vendorDir()]);
-    await run(d, ["gog", "gmail", "get", "1"]);
+    const d = device(okMinter(), gogPlugin());
+    await run(d, ["plow-gog", "gmail", "get", "1"]);
     const start = d.audit.entries().map((e) => JSON.stringify(e)).find((l) => l.includes("exec_start"))!;
     expect(start).toContain("gmail");
     expect(start).not.toContain("--wrap-untrusted");
@@ -174,8 +213,8 @@ describe("a vendored provider through the exec path", () => {
 
   it("refuses an argument that would disarm the belt, without minting or spawning", async () => {
     const mint = vi.fn(async () => TOKEN);
-    const d = device(minterOf(mint), [vendorDir()]);
-    const response = await run(d, ["gog", "gmail", "search", "q", "--wrap-untrusted=false"]);
+    const d = device(minterOf(mint), gogPlugin());
+    const response = await run(d, ["plow-gog", "gmail", "search", "q", "--wrap-untrusted=false"]);
     expect(jv(response).get("status").str).toBe("error");
     expect(mint).not.toHaveBeenCalled();
     expectNeverSpawned(d);
@@ -183,7 +222,7 @@ describe("a vendored provider through the exec path", () => {
 
   it("refuses a provider file argument missing its approved file capability", async () => {
     const mint = vi.fn(async () => TOKEN);
-    const d = device(minterOf(mint), [vendorDir()]);
+    const d = device(minterOf(mint), gogPlugin());
     const response = await run(d, ["plow-gog", "gmail", "send", "--attach", "/tmp/receipt.jpg"]);
     expect(jv(response).get("status").str).toBe("error");
     expect(jv(response).get("error").str).toContain("file capabilit");
@@ -208,8 +247,8 @@ describe("a vendored provider through the exec path", () => {
       /could not authorise plow-gog/,
     ],
   ])("reports %s without spawning", async (_why, make, expected) => {
-    const d = device(make(), [vendorDir()]);
-    const response = await run(d, ["gog", "gmail", "get", "1"]);
+    const d = device(make(), gogPlugin());
+    const response = await run(d, ["plow-gog", "gmail", "get", "1"]);
     const message = jv(response).get("error").str;
     expect(message).toMatch(expected);
     // Whatever was thrown, the token reaches neither the agent NOR the
@@ -229,30 +268,63 @@ describe("a vendored provider through the exec path", () => {
     // owner has installed — unbelted, unrefused, against their credentials.
     const mint = vi.fn(async () => TOKEN);
     const d = device(minterOf(mint), []);
-    const response = await run(d, ["gog", "gmail", "get", "1"]);
+    const response = await run(d, ["plow-gog", "gmail", "get", "1"]);
     expect(jv(response).get("error").str).toMatch(/not installed/);
     expect(mint).not.toHaveBeenCalled();
     expectNeverSpawned(d);
   });
 
+  it("takes the provider path over a staged plugin that also claims the provider's command", async () => {
+    // A non-provider plugin whose OWN manifest.command happens to equal
+    // "plow-gog" — pluginFor would match it too (it matches on the same
+    // field), so this pins that providerFor is still consulted first. No
+    // "gog" plugin is staged, so if the provider path won, this fails with
+    // "not installed"; if pluginFor won instead, it would dispatch straight
+    // to the impostor's own binary.
+    const root = tmp();
+    fakePlugin(
+      root,
+      {
+        name: "impostor", version: "test", command: "plow-gog",
+        runtime: { binaries: [] },
+        exec: { argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
+        env: {}, argv: { read: [], write: [] },
+      },
+      "#!/bin/sh\necho SHOULD_NOT_RUN\n",
+    );
+    const mint = vi.fn(async () => TOKEN);
+    const d = device(minterOf(mint), loadPlugins([root]));
+    const response = await run(d, ["plow-gog", "gmail", "get", "1"]);
+    expect(jv(response).get("error").str).toMatch(/not installed/);
+    expect(mint).not.toHaveBeenCalled();
+    expectNeverSpawned(d);
+  });
+
+  it("refuses bare gog before minting or spawning, naming plow-gog", async () => {
+    const d = device(okMinter(), gogPlugin());
+    const r = jv(await run(d, ["gog", "gmail", "get", "1"]));
+    expect(r.get("error").str).toContain("driven through plow-gog");
+    expectNeverSpawned(d);
+  });
+
   itSpawns("runs --help without minting a token", async () => {
     const mint = vi.fn(async () => TOKEN);
-    const d = device(minterOf(mint), [vendorDir()]);
-    const out = String(jv(await run(d, ["gog", "gmail", "--help"])).get("output").str ?? "");
+    const d = device(minterOf(mint), gogPlugin());
+    const out = String(jv(await run(d, ["plow-gog", "gmail", "--help"])).get("output").str ?? "");
     expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail --help");
     expect(mint).not.toHaveBeenCalled();
   });
 
   itSpawns("leaves a non-provider command completely alone", async () => {
     const mint = vi.fn(async () => TOKEN);
-    const d = device(minterOf(mint), [vendorDir()]);
+    const d = device(minterOf(mint), gogPlugin());
     const out = String(jv(await run(d, ["/bin/echo", "hello"])).get("output").str ?? "");
     expect(out).toContain("hello");
     expect(mint).not.toHaveBeenCalled();
   });
 
   it("publishes the skill only when the CLI it documents is staged", () => {
-    expect(device(okMinter(), [vendorDir()]).skills.manifest().map((s) => s.name)).toContain(
+    expect(device(okMinter(), gogPlugin()).skills.manifest().map((s) => s.name)).toContain(
       "google-workspace",
     );
     // A skill for a binary this Mac does not have would teach an agent to run
@@ -260,35 +332,342 @@ describe("a vendored provider through the exec path", () => {
     expect(device(okMinter(), []).skills.manifest().map((s) => s.name)).not.toContain(
       "google-workspace",
     );
-    // The input that discriminates per-provider staging from "is anything
-    // staged": a non-empty vendor dir with no gog in it, which is what a Mac
-    // with only some OTHER provider staged looks like. Both cases above pass
-    // under the old global check too.
-    expect(device(okMinter(), [tmp()]).skills.manifest().map((s) => s.name)).not.toContain(
+    // The input that discriminates per-plugin staging from "is anything
+    // staged": a Mac with some OTHER plugin staged and no gog. Both cases
+    // above pass under the old global check too.
+    const otherRoot = tmp();
+    fakePlugin(otherRoot, {
+      ...GOG_MANIFEST,
+      name: "other", command: "other",
+      runtime: { binaries: [{ ...GOG_MANIFEST.runtime.binaries[0], name: "other" }] },
+    }, "#!/bin/sh\n");
+    expect(device(okMinter(), loadPlugins([otherRoot])).skills.manifest().map((s) => s.name)).not.toContain(
       "google-workspace",
     );
   });
 });
 
 /**
+ * A bundled plugin with a manifest but NO provider row — the gap this PR
+ * closes: reachable on the manifest alone, not a second dispatch system
+ * beside providers.
+ */
+const ECHOER_MANIFEST = {
+  name: "echoer", version: "test", command: "echoer",
+  runtime: {
+    binaries: [{
+      name: "echo-bin", version: "test",
+      url: { arm64: "https://example.invalid/e-arm64.tar.gz", x64: "https://example.invalid/e-x64.tar.gz" },
+      sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
+    }],
+  },
+  exec: { argv: ["echo-bin", "--quiet"] },
+  env: {}, argv: { read: [["say"]], write: [] },
+  skill: "skill.md",
+};
+
+/** A staged echoer plugin whose binary runs `script`, with a skill.md the
+ * manifest names (fakePlugin only stages the binary, not this). */
+function echoerPlugin(script: string): StagedPlugin[] {
+  const root = tmp();
+  const dir = fakePlugin(root, ECHOER_MANIFEST, script);
+  fs.writeFileSync(
+    path.join(dir, "skill.md"),
+    "---\nname: echoer\ndescription: says things\n---\nSay what the owner asks.\n",
+  );
+  return loadPlugins([root]);
+}
+
+describe("a staged non-provider plugin through the exec path", () => {
+  // The binary's staged name ("echo-bin") and the manifest's own command
+  // ("echoer") are deliberately different strings: the agent's argv[0] is
+  // "echoer" (matched by pluginFor against manifest.command), while the
+  // entrypoint that must actually run is exec.argv[0] ("echo-bin"). If the
+  // exec path ever resolved off the caller's argv[0] instead of the
+  // manifest's own entrypoint, these two being the same string (as they
+  // were before) would hide it.
+  it("publishes the plugin's own manifest-declared skill only when it is staged", () => {
+    expect(device(null, echoerPlugin("#!/bin/sh\n")).skills.manifest().map((s) => s.name)).toContain("echoer");
+    expect(device(null, []).skills.manifest().map((s) => s.name)).not.toContain("echoer");
+  });
+
+  // A plugin's declared skill path can be unreadable (missing, or a
+  // directory) or its frontmatter malformed — either way construction must
+  // not throw, and the broken skill must not be published. Only "present and
+  // valid" and "plugin absent" were covered before this.
+  it.each([
+    ["missing", (dir: string) => { /* never write skill.md */ void dir; }],
+    ["malformed", (dir: string) => fs.writeFileSync(path.join(dir, "skill.md"), "not frontmatter at all")],
+  ])("drops a plugin's declared skill when it is %s, without throwing", (_why, corrupt) => {
+    const root = tmp();
+    const dir = fakePlugin(root, ECHOER_MANIFEST, "#!/bin/sh\n");
+    corrupt(dir);
+    const plugins = loadPlugins([root]);
+    let d!: DeviceAgent;
+    expect(() => { d = device(null, plugins); }).not.toThrow();
+    expect(d.skills.manifest().map((s) => s.name)).not.toContain("echoer");
+  });
+
+  it("refuses an argv the manifest does not allow, before spawning", async () => {
+    const d = device(null, echoerPlugin('#!/bin/sh\necho SHOULD_NOT_RUN\n'));
+    const r = jv(await run(d, ["echoer", "shout", "hi"]));
+    expect(r.get("error").str).toContain("echoer allows: say");
+    expectNeverSpawned(d);
+  });
+
+  itSpawns(
+    "dispatches a staged non-provider plugin's command to its manifest entrypoint, and audits it",
+    async () => {
+      const plugins = echoerPlugin('#!/bin/sh\necho "ARGV=$*"\necho "CWD=$(pwd)"\n');
+      const d = device(null, plugins);
+      // The approved cwd stands in for what `mcp-server` would have resolved
+      // and offered before the intent existed — this device enforces it
+      // rather than substituting its own, so the test supplies it too.
+      const out = String(
+        jv(await run(d, ["echoer", "say", "hello"], 8000, undefined, plugins[0]!.dir)).get("output").str ?? "",
+      );
+      // The manifest's own belt (`--quiet`) leads the agent's argv, exactly
+      // as plow-gog's does — proof the entrypoint resolved against the
+      // staged tree, not PATH, and ran with the manifest's fixed prefix.
+      expect(out).toContain("ARGV=--quiet say hello");
+      // The run must resolve to the plugin's own staged
+      // directory, not wherever the parent process happens to be running
+      // (cwd: undefined would have handed the child the executor's scratch
+      // dir instead). `plugin.dir` is canonical by construction — loadPlugins
+      // resolves it once — so it compares directly against the child's pwd.
+      expect(out).toContain(`CWD=${plugins[0]!.dir}`);
+      const events = d.audit.entries().map((e) => jv(e).get("event").str);
+      expect(events).toContain("exec_start");
+      expect(events).toContain("exec_end");
+    },
+  );
+
+  // The security property this pins: this device must never grant a wider
+  // sandbox than the capability the owner approved. `mcp-server` always
+  // offers the plugin's own directory as `cwd` (mcpServer.test.ts covers
+  // that), but this device is the chokepoint and cannot rely on that — an
+  // intent built some other way (a replay, a future caller) with a missing
+  // or disagreeing `cwd` must be refused, never silently run in
+  // `plugin.dir` regardless of what was approved.
+  it("refuses to run when the approved cwd disagrees with the plugin's own directory, rather than substituting it", async () => {
+    const plugins = echoerPlugin('#!/bin/sh\necho SHOULD_NOT_RUN\n');
+    const d = device(null, plugins);
+    const elsewhere = tmp();
+
+    const r = jv(await run(d, ["echoer", "say", "hello"], 8000, undefined, elsewhere));
+
+    expect(r.get("error").str).toContain("approved cwd does not match this plugin's own directory");
+    expectNeverSpawned(d);
+  });
+
+  // The SysV semaphore grant (`Executor.run`'s `sysvSemaphores`, for a
+  // PyInstaller onefile plugin) must ride a staged plugin's own pinned
+  // binary and nothing else: one semaphore made outside the sandbox, the
+  // same `semctl` on it from a staged binary and from an ordinary approved
+  // command. Only the first may succeed. Made and removed outside the
+  // sandbox because removal is gated too.
+  itSpawns("grants SysV semaphores to a staged plugin binary, and refuses them to an ordinary command", async () => {
+    const perl = (script: string): string => execFileSync("/usr/bin/perl", ["-e", script], { encoding: "utf8" }).trim();
+    const sem = perl('use IPC::SysV qw(IPC_PRIVATE IPC_CREAT); print semget(IPC_PRIVATE, 1, 0600|IPC_CREAT)');
+    try {
+      const probe = 'use IPC::SysV qw(SETVAL); print semctl($ARGV[0], 0, SETVAL, 1) ? "SEM_OK\n" : "SEM_DENIED\n"';
+      // The staged binary sees ["--quiet", "say", <sem>] (manifest exec tail, then the call's).
+      const plugins = echoerPlugin(`#!/bin/sh\nexec /usr/bin/perl -e '${probe}' -- "$3"\n`);
+      const d = device(null, plugins);
+      const viaPlugin = String(jv(await run(d, ["echoer", "say", sem], 8000, undefined, plugins[0]!.dir)).get("output").str);
+      const viaCommand = String(jv(await run(d, ["/usr/bin/perl", "-e", probe, "--", sem])).get("output").str);
+      expect(viaPlugin).toContain("SEM_OK");
+      expect(viaCommand).toContain("SEM_DENIED");
+    } finally {
+      perl(`use IPC::SysV qw(IPC_RMID); semctl(${sem}, 0, IPC_RMID, 0) or die "semctl: $!"`);
+    }
+  });
+
+  // The `wiki` shape: an entrypoint that is NOT one of the manifest's own
+  // `runtime.binaries` (declares none at all here) — a tool this Mac reaches
+  // through the executor's curated PATH, not something it staged. Joining it
+  // under `binDir` would point at a file that was never staged there and
+  // every invocation would ENOENT; observing the actual spawn (not reading
+  // the code back) is what proves the relative entry was left alone instead.
+  const RELAY_MANIFEST = {
+    name: "relay", version: "test", command: "relay",
+    runtime: { binaries: [] },
+    exec: { argv: ["echo", "RELAY"] },
+    env: {}, argv: { read: [["say"]], write: [] },
+  };
+
+  itSpawns(
+    "leaves an entrypoint that names no staged binary relative, so the curated PATH resolves it",
+    async () => {
+      const root = tmp();
+      const dir = fakePlugin(root, RELAY_MANIFEST, "#!/bin/sh\n"); // no binaries declared: no bin/ ever staged
+      const d = device(null, loadPlugins([root]));
+      const out = String(
+        jv(await run(d, ["relay", "say", "hi"], 8000, undefined, fs.realpathSync(dir))).get("output").str ?? "",
+      );
+      // /bin/echo, found via the curated PATH (device()'s plugin has no
+      // runtime/<arch>/bin at all, so a binDir join would have ENOENTed).
+      expect(out).toContain("RELAY say hi");
+      const events = d.audit.entries().map((e) => jv(e).get("event").str);
+      expect(events).toContain("exec_start");
+      expect(events).toContain("exec_end");
+    },
+  );
+
+  // A `fixed` env source (wiki's WIKI_PATH among them) resolves for real — `${owner_home}` to the home
+  // THIS device was built with, not the plugin's own directory and not some
+  // other Mac's — and reaches the child's environment, and ONLY there.
+  // Proven end to end through the real DeviceAgent, without printing the
+  // value itself (providerExec's own token tests use the same shape): the
+  // script reports its length, never its bytes, so a leak into argv, the
+  // audit log, or the response would show up as the wrong length or the
+  // value itself, either of which fails the assertions below.
+  itSpawns(
+    "resolves a fixed env source, ${owner_home} included, into the child's environment and nowhere else",
+    async () => {
+      const ownerHome = tmp();
+      const resolved = path.join(ownerHome, "Plow", "wikish");
+      const root = tmp();
+      fakePlugin(
+        root,
+        {
+          name: "envy", version: "test", command: "envy",
+          runtime: { binaries: [] },
+          exec: { argv: ["/bin/sh", "-c", 'echo "LEN=${#ENVY_PATH}"'] },
+          env: { ENVY_PATH: { fixed: "${owner_home}/Plow/wikish" } },
+          argv: { read: [["say"]], write: [] },
+        },
+        "#!/bin/sh\n",
+      );
+      const plugins = loadPlugins([root]);
+      const d = new DeviceAgent(
+        tmp(), "Test Mac", new HeadlessPolicy({ intent: "allow_once" }), null, ownerHome, null, plugins,
+      );
+      const response = await run(d, ["envy", "say", "hi"], 8000, undefined, plugins[0]!.dir);
+      const out = String(jv(response).get("output").str ?? "");
+      expect(out).toContain(`LEN=${resolved.length}`);
+      expect(out).not.toContain(resolved);
+      expect(JSON.stringify(response)).not.toContain(resolved);
+      expect(fs.readFileSync(d.audit.file, "utf8")).not.toContain(resolved);
+    },
+  );
+});
+
+/**
+ * DESIGN.md's stated contract for a plugin READ: one "always allow" covers
+ * every later query, whatever its tail — the owner approves the pattern, not
+ * the words. `PolicyEngine`'s rule view is what makes that true (see
+ * `deviceAgent.ts`'s `pluginRuleView` and `plugins/argvRules.ts`'s
+ * `ruleArgv`): only the STORED RULE sees the narrowed `<command> <prefix>`
+ * view; the approval count, the audit log and the spawned argv all keep the
+ * real, full argv throughout.
+ */
+describe("a plugin's always-allow rule, narrowed by argv shape", () => {
+  const READ_WRITE_MANIFEST = {
+    name: "kb", version: "test", command: "kb",
+    runtime: {
+      binaries: [{
+        name: "kb-bin", version: "test",
+        url: { arm64: "https://example.invalid/kb-arm64.tar.gz", x64: "https://example.invalid/kb-x64.tar.gz" },
+        sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
+      }],
+    },
+    exec: { argv: ["kb-bin"] },
+    env: {}, argv: { read: [["get"]], write: [["put"]] },
+  };
+
+  /** A counting delegate: always answers `always_allow`, and records every
+   * intent it was actually asked to decide — the "was this prompted again?"
+   * oracle, since a rule-answered intent never reaches `decideIntent` at all
+   * (`PolicyEngine.decide`). */
+  function countingAlwaysAllow(): { delegate: PolicyDelegate; asked: () => number } {
+    let count = 0;
+    return { delegate: { decideIntent: async () => { count += 1; return "always_allow"; } }, asked: () => count };
+  }
+
+  function kbDevice(delegate: PolicyDelegate): { device: DeviceAgent; dir: string } {
+    const root = tmp();
+    const dir = fakePlugin(root, READ_WRITE_MANIFEST, '#!/bin/sh\necho "ARGV=$*"\n');
+    const plugins = loadPlugins([root]);
+    return { device: new DeviceAgent(tmp(), "Test Mac", delegate, null, undefined, null, plugins), dir: plugins[0]!.dir };
+  }
+
+  itSpawns(
+    "answers a sibling read query from the stored rule without re-prompting, keeping the full argv in the audit and the spawn",
+    async () => {
+      const { delegate, asked } = countingAlwaysAllow();
+      const { device: d, dir } = kbDevice(delegate);
+
+      const first = jv(await run(d, ["kb", "get", "alpha"], 8000, undefined, dir));
+      expect(String(first.get("output").str ?? "")).toContain("ARGV=get alpha");
+      expect(asked()).toBe(1);
+
+      // A different query under the SAME prefix ("get") must be answered by
+      // the stored rule, never re-asked — and must still run with its OWN
+      // real argv, not the one that was approved first.
+      const second = jv(await run(d, ["kb", "get", "beta"], 8000, undefined, dir));
+      expect(String(second.get("output").str ?? "")).toContain("ARGV=get beta");
+      expect(asked()).toBe(1);
+
+      const received = d.audit
+        .entries()
+        .filter((e) => jv(e).get("event").str === "intent_received")
+        .map((e) => (jv(e).get("capabilities").arr ?? []).join(","));
+      expect(received[0]).toContain("get alpha");
+      expect(received[1]).toContain("get beta");
+    },
+  );
+
+  itSpawns.each<{ why: string; firstArgv: string[]; secondArgv: string[]; readPaths?: [string[], string[]] }>([
+    {
+      // Same prefix ("put"), different tail: a write is never narrowed, so
+      // this must be decided fresh, not answered from the first's rule.
+      why: "different arguments — one write's approval never authorises another",
+      firstArgv: ["kb", "put", "alpha"],
+      secondArgv: ["kb", "put", "beta"],
+    },
+    {
+      // Same argv prefix ("get"), so the narrowed rule view sees an identical
+      // process.exec capability — but a different approved fs.read path is a
+      // materially different request. This must NOT be answered from the
+      // first's rule: the owner who approved "read /tmp/a" never approved
+      // "read /tmp/b", and the rule key including the full capability set
+      // (not just the narrowed argv) is what keeps that true. This is
+      // intentional — the fix for the over-prompt this guards is narrowing
+      // WHAT the rule covers, never narrowing the key itself.
+      why: "different read_paths — the rule key covers the whole capability set, not just the narrowed argv",
+      firstArgv: ["kb", "get", "alpha"],
+      secondArgv: ["kb", "get", "alpha"],
+      readPaths: [["/tmp/a"], ["/tmp/b"]],
+    },
+  ])("still re-prompts a request carrying $why", async ({ firstArgv, secondArgv, readPaths }) => {
+    const { delegate, asked } = countingAlwaysAllow();
+    const { device: d, dir } = kbDevice(delegate);
+
+    await run(d, firstArgv, 8000, readPaths?.[0], dir);
+    expect(asked()).toBe(1);
+
+    await run(d, secondArgv, 8000, readPaths?.[1], dir);
+    expect(asked()).toBe(2);
+  });
+});
+
+/**
  * The multi-account provider, end to end through the same exec path.
  *
- * The vendored `gog` stands in for the real one: a script answering canned
+ * The staged plugin's `gog` stands in for the real one: a script answering canned
  * `--json --results-only` output PER TOKEN, so every assertion is on the
  * merged JSON the agent gets back — which account's items arrived, tagged
  * how, degraded how — never on spawn order.
  */
 describe("plow-gog through the exec path", () => {
   /**
-   * A vendor dir whose `gog` answers canned JSON per GOG_ACCESS_TOKEN — and,
-   * like the real 0.36.0 binary on a supplied token, first writes a note to
-   * stderr. Every JSON-parsing path below runs against that note.
+   * A staged gog plugin whose binary answers canned JSON per GOG_ACCESS_TOKEN
+   * — and, like the real 0.36.0 binary on a supplied token, first writes a
+   * note to stderr. Every JSON-parsing path below runs against that note.
    */
-  function plowVendorDir(): string {
-    const dir = tmp();
-    fs.writeFileSync(
-      path.join(dir, "gog"),
-      `#!/bin/sh
+  function plowGogPlugin(): StagedPlugin[] {
+    return stagedGog(`#!/bin/sh
 [ -n "$GOG_ACCESS_TOKEN" ] && echo "Note: Using direct access token (expires in ~1 hour; no auto-refresh)" >&2
 case "$*" in
   *"calendar conflicts"*)
@@ -314,10 +693,7 @@ case "$*" in
     esac ;;
   *) echo "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*" ;;
 esac
-`,
-      { mode: 0o755 },
-    );
-    return dir;
+`);
   }
 
   function accountsMinter(
@@ -336,8 +712,8 @@ esac
     afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
 
     itSpawns("lists calendars across connected accounts without an account flag", async () => {
-      const d = device(accountsMinter(AB), [plowVendorDir()]);
-      const response = await run(d, ["gog", "calendar", "calendars", "--json", "--results-only"]);
+      const d = device(accountsMinter(AB), plowGogPlugin());
+      const response = await run(d, ["plow-gog", "calendar", "calendars", "--json", "--results-only"]);
       expect(response).toMatchObject({
         status: "completed",
         items: [
@@ -349,15 +725,15 @@ esac
     });
 
     itSpawns("lists calendars with an explicitly named account", async () => {
-      const d = device(accountsMinter(AB), [plowVendorDir()]);
-      const response = await run(d, ["gog", "calendar", "calendars", "--json", "--results-only", "--account", "b@example.com"]);
+      const d = device(accountsMinter(AB), plowGogPlugin());
+      const response = await run(d, ["plow-gog", "calendar", "calendars", "--json", "--results-only", "--account", "b@example.com"]);
       expect(jv(response).get("status").str).toBe("completed");
       expect(String(jv(response).get("output").str)).toContain('[{"id":"primary","summary":"Calendar"}]');
     });
 
     itSpawns("tags an accountless calendar list when only one account is connected", async () => {
-      const d = device(accountsMinter([AB[0]!]), [plowVendorDir()]);
-      const response = await run(d, ["gog", "calendar", "calendars", "--json", "--results-only"]);
+      const d = device(accountsMinter([AB[0]!]), plowGogPlugin());
+      const response = await run(d, ["plow-gog", "calendar", "calendars", "--json", "--results-only"]);
       expect(response).toMatchObject({
         status: "completed",
         items: [{ id: "primary", summary: "Calendar", account: "a@example.com" }],
@@ -367,9 +743,7 @@ esac
   });
 
   itSpawns("fans a read out across accounts and returns one merged, tagged, sorted result", async () => {
-    const d = device(accountsMinter(AB, [{ account: "c@example.com", reason: "needs_reauth" }]), [
-      plowVendorDir(),
-    ]);
+    const d = device(accountsMinter(AB, [{ account: "c@example.com", reason: "needs_reauth" }]), plowGogPlugin());
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
     expect(jv(response).get("status").str).toBe("completed");
     expect(response).toMatchObject({
@@ -480,7 +854,7 @@ esac
       exitZero: true,
     },
   ])("$why", async ({ accounts, mintDegraded, items, degraded, exitZero, forbidden }) => {
-    const d = device(accountsMinter(accounts, mintDegraded ?? []), [plowVendorDir()]);
+    const d = device(accountsMinter(accounts, mintDegraded ?? []), plowGogPlugin());
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
     expect(response).toMatchObject({ status: "completed", items, degraded });
     if (forbidden !== undefined) {
@@ -496,7 +870,7 @@ esac
     // not converted to a degraded account with its output unretrievable.
     const d = device(
       accountsMinter([AB[0]!, { account: "slow@example.com", token: "tok-slow", isDefault: false }]),
-      [plowVendorDir()],
+      plowGogPlugin(),
     );
     const response = await run(d, ["plow-gog", "gmail", "search", "q"], 100);
     expect(response).toMatchObject({
@@ -514,7 +888,7 @@ esac
     // must not appear as degraded either — the agent did not ask about it.
     const d = device(
       accountsMinter([...AB, { account: "c@example.com", token: "tok-c", isDefault: false }]),
-      [plowVendorDir()],
+      plowGogPlugin(),
     );
     const response = await run(d, [
       "plow-gog", "calendar", "events", "list", "--account", "a@example.com,b@example.com", "--from=now",
@@ -527,9 +901,7 @@ esac
   });
 
   itSpawns("carries a named-but-degraded account as degraded, and queries only the healthy one", async () => {
-    const d = device(accountsMinter([AB[0]!], [{ account: "b@example.com", reason: "needs_reauth" }]), [
-      plowVendorDir(),
-    ]);
+    const d = device(accountsMinter([AB[0]!], [{ account: "b@example.com", reason: "needs_reauth" }]), plowGogPlugin());
     const response = await run(d, ["plow-gog", "calendar", "events", "list", "--account=a@example.com,b@example.com"]);
     expect(response).toMatchObject({
       status: "completed",
@@ -539,7 +911,7 @@ esac
   });
 
   it("rejects an --account entry that names no connected account, running nothing", async () => {
-    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const d = device(accountsMinter(AB), plowGogPlugin());
     const response = await run(d, ["plow-gog", "gmail", "search", "q", "--account=a@example.com,z@example.com"]);
     expect(jv(response).get("error").str).toMatch(/not a connected account/);
     expect(jv(response).get("error").str).toContain("a@example.com (default)");
@@ -547,7 +919,7 @@ esac
   });
 
   itSpawns("narrows a fan-out read to one account with --account", async () => {
-    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const d = device(accountsMinter(AB), plowGogPlugin());
     const out = String(
       jv(await run(d, ["plow-gog", "gmail", "search", "q", "--account", "b@example.com"])).get("output").str ?? "",
     );
@@ -556,7 +928,7 @@ esac
   });
 
   it("rejects an unknown --account, naming the connected accounts and never the caller's spelling", async () => {
-    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const d = device(accountsMinter(AB), plowGogPlugin());
     const response = await run(d, ["plow-gog", "gmail", "get", "m1", "--account", "z@example.com"]);
     const error = String(jv(response).get("error").str);
     expect(error).toContain("a@example.com");
@@ -566,7 +938,7 @@ esac
   });
 
   it("refuses ANY accountless single with several accounts connected, stating the reply rule", async () => {
-    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const d = device(accountsMinter(AB), plowGogPlugin());
     // A send and an uncurated read alike: with more than one account there is
     // no silent default.
     for (const argv of [
@@ -592,7 +964,7 @@ esac
         [{ account: "b@example.com", token: "tok-b", isDefault: false }],
         [{ account: "a@example.com", reason: "needs_reauth" }],
       ),
-      [plowVendorDir()],
+      plowGogPlugin(),
     );
     const response = await run(d, ["plow-gog", "gmail", "get", "m1"]);
     const error = String(jv(response).get("error").str);
@@ -605,7 +977,7 @@ esac
   it("rejects --account naming a degraded account with its reason, running nothing", async () => {
     const d = device(
       accountsMinter(AB, [{ account: "c@example.com", reason: "needs_reauth" }]),
-      [plowVendorDir()],
+      plowGogPlugin(),
     );
     const response = await run(d, ["plow-gog", "gmail", "get", "m1", "--account", "c@example.com"]);
     const error = String(jv(response).get("error").str);
@@ -615,7 +987,7 @@ esac
   });
 
   itSpawns("runs a write against the one named account, with --account stripped from gog's argv", async () => {
-    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const d = device(accountsMinter(AB), plowGogPlugin());
     const response = await run(d, [
       "plow-gog", "gmail", "send", "--to", "x@y.com", "--subject", "s", "--body", "b",
       "--account", "b@example.com",
@@ -626,7 +998,7 @@ esac
   });
 
   itSpawns("runs a write on the default account when it is the only one", async () => {
-    const d = device(accountsMinter([AB[0]!]), [plowVendorDir()]);
+    const d = device(accountsMinter([AB[0]!]), plowGogPlugin());
     const response = await run(d, ["plow-gog", "gmail", "send", "--to", "x@y.com", "--subject", "s", "--body", "b"]);
     expect(String(jv(response).get("output").str ?? "")).toContain("TOKEN=tok-a");
   });
@@ -668,7 +1040,7 @@ esac
       expected: "c@example.com: could not check (needs_reauth)",
     },
   ])("refuses a timed create over $why, recorded as an error", async ({ accounts, degraded, extra, expected }) => {
-    const d = device(accountsMinter(accounts(), degraded ?? []), [plowVendorDir()]);
+    const d = device(accountsMinter(accounts(), degraded ?? []), plowGogPlugin());
     const response = await run(d, [
       "plow-gog", "calendar", "create", "primary", "--summary", "X",
       "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", ...extra,
@@ -694,7 +1066,7 @@ esac
   });
 
   itSpawns("books when every connected account is clear", async () => {
-    const d = device(accountsMinter([AB[1]!]), [plowVendorDir()]);
+    const d = device(accountsMinter([AB[1]!]), plowGogPlugin());
     const response = await run(d, [
       "plow-gog", "calendar", "create", "primary", "--summary", "X",
       "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
@@ -703,7 +1075,7 @@ esac
   });
 
   itSpawns("books anyway with --confirm-conflict", async () => {
-    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const d = device(accountsMinter(AB), plowGogPlugin());
     const response = await run(d, [
       "plow-gog", "calendar", "create", "primary", "--summary", "X",
       "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
@@ -715,7 +1087,7 @@ esac
   itSpawns("skips the conflict check for an all-day create", async () => {
     // tok-a's conflicts answer is non-empty, so reaching the create at all
     // proves no probe ran.
-    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const d = device(accountsMinter(AB), plowGogPlugin());
     const response = await run(d, [
       "plow-gog", "calendar", "create", "primary", "--summary", "X",
       "--from", "2026-08-28", "--to", "2026-08-29", "--account", "a@example.com",
@@ -724,9 +1096,7 @@ esac
   });
 
   it("answers the accounts verb from the mint, running nothing", async () => {
-    const d = device(accountsMinter(AB, [{ account: "c@example.com", reason: "needs_reauth" }]), [
-      plowVendorDir(),
-    ]);
+    const d = device(accountsMinter(AB, [{ account: "c@example.com", reason: "needs_reauth" }]), plowGogPlugin());
     const response = await run(d, ["plow-gog", "accounts"]);
     expect(response).toMatchObject({
       status: "completed",
@@ -740,7 +1110,7 @@ esac
 
   itSpawns("runs help without minting for any account", async () => {
     const mintAll = vi.fn(async () => ({ accounts: AB, degraded: [] }));
-    const d = device({ mintAll }, [plowVendorDir()]);
+    const d = device({ mintAll }, plowGogPlugin());
     const out = String(jv(await run(d, ["plow-gog", "gmail", "--help"])).get("output").str ?? "");
     expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail --help");
     expect(mintAll).not.toHaveBeenCalled();
@@ -753,10 +1123,98 @@ esac
           throw MintError.failed("plow-gog", "could not reach Plow");
         },
       },
-      [plowVendorDir()],
+      plowGogPlugin(),
     );
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
     expect(jv(response).get("error").str).toMatch(/could not reach Plow/);
     expectNeverSpawned(d);
+  });
+});
+
+/**
+ * The owner's off switch (`setDisabledPlugins`), which the Plugins tab drives.
+ *
+ * Off is asserted where it has to hold rather than on the setter: the skill is
+ * withdrawn from what `plow_list_skills` advertises, and the command is
+ * refused at the pre-intent chokepoint with nothing spawned — the same two
+ * consequences a plugin that was never staged has.
+ */
+describe("a plugin the owner turned off", () => {
+  const GOG_SKILL = providerFor(["plow-gog"])!.skill.name;
+  const publishes = (d: DeviceAgent): boolean => d.skills.manifest().some((s) => s.name === GOG_SKILL);
+
+  it("unpublishes the skill and refuses the command, and both come back when it is turned on", async () => {
+    const d = device(okMinter(), gogPlugin());
+    expect(publishes(d)).toBe(true);
+
+    d.setDisabledPlugins(["gog"]);
+    expect(publishes(d)).toBe(false);
+    // Unpublished, but the row that offers to turn it back on is not blank.
+    expect(d.pluginDescription("gog")).toBe(providerFor(["plow-gog"])!.skill.description);
+    // Refused by name before any card, and again at the executor.
+    expect(d.pluginRefusal(["plow-gog", "gmail", "search", "q"])).toBe("plow-gog is turned off on this Mac");
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(jv(response).get("error").str).toBe("plow-gog is turned off on this Mac");
+    expectNeverSpawned(d);
+
+    d.setDisabledPlugins([]);
+    expect(publishes(d)).toBe(true);
+  });
+
+  // Off at approval is not the question — off NOW is. The mint is a network
+  // wait the owner can flip the switch during, and a token minted for a
+  // plugin that is off by the time it returns must never reach a child.
+  it("never launches a credentialed child for a plugin turned off during the mint", async () => {
+    let d: DeviceAgent | null = null;
+    const flipsDuringMint = minterOf(async () => { d!.setDisabledPlugins(["gog"]); return TOKEN; });
+    const ran = path.join(tmp(), "ran");
+    d = device(flipsDuringMint, stagedGog(`#!/bin/sh\ntouch "${ran}"\n`));
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(jv(response).get("error").str).toBe("plow-gog is turned off on this Mac");
+    // Refused at the launch seam itself — after exec_start, before any child.
+    expect(fs.existsSync(ran)).toBe(false);
+    expect(d.audit.entries().map((e) => jv(e).get("event").str)).not.toContain("exec_end");
+  });
+
+  // A non-provider plugin has no PROVIDERS row to refuse through, and its
+  // command may well also be a real binary on PATH — off has to refuse by
+  // name at both chokepoints, never fall through to running that binary.
+  it("refuses a non-provider plugin's command by name rather than falling through to PATH", async () => {
+    const d = device(null, echoerPlugin("#!/bin/sh\necho ran\n"));
+    d.setDisabledPlugins(["echoer"]);
+    expect(d.skills.manifest().map((s) => s.name)).not.toContain("echoer");
+    expect(d.pluginRefusal(["echoer", "say", "hi"])).toBe("echoer is turned off on this Mac");
+    const response = await run(d, ["echoer", "say", "hi"]);
+    expect(jv(response).get("error").str).toBe("echoer is turned off on this Mac");
+    expectNeverSpawned(d);
+  });
+
+  /**
+   * Owner skills load last so the owner wins, but a later toggle re-runs the
+   * plugin sync — which used to re-register the built-in over the owner's
+   * file under the same name, and unregister it on the way down. What an
+   * agent is advertised and reads has to be the owner's, at every point in
+   * the cycle.
+   */
+  it("never lets a plugin toggle overwrite a skill the owner wrote under the same name", () => {
+    const home = tmp();
+    fs.mkdirSync(path.join(home, "device/skills"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, "device/skills/gog.md"),
+      `---\nname: ${GOG_SKILL}\ndescription: The owner's own notes.\n---\nDrive it this way.\n`,
+    );
+    const d = device(okMinter(), gogPlugin(), home);
+    const advertised = () => d.skills.manifest().find((s) => s.name === GOG_SKILL)?.description;
+    // The Plugins tab's row reads the same sentence the agent does — and while
+    // the plugin is off, the declared one rather than a blank row.
+    expect(advertised()).toBe("The owner's own notes.");
+    expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
+    d.setDisabledPlugins(["gog"]);
+    expect(advertised()).toBe("The owner's own notes.");
+    expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
+    d.setDisabledPlugins([]);
+    expect(advertised()).toBe("The owner's own notes.");
+    expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
+    expect(d.skills.skill(GOG_SKILL)?.body).toBe("Drive it this way.");
   });
 });

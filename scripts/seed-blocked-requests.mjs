@@ -1,4 +1,4 @@
-// Seed the audit log with sample blocked requests, so the Capabilities tab
+// Seed the audit log with sample blocked requests, so the Permissions section
 // (and the Audit tab's Blocked filter) can be looked at without revoking
 // anything first. The rows have the same shape DeviceAgent writes — an
 // intent_received / intent_decision pair, the run's exec_start/exec_end
@@ -132,4 +132,4 @@ fs.mkdirSync(path.dirname(file), { recursive: true });
 fs.appendFileSync(file, rows.map((r) => JSON.stringify(r) + "\n").join(""));
 const blocks = rows.filter((r) => r.event === "host_permission_blocked").length;
 console.log(`appended ${rows.length} rows (${blocks} blocked requests) to ${file}`);
-console.log("Open the Capabilities tab (or refocus the app) to see them; `just unseed-blocked-requests` removes them.");
+console.log("Open Settings (or refocus the app) to see them; `just unseed-blocked-requests` removes them.");

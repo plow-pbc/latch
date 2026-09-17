@@ -9,7 +9,7 @@
  * tree is driven end to end without a real grant in play. The audit log is
  * the oracle throughout.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -64,6 +64,9 @@ function intentFor(d: DeviceAgent, request: string, capabilities: Capability[]):
 }
 
 const events = (d: DeviceAgent) => d.audit.entries().map((e) => jv(e as JSONValue).get("event").str);
+/** The audit log carries `event` — a run ends on its own clock, so the wait is generous. */
+const untilEvent = (d: DeviceAgent, event: string) =>
+  vi.waitFor(() => expect(events(d)).toContain(event), { timeout: 5_000 });
 const lastBlocked = (d: DeviceAgent) =>
   jv([...d.audit.entries()].reverse().find((e) => jv(e as JSONValue).get("event").str === "host_permission_blocked") ?? null);
 
@@ -564,8 +567,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
       fs.closeSync(fd);
     }
     // Once, and only once: the exit finds nothing left to clear.
-    const done = Date.now() + 5_000;
-    while (!events(d).includes("exec_end") && Date.now() < done) await new Promise((r) => setTimeout(r, 50));
+    await untilEvent(d, "exec_end");
     expect(events(d).filter((e) => e === "host_permission_cleared")).toHaveLength(1);
   });
 
@@ -579,11 +581,21 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const file = path.join(home, "Desktop", "notes.txt");
     fs.writeFileSync(file, "x");
     const inner = scriptedProbes({ openAsApp: { [file]: "hung" }, fullDiskAccess: false });
+    // The probe answers only after the run has ended, so its verdict is
+    // always about a run that is gone — the case, not a 400ms guess at it —
+    // and records that it ran, so a run that ends inside wait_ms cannot pass
+    // the test by skipping the case.
+    let d!: DeviceAgent;
+    let probed = false;
     const slow: HostProbes = {
       ...inner,
-      openAsApp: async (p) => { await new Promise((r) => setTimeout(r, 400)); return inner.openAsApp(p); },
+      openAsApp: async (p) => {
+        probed = true;
+        await untilEvent(d, "exec_end");
+        return inner.openAsApp(p);
+      },
     };
-    const d = device(home, slow);
+    d = device(home, slow);
     const response = jv(
       await d.handleIntent(
         intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; cat ${JSON.stringify(file)}`], cwd: home }, { kind: "fs.read", paths: [file] }]),
@@ -592,6 +604,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     );
     // The call answers with where the run is now: over, cleanly.
     expect(response.get("status").str).toBe("completed");
+    expect(probed).toBe(true);
     expect(response.get("exit_code").int).toBe(0);
     expect(response.get("diagnosis").isNull).toBe(true);
     const polled = jv(await d.getOutput(response.get("handle").str!));
@@ -737,7 +750,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     // run fails with a refusal. The verdict on record — a dialog — is now
     // wrong, so the clearing is recorded and the refusal is recorded as a
     // second block under the same handle: the poll, the audit row and the
-    // Capabilities tab all take the newest.
+    // Permissions section all take the newest.
     const home = tempDir();
     const downloads = path.join(home, "Downloads");
     fs.mkdirSync(downloads);
@@ -1079,7 +1092,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     // What a packaged build saw for real: Automation for Contacts granted,
     // the first script answered, the second — walking every person's
     // phones — exited 1 with "File permission error. (-54)". That is
-    // Contacts data access refusing the app, and the Capabilities tab has
+    // Contacts data access refusing the app, and the Permissions section has
     // the row (and the prompt) for it.
     const home = tempDir();
     const probes = scriptedProbes({ automation: { Contacts: "granted" }, permissions: { contacts: "denied" } });

@@ -35,7 +35,7 @@ export const GOG_ALIASES: readonly string[] = Object.keys(GOG_ALIAS_OF);
  * Every spelling this Mac accepts as a group — the check that decides whether a
  * command is refused at all. What each refused shape would otherwise cost is in
  * `refuse`'s doc; the per-version verdicts behind the bound are step 5 of the
- * pin-bump checklist in `scripts/vendored-providers.mjs`.
+ * pin-bump checklist in `apps/desktop/plugins/gog/README.md`.
  */
 export const GOG_GROUPS: ReadonlySet<string> = new Set<string>([
   ...GOG_CANONICAL,

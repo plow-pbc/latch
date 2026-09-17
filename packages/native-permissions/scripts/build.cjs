@@ -1,7 +1,7 @@
 // Build the addon, tolerantly — the same contract as @domo/native-keychain's.
 // A machine that cannot compile it (no Xcode CLT, CI on Linux) must still be
 // able to `just install`; the app then has no in-process request and the
-// Capabilities tab sends the owner to the pane. A real build failure is
+// Permissions section sends the owner to the pane. A real build failure is
 // printed, not hidden.
 "use strict";
 const { spawnSync } = require("node:child_process");
@@ -19,7 +19,7 @@ const result = spawnSync("npx", ["node-gyp", "rebuild"], {
 if (result.status !== 0) {
   console.warn(
     "@domo/native-permissions: build failed (see above). " +
-      "Contacts and Calendars cannot be asked for from the Capabilities tab; " +
+      "Contacts and Calendars cannot be asked for from Settings; " +
       "install the Xcode command line tools and `npm rebuild @domo/native-permissions` to enable it.",
   );
 }

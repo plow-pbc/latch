@@ -160,7 +160,7 @@ describe("AuditIndex", () => {
     expect(ids(index.page({ cutoffMs }).rows)).toEqual(
       ids(all.filter((a) => new Date(a.ts).getTime() >= cutoffMs)),
     );
-    // ...or, for the Capabilities tab's "Show in Audit", on the block's own
+    // ...or, for the Permissions section's "Show in Audit", on the block's own
     // time, falling back to the start for a row that was never blocked.
     const sinceBlock = new Date(at(16)).getTime();
     expect(ids(index.page({ cutoffMs: sinceBlock, cutoffKey: "blocked", status: "blocked" }).rows)).toEqual(
@@ -172,7 +172,7 @@ describe("AuditIndex", () => {
     expect(none.size).toBe(all.length);
   });
 
-  it("keeps the log as read, so the Capabilities tab folds it without a read off disk", () => {
+  it("keeps the log as read, so the Permissions section folds it without a read off disk", () => {
     const events = sampleLog();
     const index = new AuditIndex();
     index.reset(events.slice(0, 5));

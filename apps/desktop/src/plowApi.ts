@@ -801,6 +801,27 @@ export class PlowApi {
     }));
   }
 
+  /**
+   * Does `token` still hold a pre-session device key? `true`, `false`, or
+   * `null` when Plow could not say (offline, a 5xx, its own row not listed).
+   *
+   * Macs paired before Latch kept the login session hold a device key whose
+   * scopes froze at mint, so every surface added since — Google connect, Plow
+   * numbers — answers "Not permitted." and no retry widens it (#419). A login
+   * session carries `*:*`; a device key never does. The oldest device keys
+   * predate `keys:manage` and are refused the list outright, which a session
+   * never is.
+   */
+  async holdsOldDeviceKey(token: string): Promise<boolean | null> {
+    try {
+      const own = (await this.listApiKeys(token))
+        .find((key) => key.is_active && isDeviceCredential(key.key_prefix, token));
+      return own ? !own.scopes.includes("*:*") : null;
+    } catch (error) {
+      return error instanceof PlowApiError && error.kind === "forbidden" ? true : null;
+    }
+  }
+
   /** Soft-revoke one credential by its server id. */
   async revokeApiKey(token: string, id: number): Promise<RevokedKey> {
     return this.call<RevokedKey>("DELETE", `/v1/api-keys/${apiKeyId(id)}`, { token });
@@ -998,4 +1019,23 @@ export class PlowApi {
       code,
     );
   }
+}
+
+/**
+ * Is this row the credential this Mac holds?
+ *
+ * Plow stores `token[5:13]` as the public `key_prefix` — the eight characters
+ * AFTER the `plow_` scheme, not including it (plow's `api/plow/auth.py`). So a
+ * prefix never starts the token it came from, and comparing with `startsWith`
+ * matched nothing in production while looking right against a hand-written
+ * fixture.
+ *
+ * Equality against that same fixed-width slice is the whole check: a string of
+ * any other length cannot equal it, so nothing here guesses at a partial
+ * match, and an absent or malformed prefix matches nothing rather than
+ * everything.
+ */
+export function isDeviceCredential(prefix: string | null, credential: string): boolean {
+  if (!prefix || !credential) return false;
+  return credential.slice(5, 13) === prefix;
 }

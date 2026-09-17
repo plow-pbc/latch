@@ -71,7 +71,7 @@ export class AuditIndex {
   /** Newest first; rebuilt lazily after an add. */
   private listing: Built[] | null = null;
   /** Every event, in the order the log wrote it — the log as read, for the
-   *  readers that fold it themselves (the Capabilities tab). */
+   *  readers that fold it themselves (the Permissions section). */
   private all: JSONValue[] = [];
 
   /** Start over from a whole log (first load, a rotation, a clear). */

@@ -75,16 +75,14 @@ test-vectors:
     npx vitest run packages/protocol packages/transport
 
 # ---------------------------------------------------------------------------
-# Vendored provider CLIs — see packages/device-core/src/providers/
+# Bundled plugins — see packages/device-core/src/plugins/
 # ---------------------------------------------------------------------------
 
-# Fetch a pinned provider CLI for both macOS arches into
-# vendor/providers/<name>/<arch>/.
-# The sha256 is verified before extraction. Needed for a from-source run of that
-# provider's tools, and by `just package`. Defaults to every provider.
-# What is pinned, and how to bump it: scripts/vendored-providers.mjs
-fetch-vendored name="--all":
-    node scripts/fetch-vendored.mjs {{name}}
+# Stage every bundled plugin (apps/desktop/plugins/<name>) into
+# vendor/plugins/<name>/runtime/<arch>/bin, both arches, sha256-verified,
+# then run its postinstall hook. What is pinned: each latch-plugin.json.
+stage-plugins name="--all": build
+    node scripts/stage-plugins.mjs {{name}}
 
 
 # ---------------------------------------------------------------------------
@@ -166,11 +164,12 @@ package-unnotarized: (_package "domo-notary" "-c.mac.notarize=false")
 # have no tag. --publish never: the generic provider is download-only; uploads
 # belong to the release scripts, never electron-builder.
 _package profile flags: build
-    # Providers first: small downloads that succeed or fail in seconds, where a
-    # checkout that has not fetched them would otherwise pay the whole browser
+    # Plugins first: small downloads that succeed or fail in seconds, where a
+    # checkout that has not staged them would otherwise pay the whole browser
     # fetch, build and universal merge before failing on a missing
-    # extraResources source. Idempotent — exits early on a tree already at the pin.
-    node scripts/fetch-vendored.mjs --all
+    # extraResources source. stage-plugins re-extracts every time (its archive
+    # cache is what's cheap, not the runtime tree).
+    node scripts/stage-plugins.mjs --all
     node scripts/build-browser-runtime.mjs --browser-both
     @build="$(date -u +%Y%m%d%H%M)"; \
     base="$(node -p "require('{{root}}/apps/desktop/package.json').version.split('.').slice(0,2).join('.')")"; \
@@ -274,6 +273,10 @@ verify-preload: build
       VAULT_OUT="${VAULT_OUT:-{{outdir}}/vault-locked.png}" \
       npx electron apps/desktop/scripts/verify-preload.mjs
 
+# Real-input signup verification; run on the test Mac.
+verify-new-agent: build
+    OUT_DIR="{{outdir}}/new-agent" npx electron apps/desktop/scripts/verify-new-agent.mjs
+
 # Screenshot the audit screen's live-browser thumbnail (evidence the owner can watch the browser).
 viewer-screenshot: build
     @mkdir -p "{{outdir}}"
@@ -320,7 +323,7 @@ clean:
     @echo "wiped {{apphome}}"
 
 # ---------------------------------------------------------------------------
-# Permissions — exercising the Capabilities tab
+# Permissions — exercising the Permissions section
 # ---------------------------------------------------------------------------
 
 # The packaged app's bundle id AND the from-source Electron.app's, plus the
@@ -339,13 +342,13 @@ reset-permissions-dry-run host="auto":
     scripts/reset-permissions.sh "{{apphome}}" {{host}} --dry-run
 
 # Fake agents, fake goals, spread over the last eight hours, appended to
-# THIS checkout's audit log so the Capabilities tab's banner, counts and
+# THIS checkout's audit log so the Permissions section's banner, counts and
 # "See blocked requests…" can be looked at without revoking a grant first.
 # The banner's dismissal is left alone: if it was dismissed less than eight
 # hours ago the rows land after that moment instead, so they count as new
 # and "Show in Audit" narrows to them (Date: Since …). Every seeded row is
 # marked, and unseed removes exactly those.
-# Seed the audit log with sample blocked requests for the Capabilities tab.
+# Seed the audit log with sample blocked requests for the Permissions section.
 seed-blocked-requests:
     node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson" "{{apphome}}/app/settings.json"
 

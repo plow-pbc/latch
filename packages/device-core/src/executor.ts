@@ -33,6 +33,8 @@ export const SandboxProfile = {
     writePaths: string[];
     network: boolean;
     appleEvents: boolean;
+    /** See `run`'s option of the same name. */
+    sysvSemaphores?: boolean;
     scratch: string;
     /** Home override for golden tests; defaults to the real home. */
     home?: string;
@@ -115,6 +117,9 @@ export const SandboxProfile = {
       lines.push("(deny network*)");
     }
     if (args.appleEvents) lines.push("(allow appleevent-send)");
+    // No filter narrows this rule (the whole host namespace); it admits SysV
+    // semaphore operations only — attaching shared memory stays denied.
+    if (args.sysvSemaphores) lines.push("(allow ipc-sysv-sem)");
     return lines.join("\n");
   },
 };
@@ -415,16 +420,6 @@ export class Executor {
     public readonly scratchRoot: string,
     /** Overridden only by tests, which cannot wait out the real window. */
     private readonly reapAfterMs: number = REAP_AFTER_MS,
-    /**
-     * Directories holding vendored provider CLIs, prepended to the child's
-     * PATH so `gog` resolves to the binary this app ships rather than to
-     * whatever the owner happens to have installed.
-     *
-     * Prepended rather than appended for that reason: the provider registry
-     * matches on a bare `argv[0]`, so which binary that name reaches is a
-     * security decision, not a convenience.
-     */
-    private readonly vendorDirs: readonly string[] = [],
   ) {
     fs.mkdirSync(scratchRoot, { recursive: true });
   }
@@ -432,15 +427,27 @@ export class Executor {
   async run(args: {
     argv: string[];
     cwd?: string;
+    /** The caller's last word, asked after every wait this run makes and
+     *  before anything launches: a sentence refuses the launch with it. */
+    guard?: () => string | null;
     readPaths: string[];
     writePaths: string[];
     network: boolean;
     appleEvents: boolean;
+    /**
+     * Let the child operate SysV semaphores. A PyInstaller onefile binary on
+     * macOS (plow-wiki's `wiki`) syncs its bootloader with the Python child
+     * through one, and `semctl` under `(deny default)` fails before Python
+     * starts. Only a staged plugin's own pinned binary gets this — never an
+     * ordinary approved command — because the grant reaches every semaphore
+     * the owner's other processes hold.
+     */
+    sysvSemaphores?: boolean;
     waitMs: number;
     /**
      * Extra environment for the child, merged over the curated set below.
      *
-     * This is how a vendored provider CLI receives its token: in the child's
+     * This is how a provider's CLI receives its token: in the child's
      * environment and nowhere else. A token on the command line lands in the
      * calling agent's captured output and from there in a persisted
      * transcript, where it outlives the token by a long way — and unlike argv,
@@ -459,11 +466,7 @@ export class Executor {
     // cwd must be readable for the process to even start; it was part of the
     // approved exec capability, so allowing it matches the approval.
     const workingDir = args.cwd !== undefined ? canonicalize(args.cwd) : scratch;
-    // The vendor dirs are always readable, because a vendored CLI lives inside
-    // the .app bundle rather than under the owner's home — the broad home
-    // grant in the profile does not reach it, so without this the child cannot
-    // even exec the binary its PATH just resolved.
-    const reads = [...args.readPaths, ...this.vendorDirs, workingDir];
+    const reads = [...args.readPaths, workingDir];
 
     // Frozen as the generator saw them: canonical now, and never resolved
     // again. A later `grants()` asks what THIS profile allowed, and a run
@@ -474,10 +477,13 @@ export class Executor {
       writePaths: args.writePaths.map((p) => canonicalize(p)),
       network: args.network,
       appleEvents: args.appleEvents,
+      sysvSemaphores: args.sysvSemaphores ?? false,
       scratch: canonicalize(scratch),
     };
     // No new writer over what a hold is about, while it is out.
     while (this.conflicts(writableRoots(profileArgs))) await new Promise<void>((wake) => this.holdWaiters.push(wake));
+    const refusal = args.guard?.() ?? null;
+    if (refusal !== null) throw new ExecutorError(refusal);
     const profile = SandboxProfile.generate(profileArgs);
     this.profiles.set(handle, profileArgs);
     if (process.env.DOMO_DEBUG_SANDBOX) {
@@ -556,7 +562,6 @@ export class Executor {
         // its token, never the shape of the world its child runs in.
         PATH:
           [
-            ...this.vendorDirs,
             `${realHome}/.local/bin`,
             `${realHome}/bin`,
             `${realHome}/.cargo/bin`,

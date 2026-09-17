@@ -38,11 +38,14 @@ import {
   requestFolderAccess,
   importLogins,
   importPreview,
+  loadPlugins,
   markAgainstVault,
   parseCredentialExchange,
   parseOnePux,
   type ParsedImport,
   parsePasswordExport,
+  PluginError,
+  pluginRoots,
   readCredentialsState,
   resolveBrowserRuntime,
   totpCode,
@@ -50,7 +53,7 @@ import {
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission } from "@domo/device-core";
+import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission, StagedPlugin } from "@domo/device-core";
 import { approvalViewModel, CredentialTitles } from "./viewModel.js";
 import { AuditIndex, AuditQuery } from "./auditIndex.js";
 
@@ -58,11 +61,12 @@ import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
+import { pluginRows } from "./pluginsModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
-import { buildMinter, vendorDirs } from "./providerWiring.js";
+import { buildMinter } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
@@ -228,6 +232,9 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let connectors: Connectors | null = null;
+/** What `loadPlugins` found at startup — the Plugins tab's inventory, and the
+ *  list the owner's off switch selects from. Empty until whenReady. */
+let stagedPlugins: readonly StagedPlugin[] = [];
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
@@ -603,10 +610,8 @@ ipcMain.handle("ui:getTab", async () => {
     void cloudAgents?.refresh();
     void connectClient?.refreshRoster();
   }
-  // "connect" was this tab's key before the content went to Settings and came
-  // back as "agents". Anyone who left the app on it lands where that content
-  // lives now, rather than silently on the default tab.
-  return tab === "connect" ? "agents" : tab;
+  // Retired keys land where their content lives now, not on the default tab.
+  return tab === "connect" ? "agents" : tab === "capabilities" ? "plugins" : tab;
 });
 ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
@@ -638,10 +643,10 @@ ipcMain.handle("settings:getRelay", async () => {
 /**
  * Forget this Mac's credential and put the user back at the start.
  *
- * The relay's `onAuthFailed` path only. Nobody clicked anything here: the
- * credential was retired on the account and the relay refused it, so there is
- * nothing to revoke and the window has to be OPENED — otherwise the app sits
- * silently disconnected with no way forward but quitting.
+ * Nobody clicked anything on the relay's `onAuthFailed` path or on
+ * `signInAgainIfOldKey`: the credential is already retired on the account, so
+ * there is nothing to revoke and the window has to be OPENED — otherwise the app
+ * sits silently disconnected with no way forward but quitting.
  *
  * `signOutOfPlow` rather than blanking the fields inline: losing the Plow
  * credential takes the Plow reviewer with it, and retiring Adversarial mode is
@@ -705,6 +710,50 @@ async function signOutThisMac(): Promise<void> {
 }
 
 ipcMain.handle("settings:signOut", async () => signOutThisMac());
+
+/**
+ * A Mac still on a pre-session device key signs in again, once, by itself.
+ *
+ * Nothing that key lacks can be fixed by retrying, so every screen it reaches
+ * would say "Not permitted." (#419). Asked on every relay connect until Plow
+ * answers, so a Mac that launched offline still gets asked.
+ *
+ * The key is retired BEFORE the local sign-out, and a failed retire leaves the
+ * Mac as it was: a still-active key holds this Mac's device row, and the new
+ * login's registration would be refused against it.
+ */
+let fullAccessCredential = "";
+let checkingKey = false;
+async function signInAgainIfOldKey(): Promise<void> {
+  const credential = loadSettings(home).relayCredential.trim();
+  if (!credential || credential === fullAccessCredential || checkingKey) return;
+  checkingKey = true;
+  try {
+    const api = new PlowApi(apiBaseUrl);
+    const old = await api.holdsOldDeviceKey(credential);
+    if (old === false) fullAccessCredential = credential;
+    if (old !== true || loadSettings(home).relayCredential.trim() !== credential) return;
+    try {
+      await api.revokeDeviceCredential(credential);
+    } catch (error) {
+      // Already retired is retired; anything else is asked again next connect.
+      if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") return;
+    }
+    console.log("[relay] old device key retired; signing in again");
+    // The relay can see the retired key first and sign out on its own; either
+    // way the setup window must say why it is back.
+    if (loadSettings(home).relayCredential.trim() === credential) {
+      signOut();
+      await startRelay();
+    }
+    if (!isSignedIn(home)) {
+      onboarding?.showMessage("Plow Latch was updated. Sign in again to keep using it.");
+    }
+  } finally {
+    checkingKey = false;
+  }
+}
+
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
 // MARK: IPC for "Connect a client" (main window)
@@ -1267,7 +1316,7 @@ ipcMain.handle("capabilities:get", async () => {
   };
 });
 
-// MARK: The Capabilities tab (capabilitiesModel.ts)
+// MARK: The permission inventory, in Settings (capabilitiesModel.ts)
 
 /**
  * The icon beside a row or group — macOS's own, never drawn here: the app's
@@ -1491,6 +1540,40 @@ ipcMain.handle("capabilities:dismiss", async (_e, rawKey: unknown) => {
 ipcMain.handle("capabilities:bannerSeen", async () => {
   saveSettings(home, { ...loadSettings(home), blockedBannerSeenAt: new Date().toISOString() });
   return capabilitiesNow();
+});
+
+// MARK: The Plugins tab (pluginsModel.ts)
+
+/** The whole tab, fresh: what is staged, and what each plugin still needs. */
+function pluginsNow(): { rows: ReturnType<typeof pluginRows> } {
+  const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
+  const rows = pluginRows({
+    plugins: stagedPlugins.map((p) => ({
+      manifest: p.manifest,
+      enabled: !disabled.has(p.manifest.name),
+      description: device?.pluginDescription(p.manifest.name) ?? null,
+    })),
+    // One connector today, and it is connected exactly when an account is.
+    connectedAccounts: (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [],
+  });
+  return { rows };
+}
+
+ipcMain.handle("plugins:get", async () => pluginsNow());
+
+/** The owner's off switch: the disabled NAMES persist (a later plugin is on
+ *  by default), and the device is told in the same breath, so the skill and
+ *  the exec gate follow without a relaunch. */
+ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
+  if (stagedPlugins.some((p) => p.manifest.name === name)) {
+    const settings = loadSettings(home);
+    const disabled = new Set(settings.disabledPlugins ?? []);
+    if (on) disabled.delete(name);
+    else disabled.add(name);
+    saveSettings(home, { ...settings, disabledPlugins: [...disabled] });
+    device?.setDisabledPlugins([...disabled]);
+  }
+  return pluginsNow();
 });
 // The floating panel's poll: has the switch it points at landed?
 ipcMain.handle("grant:state", async () => {
@@ -1905,6 +1988,7 @@ async function startRelay(): Promise<void> {
       }
       connected = isConnected;
       notifyRenderer("status:changed");
+      if (isConnected) void signInAgainIfOldKey();
     },
     // The relay refused the credential — revoked in the console, or minted
     // against a different environment. It will never work again, so the app
@@ -2041,6 +2125,31 @@ app.whenReady().then(async () => {
   // live pre-cutover app (a sibling worktree's `just app`) has that app as
   // its parent and is left alone.
   await reapOrphanedLegacyVaultServers();
+  // The plugins this Mac has staged: packaged Resources, or a from-source
+  // vendor tree (app.getAppPath() is apps/desktop under `just app`, so climb
+  // two). An owner-installed root arrives with the installer.
+  //
+  // Read HERE, not inside the constructor call below: a refused manifest (a
+  // corrupt bundled one, or a DOMO_PLUGINS pointed somewhere wrong) throws,
+  // and this runs inside `app.whenReady().then(...)`, which has no `.catch` —
+  // the rejection is swallowed and the launch dies with no device, no relay
+  // and nothing said. Failing fast is right; failing NAMELESS is not.
+  // Printing one is safe: a PluginError's message is a fixed sentence naming a
+  // field, except the argv-overlap one, which quotes manifest text — and both
+  // reach the owner directly (here, launch-time stderr; otherwise the
+  // installer's caller), never the audit log or an agent.
+  let plugins;
+  try {
+    plugins = loadPlugins(pluginRoots({
+      resourcesDir: process.resourcesPath,
+      repoRoot: path.resolve(app.getAppPath(), "..", ".."),
+    }));
+  } catch (e) {
+    if (e instanceof PluginError) console.error(`[plugins] ${e.message}`);
+    throw e;
+  }
+  // What the Plugins tab lists, and what its off switch selects from.
+  stagedPlugins = plugins;
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -2052,20 +2161,10 @@ app.whenReady().then(async () => {
     // knows it. `home` above is the app's own (branch-suffixed in a from-source
     // run); this is where WhatsApp and everything else of theirs actually lives.
     os.homedir(),
-    // How a vendored provider CLI is authorised. The exec path reports a
-    // missing one through the approval dialog rather than throwing.
+    // How a provider is authorised. The exec path reports a missing one
+    // through the approval dialog rather than throwing.
     buildMinter({ api: new PlowApi(apiBaseUrl), home }),
-    // Packaged: Contents/Resources/<command>/<arch>. From source:
-    // vendor/<command>. The RESOLVER is keyed on the command; staging is not
-    // — each provider still needs its own `fetch-<command>` recipe and its own
-    // extraResources entry, and gog is the only one written today.
-    // `app.getAppPath()` is <root>/apps/desktop
-    // under `just app`, not the workspace root, so the from-source lookup has
-    // to climb two levels or it can never resolve.
-    vendorDirs({
-      resourcesDir: process.resourcesPath,
-      repoRoot: path.resolve(app.getAppPath(), "..", ".."),
-    }),
+    plugins,
     plowPaymentApproval(new PlowApi(apiBaseUrl)),
     // How a refused operation is investigated (device-core's hostGate/): the
     // real probes over the owner's real home, with the compiled helper that
@@ -2074,6 +2173,9 @@ app.whenReady().then(async () => {
     // degrades — the same contract as the Full Disk Access tracker.
     nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath, native: nativePermissions() }),
   );
+  // The owner's off switches, as they left them: one call, and the device
+  // publishes exactly the skills it will honour commands for.
+  device.setDisabledPlugins(loadSettings(home).disabledPlugins ?? []);
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,
   // not only in the approvals directory.
@@ -2127,8 +2229,8 @@ app.whenReady().then(async () => {
   device.audit.events.on("reset", () => {
     if (auditIndex !== null) auditIndex.reset(device?.audit.entries() ?? []);
     auditChanged([], true);
-    // A clear takes the blocks the Capabilities tab counts with it, and a
-    // rotation can age some out: the tab reads the log too, so it re-reads.
+    // A clear takes the blocks the Plugins tab counts with it, and a rotation
+    // can age some out: both panes read the log too, so they re-read.
     notifyRenderer("capabilities:changed");
   });
   // A block by this Mac itself is the owner's to clear, and the owner is
@@ -2138,14 +2240,15 @@ app.whenReady().then(async () => {
     if (entry.event === "host_permission_blocked") noteHostGateBlock(entry.fields);
     if (entry.event === "host_permission_cleared") clearHostGateAttention(entry.fields);
     // The three folders have no query: what a run's dialog was answered
-    // with, or a touch that got through, is what the Capabilities row
-    // has to go on — the same memo the row's own button writes.
+    // with, or a touch that got through, is what the permission row has to
+    // go on — the same memo the row's own button writes.
     if (entry.event === "host_permission_cleared" || entry.event === "host_permission_observed") {
       learnFolderConsent(entry.fields);
     }
-    // Only these lines change what the Capabilities tab shows (its badge, a
-    // row's line, the banner). Every other event used to refresh it too —
-    // the standing inventory, a dozen helper processes, per audit line.
+    // Only these lines change what the Plugins tab and Settings' Permissions
+    // section show (the badge, a row's line, the banner). Every other event
+    // used to refresh them too — the standing inventory, a dozen helper
+    // processes, per audit line.
     if (entry.event.startsWith("host_permission_")) notifyRenderer("capabilities:changed");
   });
   // Usage stats ride the same funnel as the audit log — one source of truth
@@ -2533,12 +2636,10 @@ function clearHostGateAttention(fields: { [k: string]: unknown }): void {
 }
 
 /**
- * The tray item's and the notification's one destination. A block that
- * names a switch lands on the Capabilities tab, where that switch shows
- * what it stopped and the grant flow starts. One that names none — a
- * locked file, a SIP root, POSIX permissions — has no row there (the tab
- * lists switches), so it lands on the Audit tab's Blocked view, where the
- * row carries the sentence that fixes it.
+ * The tray item's and the notification's one destination: a block that names
+ * a permission lands on its switch, in Settings; one that names none (a locked
+ * file, a SIP root) lands on the Audit tab's Blocked view, where the row
+ * carries the sentence that fixes it.
  */
 function showCapabilitiesForHostGate(block?: NonNullable<typeof hostGateAttention>): void {
   const permission = block ? block.permission : (hostGateAttention?.permission ?? null);

@@ -403,9 +403,7 @@ describe("a queued dialog is answered by a rule stored ahead of it", () => {
 
   /** The first dialog is on screen. Its opening awaits the Plow-folder
    * confinement check, which is real file-system I/O, so wait rather than tick. */
-  const firstShown = async (shown: string[]) => {
-    for (let i = 0; i < 200 && shown.length === 0; i++) await new Promise((r) => setTimeout(r, 1));
-  };
+  const firstShown = (shown: string[]) => vi.waitFor(() => expect(shown).not.toHaveLength(0));
 
   /** The intent a second agent call makes: same bound, so the same rule key. */
   const twin = () => intent();
@@ -423,15 +421,19 @@ describe("a queued dialog is answered by a rule stored ahead of it", () => {
    * The app's delegate, minus Electron: ONE queue for every dialog, and the
    * engine re-asked for a rule when an intent's turn comes. `answers` is what
    * the human clicks, per request text, in the order that request's dialogs
-   * open — per request, not per dialog, because each intent's confinement
-   * check is file I/O and the order they reach the queue is not the order
-   * they were made. A dialog with no answer left is a bug. Every dialog
-   * stays open until `release()` lets the oldest open one go, so the rest
-   * queue up behind it the way a burst of agent calls does.
+   * open. A dialog with no answer left is a bug. Every dialog stays open
+   * until `release()` lets the oldest open one go, so the rest queue up
+   * behind it the way a burst of agent calls does.
+   *
+   * Each intent's confinement check is real file I/O, so the order requests
+   * reach the queue is not the order they were made. A test that needs a
+   * particular order makes them one at a time and waits on `queued(n)`.
    */
   type Answer = "allow_once" | "always_allow" | "deny";
+
   const delegate = (s: Settings, answers: Record<string, Answer[]>) => {
     const queue = new ApprovalQueue();
+    const run = vi.spyOn(queue, "run");
     const shown: string[] = [];
     const open: (() => void)[] = [];
     const d: PolicyDelegate = {
@@ -458,12 +460,14 @@ describe("a queued dialog is answered by a rule stored ahead of it", () => {
     };
     /** The human answers the dialog on screen — once there is one. */
     const release = async () => {
-      for (let i = 0; i < 200 && open.length === 0; i++) await new Promise((r) => setTimeout(r, 1));
+      await vi.waitFor(() => expect(open).not.toHaveLength(0));
       const answer = open.shift();
       if (!answer) throw new Error("no dialog to answer");
       answer();
     };
-    return { d, shown, release };
+    /** `n` requests are in line (or on screen): their confinement I/O is done. */
+    const queued = (n: number) => vi.waitFor(() => expect(run).toHaveBeenCalledTimes(n));
+    return { d, shown, release, queued };
   };
 
   /** Settled, or still waiting: what a grant promise has done so far. */
@@ -491,16 +495,19 @@ describe("a queued dialog is answered by a rule stored ahead of it", () => {
   });
 
   it("[A, B, A] answered 'always allow' on A leaves the human with [B]", async () => {
-    const { d, shown, release } = delegate(settings(), {
+    const { d, shown, release, queued } = delegate(settings(), {
       "run: ls": ["always_allow"],
       "run: pwd": ["deny"],
     });
+    // One at a time, so the line is [A, B, A] by construction — B behind the
+    // A on screen, and the trailing A behind B, where only a sweep reaches it.
     const a1 = engine.decide(intent(), d);
-    const b = engine.decide(other(), d);
-    const a2 = engine.decide(twin(), d);
     await firstShown(shown);
-    // Whichever reached the queue first is on screen; answer until it is an A.
-    while (shown[shown.length - 1] !== "run: ls") await release();
+    const b = engine.decide(other(), d);
+    await queued(2);
+    const a2 = engine.decide(twin(), d);
+    await queued(3);
+    expect(shown).toEqual(["run: ls"]);
     expect(await settled(a2)).toBe(false);
     await release();
 
@@ -530,14 +537,14 @@ describe("a queued dialog is answered by a rule stored ahead of it", () => {
   });
 
   it("opens the dialogs one at a time", async () => {
-    const { d, shown, release } = delegate(settings(), {
+    const { d, shown, release, queued } = delegate(settings(), {
       "run: ls": ["deny", "deny"],
       "run: pwd": ["deny"],
     });
     const all = Promise.all([engine.decide(intent(), d), engine.decide(other(), d), engine.decide(twin(), d)]);
     await firstShown(shown);
-    // Two more are waiting on the queue, not on screen.
-    await new Promise((r) => setTimeout(r, 5));
+    // Two more are in line, not on screen.
+    await queued(3);
     expect(shown).toHaveLength(1);
     await release();
     await release();

@@ -1,7 +1,6 @@
 /**
- * The two things `plow_run_command` needed before a vendored provider CLI
- * could run through it: an environment the caller can add to, and a PATH plus
- * a sandbox profile that reach the binary this app ships.
+ * What `plow_run_command` gives a child: an environment the caller can add to,
+ * and a curated PATH and HOME the caller cannot replace with its own.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
@@ -23,18 +22,19 @@ function tmp(): string {
   return d;
 }
 
-/** A vendor dir holding one executable that prints what it was given. */
-function vendorDir(): string {
-  const dir = tmp();
-  const bin = path.join(dir, "echoenv");
+/** An executable that reports what it was handed, at an absolute path. */
+function echoEnv(): string {
+  const bin = path.join(tmp(), "echoenv");
   fs.writeFileSync(bin, '#!/bin/sh\necho "TOKEN=$FAKE_TOKEN PATH1=${PATH%%:*}"\n', { mode: 0o755 });
-  return dir;
+  return bin;
 }
 
 async function output(exec: Executor, argv: string[], env?: Record<string, string>) {
   const result = await exec.run({
     argv,
-    readPaths: [],
+    // A binary must be readable to be exec'd, and this one lives outside the
+    // profile's home grant — as a staged plugin's does.
+    readPaths: [path.dirname(argv[0]!)],
     writePaths: [],
     network: false,
     appleEvents: false,
@@ -45,6 +45,23 @@ async function output(exec: Executor, argv: string[], env?: Record<string, strin
 }
 
 describe.skipIf(!ON_MAC)("Executor.run", () => {
+  // The guard is the caller's last word, asked after the executor's own
+  // waits (the conflicting-hold loop) and before anything launches.
+  it("a guard's sentence refuses the launch, and nothing spawns", async () => {
+    const exec = new Executor(tmp());
+    const marker = path.join(tmp(), "ran");
+    await expect(exec.run({
+      argv: ["/usr/bin/touch", marker],
+      readPaths: [],
+      writePaths: [path.dirname(marker)],
+      network: false,
+      appleEvents: false,
+      waitMs: 8000,
+      guard: () => "turned off",
+    })).rejects.toThrow("turned off");
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
   it("merges stderr into output for the stream, and keeps stdout alone for a parser", async () => {
     const exec = new Executor(tmp());
     const result = await exec.run({
@@ -60,39 +77,20 @@ describe.skipIf(!ON_MAC)("Executor.run", () => {
   });
 
   it("passes extra environment to the child", async () => {
-    const dir = vendorDir();
-    const exec = new Executor(tmp(), undefined, [dir]);
-    // This is the whole mechanism a vendored provider needs: its token
-    // reaches the child through the environment and nowhere else.
-    expect(await output(exec, ["echoenv"], { FAKE_TOKEN: "sentinel-value" })).toContain(
+    const exec = new Executor(tmp());
+    // This is the whole mechanism a provider needs: its token reaches the
+    // child through the environment and nowhere else.
+    expect(await output(exec, [echoEnv()], { FAKE_TOKEN: "sentinel-value" })).toContain(
       "TOKEN=sentinel-value",
     );
   });
 
-  it("resolves a vendored command from the vendor dir, ahead of the owner's own bins", async () => {
-    const dir = vendorDir();
-    const exec = new Executor(tmp(), undefined, [dir]);
-    // Prepended, not appended: the registry matches a BARE argv[0], so which
-    // binary that name reaches is a security decision.
-    expect(await output(exec, ["echoenv"])).toContain(`PATH1=${dir}`);
-  });
-
-  it("lets the sandbox read the vendor dir, which is outside the home grant", async () => {
-    // A vendored CLI lives in the .app bundle, so the profile's broad home
-    // read does not reach it — without an explicit grant the child cannot
-    // exec the binary its PATH just resolved.
-    const dir = vendorDir();
-    const exec = new Executor(tmp(), undefined, [dir]);
-    expect(await output(exec, ["echoenv"])).toContain("TOKEN=");
-  });
-
   it("does not let the caller's env replace PATH or HOME", async () => {
-    const dir = vendorDir();
-    const exec = new Executor(tmp(), undefined, [dir]);
+    const exec = new Executor(tmp());
     // The curated values are applied AFTER the caller's, so a provider row
     // supplies a token and never the shape of the world its child runs in.
-    const out = await output(exec, ["echoenv"], { PATH: "/nowhere", FAKE_TOKEN: "t" });
-    expect(out).toContain(`PATH1=${dir}`);
-    expect(out).not.toContain("PATH1=/nowhere");
+    const out = await output(exec, [echoEnv()], { PATH: "/nowhere", FAKE_TOKEN: "t" });
+    expect(out).toContain("TOKEN=t");
+    expect(out).toContain(`PATH1=${os.homedir()}/.local/bin`);
   });
 });

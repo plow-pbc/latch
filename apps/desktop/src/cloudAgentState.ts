@@ -884,7 +884,8 @@ export class CloudLinesClient {
     if (response.status === 403) {
       // A Mac paired before this app kept the session holds a credential whose
       // scopes froze at mint, and no amount of retrying widens them. Signing in
-      // again is the whole remedy, so the sentence says exactly that.
+      // again is the whole remedy, so the sentence says exactly that; main's
+      // `signInAgainIfOldKey` starts it on the next relay connect.
       throw new PlowApiError("forbidden", "Sign in again to see Plow numbers.", 403);
     }
     if (response.status === 401) throw new PlowApiError("unauthorized", "Not authorized.", 401);

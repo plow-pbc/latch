@@ -125,7 +125,7 @@ is the standing inventory — what would be refused if asked — with no
 approval, for the user's "what can you reach?" and for the whole picture
 after a block; the copy tells an agent to try rather than check, since only
 a refused attempt lights the owner's surfaces. The owner's side
-of the same facts is the app's Capabilities tab: every switch with what it
+of the same facts is the app's Permissions section: every switch with what it
 stopped, badged by the rows that need a decision (DESIGN.md §6a).
 
 **Paths are resolved before the human sees them.** Every path an agent supplies
@@ -295,10 +295,11 @@ process hands it and owns no copy of its own.
   with `relayCredential` as the plaintext fallback, and is never handed to the
   renderer. Sign-out retires it with `POST /v1/relay/devices/self/revoke`, which
   accepts a session: its guard is `relay:device`, and a session's wildcard
-  satisfies it. Macs paired before this change keep their narrow credential
-  until they sign out and back in, and every surface takes it, `GET /v1/lines`
-  included. A credential minted before `chats:list` existed is the exception:
-  that route refuses it and says so.
+  satisfies it. A Mac paired before this change still holds a narrow device
+  key. On each relay connect Latch reads its own row in `GET /v1/api-keys`
+  (no `*:*`, or refused the list, means old), retires that key, signs out and
+  reopens setup with "Sign in again", so the owner gets a session after one
+  text (#419).
 - **The server owns activation expiry.** The screen gives the first five minutes
   an active countdown, but the main process keeps polling while the activation
   remains valid. “Send it again” re-arms that same live code; a fresh code is

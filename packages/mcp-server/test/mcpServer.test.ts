@@ -16,6 +16,7 @@ import {
   DENIAL_SOURCE_NO_REVIEWER,
   DeviceAgent,
   HeadlessPolicy,
+  loadPlugins,
   MAX_FILE_BYTES,
   PolicyDelegate,
 } from "@domo/device-core";
@@ -54,12 +55,14 @@ const OTHER: RelayAuth = { agent_id: "agent-2", agent_name: "Agent Two", scopes:
 class ScriptedPolicy implements PolicyDelegate {
   constructor(
     private readonly decision: "allow_once" | "always_allow" | "deny" = "allow_once",
-    private readonly delayMs = 0,
+    /** How long the human takes — or, as a Promise, the moment they answer. */
+    private readonly delay: number | Promise<unknown> = 0,
     /** How it decided. Some sources carry an explanation to the caller. */
     private readonly source = "ask",
   ) {}
   async decideIntent() {
-    if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
+    if (typeof this.delay !== "number") await this.delay;
+    else if (this.delay > 0) await new Promise((r) => setTimeout(r, this.delay));
     return { decision: this.decision, source: this.source };
   }
 }
@@ -386,11 +389,11 @@ describe("agent identity", () => {
 });
 
 describe("the deferred-result contract (§4.3)", () => {
-  /** A budget short enough that a slow approval always outruns it. */
+  /** A budget short enough that an approval still outstanding always outruns it. */
   const SHORT = 40;
 
-  async function deferredRead(delegate: PolicyDelegate, auth: RelayAuth = AGENT) {
-    const { server, device } = makeServer(delegate, SHORT);
+  async function deferredRead(delegate: PolicyDelegate, auth: RelayAuth = AGENT, budgetMs = SHORT) {
+    const { server, device } = makeServer(delegate, budgetMs);
     const dir = tempDir();
     const file = path.join(dir, "slow.txt");
     fs.writeFileSync(file, "slow content");
@@ -399,7 +402,11 @@ describe("the deferred-result contract (§4.3)", () => {
   }
 
   it("a call that outruns the budget returns a pending handle, then the real result", async () => {
-    const { server, first, file } = await deferredRead(new ScriptedPolicy("allow_once", 200));
+    // The human has not answered; only the test's own hand will, so nothing
+    // the budget timer races can land before it does.
+    let answer!: () => void;
+    const answered = new Promise<void>((r) => (answer = r));
+    const { server, first, file } = await deferredRead(new ScriptedPolicy("allow_once", answered));
     expect(first.isError).toBe(false);
     expect(first.payload.status).toBe("pending");
     expect(first.payload.reason).toBe("awaiting_approval");
@@ -410,6 +417,7 @@ describe("the deferred-result contract (§4.3)", () => {
     const early = await callTool(server, "plow_get_result", { handle }, AGENT);
     expect(early.payload.status).toBe("pending");
 
+    answer();
     const poll = (
       await pollUntil(
         () => callTool(server, "plow_get_result", { handle }, AGENT),
@@ -419,8 +427,9 @@ describe("the deferred-result contract (§4.3)", () => {
     expect(poll.status).toBe("ready");
     // Byte-for-byte what the original call would have returned.
     expect(poll.result).toEqual({ status: "completed", path: canonicalize(file), content: "slow content" });
-    // A call that finishes inside the budget says so in its own payload.
-    const { first: fast } = await deferredRead(new ScriptedPolicy("allow_once"));
+    // A call that finishes inside the budget says so in its own payload —
+    // the real budget, so a slow disk cannot turn "finished" into "pending".
+    const { first: fast } = await deferredRead(new ScriptedPolicy("allow_once"), AGENT, CALL_BUDGET_MS);
     expect(fast.payload.status).toBe("completed");
   });
 
@@ -716,6 +725,38 @@ describe("review findings", () => {
       expect(approvedArgv).not.toContain(attachmentLink);
     });
 
+    // executePlowGog's runGog builds executor.run({...}) with no `cwd` field
+    // at all, so a caller-supplied cwd folded into the capability anyway
+    // would show the owner a card claiming the run happens somewhere it
+    // never will — the same lie the plugin path refuses outright above.
+    // gog is live and first-party, so instead of refusing (which could break
+    // an existing caller) the cwd is stripped before it reaches the
+    // capability the card renders. Reaching decideIntent (not a pre-intent
+    // ToolError) is what shows the call isn't refused, unlike the plugin case.
+    it("a provider's capability carries no cwd, even when the caller supplies one", async () => {
+      let decided = false;
+      let cwd: string | undefined;
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          decided = true;
+          cwd = intent.capabilities.find((c) => c.kind === "process.exec")?.cwd;
+          return "deny" as const;
+        },
+      });
+      const home = tempDir();
+
+      const { isError } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["plow-gog", "gmail", "search", "q"], cwd: home },
+        AGENT,
+      );
+
+      expect(decided).toBe(true);
+      expect(cwd).toBeUndefined();
+      expect(isError).toBe(true); // denied by policy, not refused pre-intent
+    });
+
     // The `allowed` flag the policy sees for a given capability kind, when
     // plow_run_command builds an intent from `argv` + the extra tool args.
     async function allowedFor(
@@ -734,23 +775,23 @@ describe("review findings", () => {
       return allowed;
     }
 
-    // A vendored provider reaches its service by definition, so the network
+    // A provider reaches its service by definition, so the network
     // capability is not the agent's to remember. Without this the skill's own
     // canonical example is approved with network denied and the sandbox
     // refuses every Google request — the advertised flow, broken. An explicit
     // `false` does not disarm it either: honouring that would approve a gog
     // call the sandbox then denies, which is the same bug spelled out loud.
     it.each([
-      ["a gog command implies network", ["gog", "gmail", "search", "q"], undefined, true],
-      ["and an explicit false does not disarm it", ["gog", "gmail", "search", "q"], false, true],
-      ["gog --help does not, like the mint it also skips", ["gog", "--help"], undefined, false],
+      ["a plow-gog command implies network", ["plow-gog", "gmail", "search", "q"], undefined, true],
+      ["and an explicit false does not disarm it", ["plow-gog", "gmail", "search", "q"], false, true],
+      ["plow-gog --help does not, like the mint it also skips", ["plow-gog", "--help"], undefined, false],
       ["and an ordinary command still asks", ["/bin/echo", "x"], undefined, false],
       ["...and still means false when it says so", ["/bin/echo", "x"], false, false],
     ])("%s", async (_name, argv, network, allowed) => {
       expect(await allowedFor("network", argv, network === undefined ? {} : { network })).toBe(allowed);
     });
 
-    // Unlike network, apple_events is opt-in only: there is no vendored
+    // Unlike network, apple_events is opt-in only: there is no provider
     // command that implies it, so the capability is pushed only when the
     // agent asks for it, and omitted (not sent as `allowed: false`) otherwise
     // so an unrelated command's approval rule hash does not change.
@@ -853,6 +894,194 @@ describe("review findings", () => {
         handle: first.handle,
       });
       expect((store.get("agent-1", second.handle) as { status: string }).status).toBe("ready");
+    });
+  });
+
+  // A staged non-provider plugin's own manifest belt (argv.read/argv.write)
+  // is checked at execution time (deviceAgent.ts's plugin dispatch, in
+  // executeCommand). Without
+  // this same check before an intent exists, an owner could be shown — and
+  // approve — a card for an invocation the device would then refuse: the
+  // capability the card displayed never matched what could run. Same
+  // chokepoint shape as providerRefusal, just above in this file's tools.ts.
+  describe("a staged plugin's own argv belt gates before an intent exists too", () => {
+    const ECHOER = { name: "echoer", command: "echoer", argv: { read: [["say"]], write: [] } };
+    function stagePlugin(root: string, plugin = ECHOER): void {
+      const dir = path.join(root, plugin.name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "latch-plugin.json"),
+        JSON.stringify({
+          ...plugin, version: "test",
+          runtime: { binaries: [] },
+          exec: { argv: ["/bin/echo"] },
+          env: {},
+        }),
+      );
+    }
+
+    // One staged "echoer" plugin, a fresh device and server around it, and
+    // cleanup registered — the lifecycle every test below needs, varying
+    // only the policy delegate.
+    function makePluginServer(delegate: PolicyDelegate, plugin = ECHOER) {
+      const root = tempDir();
+      stagePlugin(root, plugin);
+      const home = tempDir();
+      const device = new DeviceAgent(home, "Test Mac", delegate, null, undefined, null, loadPlugins([root]));
+      const server = createDomoMcpServer(device, {});
+      cleanups.push(() => server.close());
+      return { server, device, root, home };
+    }
+
+    it("refuses an off-allowlist argv before an intent is ever built, never reaching approval", async () => {
+      let decided = false;
+      const { server, device } = makePluginServer({
+        async decideIntent() {
+          decided = true;
+          return "allow_once" as const;
+        },
+      });
+
+      const { isError, payload } = await callTool(server, "plow_run_command", { argv: ["echoer", "shout", "hi"] }, AGENT);
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("echoer allows: say");
+      // The refusal never became an approval decision, and nothing was audited.
+      expect(decided).toBe(false);
+      expect(events(device)).not.toContain("exec_start");
+    });
+
+    // A provider's command is a staged plugin's too, and the owner's off
+    // switch is the device's answer for it before any card — not "not
+    // installed" after one.
+    it("refuses a provider's command when the owner turned its plugin off, before an intent is ever built", async () => {
+      let decided = false;
+      const { server, device } = makePluginServer(
+        { async decideIntent() { decided = true; return "allow_once" as const; } },
+        { name: "gog", command: "plow-gog", argv: { read: [], write: [] } },
+      );
+      device.setDisabledPlugins(["gog"]);
+
+      const { isError, payload } = await callTool(server, "plow_run_command", { argv: ["plow-gog", "gmail", "search", "q"] }, AGENT);
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("plow-gog is turned off on this Mac");
+      expect(decided).toBe(false);
+    });
+
+    // A plugin's own dispatch (deviceAgent.ts's executeCommand) always execs
+    // in the plugin's own directory — a caller-supplied cwd is never read.
+    // Folding it into the capability anyway would show the owner an
+    // approval card claiming the run happens somewhere it never will.
+    // Refused by name, same as env
+    // above, rather than silently dropped: a silent drop would let an agent
+    // believe it chose a cwd it didn't.
+    it("refuses a caller-supplied cwd for a plugin before an intent is ever built", async () => {
+      let decided = false;
+      const { server, device, home } = makePluginServer({
+        async decideIntent() {
+          decided = true;
+          return "allow_once" as const;
+        },
+      });
+
+      const { isError, payload } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["echoer", "say"], cwd: home },
+        AGENT,
+      );
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("cwd");
+      expect(decided).toBe(false);
+      expect(events(device)).not.toContain("exec_start");
+    });
+
+    // The refusal is unconditional on cwd being present at all — never
+    // conditional on its value differing from the plugin's own directory.
+    // Pins that a later "only refuse when cwd disagrees with plugin.dir"
+    // special case would fail this test rather than silently reopening the
+    // gap: a plugin's own dispatch always execs in plugin.dir regardless, so
+    // even a cwd that happens to equal it is still a caller belief the card
+    // would have to lie about if it were ever allowed through.
+    it("refuses a caller-supplied cwd equal to the plugin's own directory too", async () => {
+      let decided = false;
+      const { server, device, root } = makePluginServer({
+        async decideIntent() {
+          decided = true;
+          return "allow_once" as const;
+        },
+      });
+
+      const pluginDir = path.join(root, "echoer");
+      const { isError, payload } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["echoer", "say"], cwd: pluginDir },
+        AGENT,
+      );
+
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("cwd");
+      expect(decided).toBe(false);
+      expect(events(device)).not.toContain("exec_start");
+    });
+
+    // The security finding this pins: the sandbox must never grant more than
+    // the card disclosed. Before this, a staged plugin's own directory was
+    // substituted at execution time and never shown to the approver at all —
+    // the card said `Run: echoer say` with no directory, while the sandbox
+    // then granted a recursive read over `plugin.dir`. Now `mcp-server`
+    // resolves that directory itself, before the intent is built, and puts
+    // it in the very capability the approver is shown — same as any other
+    // `cwd` (capability.ts's `capabilityDisplay`).
+    it("offers the plugin's own directory as the approved cwd, so the card shows the true run location", async () => {
+      let cwd: string | undefined;
+      const { server, root } = makePluginServer({
+        async decideIntent(intent) {
+          cwd = intent.capabilities.find((c) => c.kind === "process.exec")?.cwd;
+          return "deny" as const;
+        },
+      });
+
+      await callTool(server, "plow_run_command", { argv: ["echoer", "say"] }, AGENT);
+
+      expect(cwd).toBe(canonicalize(path.join(root, "echoer")));
+    });
+
+    it.skipIf(!ON_MAC)("a staged plugin with no cwd argument still runs normally", async () => {
+      const { server, device } = makePluginServer({ async decideIntent() { return "allow_once" as const; } });
+
+      const { isError } = await callTool(server, "plow_run_command", { argv: ["echoer", "say"] }, AGENT);
+
+      expect(isError).toBe(false);
+      expect(events(device)).toContain("exec_start");
+    });
+
+    it.skipIf(!ON_MAC)("a non-plugin command's cwd is unaffected", async () => {
+      const home = tempDir();
+      const device = new DeviceAgent(
+        home,
+        "Test Mac",
+        { async decideIntent() { return "allow_once" as const; } },
+        null,
+        undefined,
+        null,
+        [],
+      );
+      const server = createDomoMcpServer(device, {});
+      cleanups.push(() => server.close());
+
+      const { isError } = await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["/bin/pwd"], cwd: home },
+        AGENT,
+      );
+
+      expect(isError).toBe(false);
+      expect(events(device)).toContain("exec_start");
     });
   });
 });

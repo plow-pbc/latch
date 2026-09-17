@@ -4,11 +4,11 @@
  *
  * Discovery is a skill rather than a tool description, exactly as the browser
  * works. It costs no manifest tokens until an agent asks for it, and it is
- * versioned with the vendored binary — which is what lets a provider be added
- * without `tools/list` changing at all.
+ * versioned with the bundled plugin's pinned binary — which is what lets a
+ * provider be added without `tools/list` changing at all.
  *
- * Teaches `plow-gog` only. A bare `gog` argv reaches the same provider
- * (`registry.ts`), unadvertised: one surface, and one page for it.
+ * Teaches `plow-gog` only. A bare `gog` argv is refused with a sentence
+ * naming `plow-gog` (`providerRefusal`): one surface, and one page for it.
  */
 import type { Skill } from "../skills.js";
 import { GOG_CANONICAL } from "./gogGroups.js";
@@ -104,6 +104,11 @@ All-day (date-only) events skip the check.
 
 \`--account\` and \`--confirm-conflict\` are plow-gog's own arguments and never
 reach Google; everything else is the CLI's ordinary grammar.
+
+**Attendees are notified.** A calendar create, update or delete runs with
+\`--send-updates all\` unless you pass your own mode, so an invite you add is
+actually sent. A video call needs \`--with-meet\` — without it the event has no
+link to join, so do not call it a video call.
 
 ## What you can reach
 

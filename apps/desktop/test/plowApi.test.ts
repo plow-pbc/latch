@@ -859,3 +859,23 @@ describe("revoking this Mac's own credential", () => {
     );
   });
 });
+
+describe("holdsOldDeviceKey (#419)", () => {
+  // Plow's public key_prefix is token[5:13].
+  const credential = "plow_OWNKEY01_rest_of_secret";
+  const row = (key_prefix: string, scopes: string[], is_active = true) => ({ id: 1, key_prefix, scopes, is_active });
+  const listed = (...rows: unknown[]) => ({ status: 200, body: rows });
+
+  it.each([
+    ["full-access session", listed(row("SOMEONE1", ["relay:device"]), row("OWNKEY01", ["*:*"])), false],
+    ["frozen scopes", listed(row("OWNKEY01", ["relay:device", "keys:manage"])), true],
+    ["forbidden listing", { status: 403 }, true],
+    ["server error", { status: 500 }, null],
+    ["unauthorized", { status: 401 }, null],
+    ["missing own row", listed(row("SOMEONE1", ["*:*"])), null],
+    ["inactive own row", listed(row("OWNKEY01", ["relay:device"], false)), null],
+  ] as const)("%s", async (_name, answer, expected) => {
+    const { fetchImpl } = recordingFetch([answer]);
+    expect(await new PlowApi("https://api.plow.co", fetchImpl).holdsOldDeviceKey(credential)).toBe(expected);
+  });
+});

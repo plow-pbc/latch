@@ -137,14 +137,14 @@ extraResources:
   - from: ../../vendor/camoufox-browser/universal
     to: browser-runtime/camoufox
     filter: ["**/*", "!.sha256"]
-  # Every vendored provider CLI, per-arch, in ONE entry — the payloads live
-  # under vendor/providers/<command>/<arch>/, so adding a provider edits nothing
-  # here. resolveVendoredBinary looks the arch up by process.arch, so those
-  # directory names are Node's (arm64, x64), not any release's. VERSION is each
-  # provider's local staleness marker, not payload.
-  - from: ../../vendor/providers
-    to: providers
-    filter: ["**/*", "!*/VERSION"]
+  # Every bundled plugin, per-arch, in ONE entry: vendor/plugins/<name>/ holds
+  # the manifest and runtime/<arch>/bin. `loadPlugins` reads <Resources>/plugins.
+  # The staging tree also carries each plugin's build-time-only files — the
+  # bump checklist and the postinstall hook, which ran before packaging — and
+  # those stay out of the signed bundle.
+  - from: ../../vendor/plugins
+    to: plugins
+    filter: ["**/*", "!*/README.md", "!*/postinstall.mjs"]
   # The native helpers (scripts/build-native.mjs, a `just build` step): the
   # Full Disk Access flow's window tracker, the permission-status helper the
   # host-gate diagnosis asks about Automation, and the credential-exchange
@@ -197,18 +197,18 @@ mac:
     # still seals it.
     - "PlugIns/.*"
   # The fused Camoufox tree is universal2, so the merge passes it through
-  # untouched. Vendored provider CLIs are not: two THIN per-arch binaries copied
-  # identically into both electron slices, so the merger would try to lipo a thin
-  # binary against its identical twin and fail. This pattern passes them through
-  # instead. The native-keychain and native-credential-import addons
+  # untouched. A plugin's staged binaries are not: two THIN per-arch binaries
+  # copied identically into both electron slices, so the merger would try to
+  # lipo a thin binary against its identical twin and fail. This pattern passes
+  # them through instead. The native-keychain and native-credential-import addons
   # (universal2, byte-identical in both slices) are refused by the merger the
   # same way. (No SQLite entry: the WASM cookie-merge module is arch-neutral,
   # so the merge handles it like any file.)
-  x64ArchFiles: "**/{providers,node_modules/@domo/native-keychain,node_modules/@domo/native-credential-import,node_modules/@domo/native-permissions}/**"
+  x64ArchFiles: "**/{plugins,node_modules/@domo/native-keychain,node_modules/@domo/native-credential-import,node_modules/@domo/native-permissions}/**"
   notarize: true
   extendInfo:
     NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."
-    # The consent dialogs the Capabilities tab raises on purpose
+    # The consent dialogs the Permissions section raises on purpose
     # (@domo/native-permissions, in the app's own process) are shown only to
     # a caller whose bundle carries these; without them macOS refuses the
     # request instead of asking. A from-source run gets them from

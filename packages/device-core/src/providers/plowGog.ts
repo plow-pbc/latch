@@ -1,5 +1,5 @@
 /**
- * plow-gog: the multi-account front for the vendored gog binary.
+ * plow-gog: the multi-account front for the bundled gog plugin's binary.
  *
  * Same argv grammar, same gate, same belt — the difference is account reach.
  * Curated reads fan out across every connected Google account and come back
@@ -51,7 +51,7 @@ export type PlowGogPlan =
 /**
  * The curated fan-out reads, by canonical group then verb — including gog's
  * own verb aliases (`search (find,query,ls,list)`, `events (list,ls)`),
- * verified against the vendored binary's help at 0.36.0. Everything else
+ * verified against the staged binary's help at 0.36.0. Everything else
  * stays single-account.
  */
 const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = {
@@ -68,7 +68,7 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
 
 /**
  * The one shape whose run is conflict-gated: `calendar create` and its
- * aliases (verified against the vendored binary's help at 0.36.0).
+ * aliases (verified against the staged binary's help at 0.36.0).
  * Deliberately the ONLY verb recognition outside the fan-out table — there is
  * no read-vs-write classification to mirror gog's grammar with, because with
  * more than one account connected EVERY single-account command requires
@@ -77,6 +77,21 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
  * exclude the event being updated — and the gate exists for bookings.
  */
 const CONFLICT_GATED: ReadonlySet<string> = new Set(["create", "add", "new"]);
+
+/**
+ * Every calendar verb whose `--help` lists `--send-updates`, with its aliases
+ * as that help spells them (re-check the list on a gog bump). gog's own
+ * default is `none`, so an invite to someone outside the account went out
+ * silent and the agent said "invite's out" (#421). Attendees live on the
+ * event for the other verbs, not the argv, and Google emails nobody when
+ * there are none — so every one gets `all` unless the agent chose a mode.
+ */
+const NOTIFYING: ReadonlySet<string> = new Set([
+  ...CONFLICT_GATED,
+  "update", "edit", "set",
+  "move", "transfer",
+  "delete", "rm", "del", "remove",
+]);
 
 /** The `--max` a calendar event list gets when the agent names none — per account. */
 export const CALENDAR_EVENTS_MAX = "100";
@@ -123,7 +138,7 @@ function accountAt(
  * `automation.exit_codes`) and maps Google's own failures onto that same
  * table, so the NUMBER carries the diagnosis and the child's output — which is
  * service-fetched text — never has to travel in a reason string (the
- * `gogFlags.ts` rule). Verified against the vendored binary at 0.36.0.
+ * `gogFlags.ts` rule). Verified against the staged binary at 0.36.0.
  *
  * Without this the only account-level diagnosis was `gog exited 2`, and a
  * fan-out that came back empty for every account could not be told apart from
@@ -233,6 +248,9 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
     return { kind: "refused", reason: "this command runs on one account: --account takes one email here" };
   }
 
+  if (group === "calendar" && verb !== undefined && NOTIFYING.has(verb) && flagValue(stripped, "send-updates") === null) {
+    gogArgv.push("--send-updates", "all");
+  }
   let conflictCheck: { from: string; to: string } | null = null;
   if (group === "calendar" && verb !== undefined && CONFLICT_GATED.has(verb)) {
     const from = flagValue(stripped, "from");

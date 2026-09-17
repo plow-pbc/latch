@@ -36,6 +36,12 @@ export class SkillRegistry {
     this.skills.set(skill.name, skill);
   }
 
+  /** Withdraw a skill — the owner turned off the plugin it documents, and a
+   *  skill for a CLI the exec path now refuses is a dead end. */
+  unregister(name: string): void {
+    this.skills.delete(name);
+  }
+
   skill(name: string): Skill | null {
     return this.skills.get(name) ?? null;
   }
@@ -55,7 +61,8 @@ export class SkillRegistry {
       .map(({ name, description }) => ({ name, description }));
   }
 
-  /** Load owner-authored skills from $DOMO_HOME/device/skills/*.md. */
+  /** Load owner-authored skills from $DOMO_HOME/device/skills/*.md. Loaded
+   *  LAST by whoever publishes, so the owner's file wins under a shared name. */
   loadDir(dir: string): void {
     let files: string[];
     try {
@@ -67,7 +74,7 @@ export class SkillRegistry {
       try {
         const raw = fs.readFileSync(path.join(dir, file), "utf8");
         const parsed = parseFrontmatter(raw);
-        if (parsed) this.register(parsed);
+        if (parsed) this.skills.set(parsed.name, parsed);
       } catch {
         /* skip unreadable/malformed skills */
       }
@@ -75,13 +82,16 @@ export class SkillRegistry {
   }
 }
 
-function parseFrontmatter(raw: string): Skill | null {
+/** Exported so a caller with a single known file (a plugin-declared skill
+ * path) can parse it without a directory scan — `loadDir` below is for the
+ * `$DOMO_HOME/device/skills/*.md` case, a different source of the same shape. */
+export function parseFrontmatter(raw: string): Skill | null {
   const m = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!m) return null;
   let name = "";
   let description = "";
   for (const line of m[1].split("\n")) {
-    const kv = line.match(/^(name|description):\s*(.*)$/);
+    const kv = line.match(/^(name|description):(.*)$/);
     if (kv) {
       if (kv[1] === "name") name = kv[2].trim();
       else description = kv[2].trim();

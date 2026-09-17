@@ -1,5 +1,5 @@
 /** Independent MCP clients and sessions; agents have their own resource roster. */
-import { parseApiTimestamp, type KeyDevice, type KeyInfo } from "./plowApi.js";
+import { isDeviceCredential, parseApiTimestamp, type KeyDevice, type KeyInfo } from "./plowApi.js";
 
 export type AgentRosterKind =
   | "Agent"
@@ -239,23 +239,4 @@ export function sectionRoster(
   sections.mcp.sort(byLastUsed);
   sections.other.sort(byLastUsed);
   return sections;
-}
-
-/**
- * Is this row the credential this Mac holds?
- *
- * Plow stores `token[5:13]` as the public `key_prefix` — the eight characters
- * AFTER the `plow_` scheme, not including it (plow's `api/plow/auth.py`). So a
- * prefix never starts the token it came from, and comparing with `startsWith`
- * matched nothing in production while looking right against a hand-written
- * fixture.
- *
- * Equality against that same fixed-width slice is the whole check: a string of
- * any other length cannot equal it, so nothing here guesses at a partial
- * match, and an absent or malformed prefix matches nothing rather than
- * everything.
- */
-function isDeviceCredential(prefix: string | null, credential: string): boolean {
-  if (!prefix || !credential) return false;
-  return credential.slice(5, 13) === prefix;
 }

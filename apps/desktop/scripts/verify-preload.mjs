@@ -19,6 +19,8 @@ import {
 import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
 import { capabilitiesView } from "../dist/capabilitiesModel.js";
+import { pluginRows } from "../dist/pluginsModel.js";
+import { parseManifest } from "@domo/device-core";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -54,11 +56,10 @@ ipcMain.handle("settings:getRelay", async () => {
   };
 });
 ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
-// A Mac that has NOT granted Full Disk Access — the state the Capabilities
-// section exists to explain.
-// The Capabilities tab renders from the REAL view model over a stub
-// inventory: a Mac whose Full Disk Access is off and has been asked for
-// nothing else. `grant:state` is what the floating grant panel polls.
+// A Mac that has NOT granted Full Disk Access — the state Settings'
+// Permissions section exists to explain. It renders from the REAL view model
+// (capabilitiesModel.ts) over this stub inventory: Full Disk Access off, and
+// nothing else asked for. `grant:state` is what the floating grant panel polls.
 const probeInventory = {
   checked_at: "2026-09-02T08:00:00Z",
   full_disk_access: { granted: false, probes: [] },
@@ -83,6 +84,26 @@ ipcMain.handle("capabilities:act", async () => probeCapabilities().view);
 ipcMain.handle("capabilities:dismiss", async () => probeCapabilities().view);
 ipcMain.handle("capabilities:bannerSeen", async () => probeCapabilities().view);
 ipcMain.handle("grant:state", async () => ({ key: "full_disk_access", label: "Full Disk Access", granted: false }));
+// The Plugins tab renders from the REAL view model (pluginsModel.ts) over the
+// SHIPPED gog manifest, read off disk, with no account connected: what the tab
+// tells the owner is what the file declares. The off switch answers with the
+// fresh state, exactly as main does.
+const probePlugins = { gog: true };
+const probeStaged = [{
+  manifest: parseManifest(fs.readFileSync(path.join(dir, "../plugins/gog/latch-plugin.json"), "utf8")),
+  description: "Gmail and Calendar, through gog.",
+}];
+const probePluginRows = () => ({
+  rows: pluginRows({
+    plugins: probeStaged.map((p) => ({ ...p, enabled: probePlugins[p.manifest.name] })),
+    connectedAccounts: [],
+  }),
+});
+ipcMain.handle("plugins:get", async () => probePluginRows());
+ipcMain.handle("plugins:setEnabled", async (_e, name, on) => {
+  probePlugins[name] = on === true;
+  return probePluginRows();
+});
 // The drag-to-authorize tile's display data: a fake bundle name and a 1px
 // icon, so the tile renders in the probe without a real .app behind it.
 ipcMain.handle("fullDisk:dragInfo", async () => ({
@@ -392,7 +413,10 @@ app.whenReady().then(async () => {
   // the credential is minted by first-run login and the API origin is baked into
   // the build.
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("settings")`);
-  await waitFor(win, `document.querySelector(".panel.settings")`, "the Settings pane");
+  // The permission inventory is drawn into the same pane, so wait for a row
+  // of it: the pane appears only once that read has landed, but waiting on the
+  // rows says so without depending on that ordering.
+  await waitFor(win, `document.querySelector(".panel.settings .cap-row")`, "the Settings pane");
   const settings = await win.webContents.executeJavaScript(`(${() => {
     return {
       hasAccountGroup: document.body.innerText.includes("Plow Account"),
@@ -404,9 +428,11 @@ app.whenReady().then(async () => {
       noPhonePromise: !document.querySelector("#view").innerText.includes("phone number"),
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
-      // Connected accounts left this pane for the Capabilities tab (probed
-      // below), where a Google account is a switch like any other.
-      noConnectedAccountsHere: ![...document.querySelectorAll(".panel.settings .group-title")].some(
+      // Connected accounts came BACK to this pane with the permission
+      // inventory: an account is a prerequisite like a switch, and the
+      // machine-configuration view holds both. The Plugins tab shows only
+      // what is unmet.
+      hasConnectedAccountsHere: [...document.querySelectorAll(".panel.settings .group-title")].some(
         (title) => /connected accounts/i.test(title.textContent),
       ),
       // ---- The AI Reviewer section is GONE from this pane.
@@ -430,9 +456,9 @@ app.whenReady().then(async () => {
       ),
       // The word is gone from this pane's copy entirely.
       saysNothingAdversarial: !/adversarial/i.test(document.querySelector("#view").innerText),
-      // The capabilities card left this pane for a tab of its own (probed
-      // below); the drag source lives only in the floating grant panel.
-      noCapabilitiesCard: !document.querySelector("#view").innerText.includes("Full Disk Access"),
+      // The permission inventory lives here now (probed below); the drag
+      // source still lives only in the floating grant panel.
+      hasPermissionInventory: document.querySelector("#view").innerText.includes("Full Disk Access"),
       fdaNoInlineDragTile: !document.querySelector(".fda-drag-tile"),
       // The marks split by meaning: the macOS "…" on the one hand-off the user
       // must finish over there (System Settings), the external-link ↗ on the
@@ -440,7 +466,7 @@ app.whenReady().then(async () => {
       // — and never both on one button.
       // Both remaining Support buttons (Discord, Livestream) just open a
       // browser, so both carry the arrow; the one hand-off into System
-      // Settings moved to the Capabilities tab with its "…" (checked there).
+      // Settings is in the Permissions section's rows, not among these.
       supportMarks: (() => {
         const btns = [...document.querySelectorAll(".support-row .btn")];
         const arrowed = btns.filter((b) => b.querySelector(".ext-arrow"));
@@ -1416,13 +1442,50 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
-  // The Capabilities tab, on a Mac whose inventory says Full Disk Access is
-  // off: the row names the permission, its dot says so honestly, the line
-  // gives the Messages use case, and the one button routes the grant through
-  // System Settings (a key into main's table — the renderer never holds the
-  // URL). Nothing has been blocked, so no badge and no banner.
-  await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("capabilities")`);
-  await waitFor(win, `document.querySelector(".cap-row")`, "the Capabilities tab");
+  // The Plugins tab: the row, its CLI badge and skill description, and the
+  // unmet account with the button that fixes it.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("plugins")`);
+  await waitFor(win, `document.querySelectorAll(".plugin-row").length === 1`, "the Plugins tab");
+  const plugins = await win.webContents.executeJavaScript(`(${() => {
+    const rows = [...document.querySelectorAll(".plugin-row")];
+    const gog = rows.find((r) => r.querySelector(".plugin-name span")?.textContent === "gog");
+    const req = gog?.parentElement.querySelector(".plugin-req");
+    return {
+      names: rows.map((r) => r.querySelector(".plugin-name span")?.textContent),
+      cliBadges: rows.every((r) => r.querySelector(".plugin-name .badge")?.textContent.trim() === "CLI"),
+      describes: (gog?.querySelector(".cap-sub")?.textContent ?? "").includes("Gmail and Calendar"),
+      saysNeedsSetup: (gog?.textContent ?? "").includes("Needs setup"),
+      // The unmet requirement, named, with its action as a button.
+      namesRequirement: req?.querySelector(".cap-name")?.textContent === "Account",
+      offersTheFix: req?.querySelector("button.btn")?.textContent.trim() === "Connect Google",
+      // The switch is on, and it is a real control (the off switch).
+      switchesOn: [...document.querySelectorAll(".plugin-switch input")].every((b) => b.checked),
+    };
+  }})()`);
+  // The off switch: unchecking it answers with the fresh state, and the row
+  // says Off with its requirements withdrawn — the owner's problem again only
+  // when they turn it back on.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".plugin-row")]
+       .find((r) => r.querySelector(".plugin-name span")?.textContent === "gog")
+       .querySelector(".plugin-switch input").click(), true`);
+  await waitFor(win, `!document.querySelector(".plugin-req")`, "the disabled plugin to drop its requirements");
+  const pluginOff = await win.webContents.executeJavaScript(`(${() => {
+    const gog = [...document.querySelectorAll(".plugin-row")]
+      .find((r) => r.querySelector(".plugin-name span")?.textContent === "gog");
+    return {
+      saysOff: (gog?.textContent ?? "").includes("Off"),
+      noRequirements: !document.querySelector(".plugin-req"),
+    };
+  }})()`);
+
+  // The permission inventory, now a section of Settings: on a Mac whose
+  // inventory says Full Disk Access is off, the row names the permission, its
+  // dot says so honestly, the line gives the Messages use case, and the one
+  // button routes the grant through System Settings (a key into main's table —
+  // the renderer never holds the URL). Nothing has been blocked, so no banner.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("settings")`);
+  await waitFor(win, `document.querySelector(".cap-row")`, "the Permissions section");
   // The accounts arrive on the connector refresh, a beat after the switches.
   await waitFor(win, `document.querySelectorAll(".cap-account-email").length === 2`, "the connected accounts to list");
   const capabilities = await win.webContents.executeJavaScript(`(${() => {
@@ -1435,7 +1498,6 @@ app.whenReady().then(async () => {
       fdaOffersSystemSettings: fda?.querySelector("button.btn")?.textContent.trim() === "Allow in System Settings…",
       // A granted switch is a word, not a button.
       calendarsGranted: rows.some((r) => r.querySelector(".cap-name")?.textContent === "Calendars" && r.querySelector(".cap-granted")),
-      noBadge: document.getElementById("capCount")?.hidden === true,
       noBanner: !document.querySelector(".cap-banner"),
       fdaNoInlineDragTile: !document.querySelector(".fda-drag-tile"),
       // The hand-off into System Settings wears the macOS "…", never the
@@ -1457,6 +1519,22 @@ app.whenReady().then(async () => {
       ),
     };
   }})()`);
+
+  // A block by this Mac lands the renderer on the tab its channel names: a
+  // switch is in Settings, and a block naming none is on the Audit tab.
+  const activeTab = `document.querySelector("#seg button.active")?.dataset.tab`;
+  const landing = async (channel) => {
+    const before = await win.webContents.executeJavaScript(activeTab);
+    win.webContents.send(channel);
+    // Waited on as "no longer where it was", never as "where we expect".
+    await waitFor(win, `${activeTab} !== ${JSON.stringify(before)}`, `${channel} to land`);
+    return win.webContents.executeJavaScript(activeTab);
+  };
+  // Audit first: the probe is on Settings already, and the wait is for a move.
+  const blockLanding = {
+    namesNoSwitch: await landing("ui:showAuditBlocked"),
+    namesASwitch: await landing("ui:showCapabilities"),
+  };
 
   // The floating grant panel (fdaGrantFlow.ts) comes up through the same
   // sandboxed preload as every other window. Loaded directly — the probe
@@ -1569,7 +1647,7 @@ app.whenReady().then(async () => {
     settings.noPhonePromise &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
-    settings.noConnectedAccountsHere &&
+    settings.hasConnectedAccountsHere &&
     capabilities.hasConnectedAccounts &&
     capabilities.connectorAccounts.join("|") === "owner@probe.test|work@probe.test" &&
     capabilities.connectorDefault === "Default" &&
@@ -1580,15 +1658,25 @@ app.whenReady().then(async () => {
     settings.noReviewerGroup &&
     settings.noPasswordField &&
     settings.noSuggestionsCheckbox &&
-    settings.noCapabilitiesCard &&
+    settings.hasPermissionInventory &&
     settings.fdaNoInlineDragTile &&
     capabilities.hasFdaRow &&
     capabilities.fdaSaysNotGranted &&
     capabilities.fdaNamesMessages &&
     capabilities.fdaOffersSystemSettings &&
     capabilities.calendarsGranted &&
-    capabilities.noBadge &&
     capabilities.noBanner &&
+    blockLanding.namesASwitch === "settings" &&
+    blockLanding.namesNoSwitch === "audit" &&
+    plugins.names.join("|") === "gog" &&
+    plugins.cliBadges &&
+    plugins.describes &&
+    plugins.saysNeedsSetup &&
+    plugins.namesRequirement &&
+    plugins.offersTheFix &&
+    plugins.switchesOn &&
+    pluginOff.saysOff &&
+    pluginOff.noRequirements &&
     capabilities.fdaNoInlineDragTile &&
     settings.supportMarks &&
     settings.launchTitle &&
@@ -1653,7 +1741,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, capabilities, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, capabilities, plugins, pluginOff, blockLanding, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

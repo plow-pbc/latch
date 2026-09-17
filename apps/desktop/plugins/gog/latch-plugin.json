@@ -1,0 +1,25 @@
+{
+  "name": "gog",
+  "version": "0.36.0",
+  "command": "plow-gog",
+  "runtime": {
+    "binaries": [
+      {
+        "name": "gog",
+        "url": {
+          "arm64": "https://github.com/openclaw/gogcli/releases/download/v0.36.0/gogcli_0.36.0_darwin_arm64.tar.gz",
+          "x64": "https://github.com/openclaw/gogcli/releases/download/v0.36.0/gogcli_0.36.0_darwin_amd64.tar.gz"
+        },
+        "sha256": {
+          "arm64": "5cb5b5210879769bc6a02bd9cf39ed1b0de3f0713b397ecbddefe95dd2be618b",
+          "x64": "7252cfc0a63d239912d0d57ca5f51e31ca58472b506834237e148704387902df"
+        }
+      }
+    ]
+  },
+  "requires": { "accounts": ["google"] },
+  "exec": { "argv": ["gog", "--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"] },
+  "env": {},
+  "argv": { "read": [], "write": [] },
+  "hooks": { "postinstall": "postinstall.mjs" }
+}
