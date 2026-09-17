@@ -233,7 +233,7 @@ the stable `device_id` and has no `ready` frame. The two request/response frame
 
 ## First-run login
 
-Download the app and walk through seven stages: Welcome → Privacy → Verify phone
+Download the app and walk through seven stages: Welcome → Verify phone → Privacy
 → Data & permissions → Keep this Mac reachable → Connect your accounts → You're
 all set. Verification is an
 SMS activation: the app shows the exact message to send from the phone, then
@@ -246,7 +246,7 @@ account-flow state owner, and `src/plowApi.ts` is the only place that talks HTTP
 to Plow. The window (`renderer/onboarding.html`) draws whatever state the main
 process hands it and owns no copy of its own.
 
-- **Activation handoff:** Continue from Privacy calls `POST /v1/auth/activate`.
+- **Activation handoff:** Get started on Welcome calls `POST /v1/auth/activate`.
   Plow returns the display code, the destination number, and a main-process-only
   activation secret. The user sends the displayed `Plow Activate: …` message;
   the main process polls `POST /v1/auth/activate/redeem`, then calls

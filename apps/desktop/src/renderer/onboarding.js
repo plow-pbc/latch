@@ -701,7 +701,7 @@ function render() {
     });
     primaryLabel.textContent = config.label;
     primaryArrow.toggleAttribute("hidden", !config.arrow);
-    primaryButton.disabled = !!config.disabled || (!!state.busy && state.step !== "privacy");
+    primaryButton.disabled = !!config.disabled || !!state.busy;
     primaryAction = config.action;
   } else {
     primaryAction = null;

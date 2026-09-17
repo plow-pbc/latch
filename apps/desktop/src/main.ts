@@ -673,7 +673,7 @@ function signOut() {
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
   // Opening it boots at Welcome. Activation is deliberately deferred until
-  // Continue from Privacy.
+  // Get started.
   gate.sync();
   return onboarding?.state();
 }

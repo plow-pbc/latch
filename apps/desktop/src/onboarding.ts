@@ -212,9 +212,6 @@ export class Onboarding {
       return this.newActivationCode();
     }
     if (this.step === "privacy") {
-      // The display code is spent, but stays visible through the confirmation
-      // treatment so the screen does not jump while redemption finishes.
-      this.activation = null;
       this.step = "data";
       return this.publish();
     }
@@ -443,9 +440,8 @@ export class Onboarding {
         this.activationSecret = null;
         this.stall();
         const finished = await this.run(() => this.finishWithSession(result.token as string));
-        // The verified screen is actionable while the relay connects. `run`
-        // clears busy and publishes before this await, and nothing after it
-        // mutates onboarding state.
+        // Privacy is actionable while the relay connects. `run` clears busy and
+        // publishes before this await, and nothing after it mutates state.
         if (finished.step === "privacy") await this.deps.startRelay();
         return;
       }
@@ -607,13 +603,10 @@ export class Onboarding {
     // cannot be wrong.
     this.save(settings);
 
-    // The activation secret is spent and dropped. The public display value is
-    // retained until Continue so the verified treatment can hold the same
-    // screen steady.
-    //
-    // Everything here is derived from the save above; none of it needs the
-    // socket to be up.
+    // The activation is spent and dropped. Everything here is derived from
+    // the save above; none of it needs the socket to be up.
     this.cancelPolling();
+    this.activation = null;
     this.activationSecret = null;
     this.activationStale = false;
     this.message = "";

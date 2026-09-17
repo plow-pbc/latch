@@ -308,12 +308,11 @@ describe("wizard steps around the existing verification flow", () => {
     await settle();
 
     expect(onboarding.state().step).toBe("privacy");
-    expect(onboarding.state().activation?.displayCode).toBe("CODE1");
+    expect(onboarding.state().activation).toBeNull();
     expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     expect(loadSettings(home).setupComplete).toBe(false);
 
     expect((await onboarding.advance()).step).toBe("data");
-    expect(onboarding.state().activation).toBeNull();
   });
 
   it("writes telemetry on leaving data and completion only on leaving connect", async () => {
@@ -396,17 +395,14 @@ describe("activation — the path a brand-new user takes", () => {
 
     const verified = onboarding.state();
     expect(verified.step).toBe("privacy");
-    expect(verified.activation?.displayCode).toBe("CODE1");
+    expect(verified.activation).toBeNull();
     expect(waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
     expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     expect(plow.registrations).toEqual([
       { token: SESSION_TOKEN, deviceId: "device-1", hostname: "test-mac" },
     ]);
     expect(loadSettings(home).mcpUrl).toBe(DEVICE_MCP_URL);
-    const data = await onboarding.advance();
-    expect(data.step).toBe("data");
-    // The spent activation is dropped after the confirmation screen.
-    expect(data.activation).toBeNull();
+    expect((await onboarding.advance()).step).toBe("data");
   });
 
   it("polls without waiting to be told to — a hand-typed message still gets in", async () => {
@@ -809,7 +805,6 @@ describe("reading the state is a read", () => {
           notifications += 1;
         },
       },
-      false,
     );
 
     for (let i = 0; i < 5; i += 1) onboarding.state();
@@ -908,10 +903,9 @@ describe("signing out", () => {
     expect(after.step).toBe("welcome");
     // An open window is told to re-read.
     expect(changes).toBeGreaterThan(changesBefore);
-    // …and it has nothing to draw yet: Welcome and Privacy are local screens,
-    // and only leaving Privacy asks for an activation.
+    // …and it has nothing to draw yet: Welcome is a local screen, and only
+    // Get started asks for an activation.
     expect(after.activation).toBeNull();
-    await onboarding.advance();
     const reopened = await onboarding.advance();
     expect(reopened.step).toBe("activate");
     expect(reopened.activation?.displayCode).toBeTruthy();
