@@ -158,7 +158,7 @@ describe("plow_history", () => {
     expect((limited.payload as { rows: unknown[] }).rows.length).toBe(1);
   });
 
-  it("open's refusal is pre-intent and logs nothing; a widen that fails still ends in the log", async () => {
+  it("without a runtime, open and widen are refused before any intent, and the history stays empty", async () => {
     const { server, device } = makeServer();
     const { isError } = await callTool(
       server,
@@ -171,8 +171,8 @@ describe("plow_history", () => {
     // owner's off switch (browser.test.ts owns that contract): nothing was
     // asked, nothing recorded.
     expect(events(device)).toEqual([]);
-    // A widening that fails is the other tool's failure, and the log says which
-    // -- it has no pre-intent check of its own, so it still ends in the log.
+    // A widening is refused at the same chokepoint: no runtime means no
+    // session it could widen, so nothing reaches the log or the history.
     const widen = await callTool(
       server,
       "plow_browser_request",
@@ -180,13 +180,10 @@ describe("plow_history", () => {
       AGENT,
     );
     expect(widen.isError).toBe(true);
-    const rows = (await callTool(server, "plow_history", {}, AGENT)).payload as { rows: { status: string }[] };
-    expect(rows.rows[0]!.status).toBe("Error");
-    const tools = device.audit
-      .entries()
-      .filter((e) => jv(e as JSONValue).get("event").str === "tool_error")
-      .map((e) => jv(e as JSONValue).get("tool").str);
-    expect(tools).toEqual(["plow_browser_request"]);
+    expect(JSON.stringify(widen.payload)).toMatch(/no browser runtime/);
+    expect(events(device)).toEqual([]);
+    const rows = (await callTool(server, "plow_history", {}, AGENT)).payload as { rows: unknown[] };
+    expect(rows.rows).toEqual([]);
   });
 });
 
