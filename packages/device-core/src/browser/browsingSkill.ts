@@ -163,26 +163,25 @@ you opened.
    page the owner has open elsewhere:
    \`plow_run_applescript {app: "Safari", args: ["<url>"], script: 'on run argv\\ntell application "Safari"\\n  activate\\n  make new document with properties {URL:item 1 of argv}\\n  return id of window 1\\nend tell\\nend run'}\`
    \`activate\` brings Safari to the front of the owner's screen; say so if they are at the Mac.
-2. **Read it — that window, on that origin, or nothing.** Pass the id and the site's host;
-   the script builds the origin itself and refuses with a fixed message unless the window's
-   current tab is on it, so a page the owner navigated that window to is never what you
-   get, and a redirect within the site still passes. \`do JavaScript\` runs in that tab
-   synchronously, so the one check before it is the check:
-   \`plow_run_applescript {app: "Safari", args: ["<id>", "www.example.com"], script: 'on run argv\\nset origin to "https://" & item 2 of argv & "/"\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  if URL of current tab of win does not start with origin then error "window is not on the expected origin"\\n  do JavaScript "document.body.innerText" in current tab of win\\nend tell\\nend run'}\`
-   The same script with another expression reads anything else: \`document.title\`,
-   \`location.pathname\`, a selector's \`innerText\`.
-3. **Act, when you must — step 2's script with the expression swapped.** Every script that
-   acts is that script — same window id, same origin check — with a different expression
-   in \`do JavaScript\`; never a bare expression without the check around it. Click with
-   \`document.querySelector("<selector>").click()\`. Text you type rides in \`args\`,
-   percent-encoded with \`encodeURIComponent\` so no quote in it can break the script, and
-   the expression decodes it from a DOUBLE-quoted literal — \`encodeURIComponent\` leaves
-   an apostrophe alone, so a single-quoted one would not hold:
-   \`"…set.call(el, decodeURIComponent(\\"" & item 3 of argv & "\\"))…"\`.
-   A React-controlled field ignores a plain \`value =\` — set it through the native setter
-   and fire \`input\`: \`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, <text>); el.dispatchEvent(new Event("input", {bubbles: true}))\`.
+2. **Read or act — one fixed script; the id, the host and the expression ride in \`args\`.**
+   The script pastes nothing into its source: the window id, the site's host and the
+   JavaScript expression are its three args, so the owner reads one script and the values
+   beside it. The expression runs behind an origin check in the SAME document, so the
+   check and the effect target one page — a tab the owner switched to between events is
+   never what runs — and the refusal is a fixed message:
+   \`plow_run_applescript {app: "Safari", args: ["<id>", "www.example.com", "document.body.innerText"], script: 'on run argv\\ntell application "Safari"\\n  do JavaScript ("if (location.origin !== \\"https://" & item 2 of argv & "\\") throw new Error(\\"window is not on the expected origin\\"); " & item 3 of argv) in current tab of (window id ((item 1 of argv) as integer))\\nend tell\\nend run'}\`
+   Read what you need with the expression: \`document.title\`, a selector's \`innerText\`, the
+   confirmation text — never \`location.href\` or \`location.search\`, which can carry a token
+   the page was given.
+3. **Act, when you must — the same call, an acting expression.** Click with
+   \`document.querySelector("input[name=email]").click()\`. Text you type goes into the
+   expression as \`decodeURIComponent("<text>")\` with the text percent-encoded by
+   \`encodeURIComponent\`, inside a DOUBLE-quoted literal — \`encodeURIComponent\` leaves an
+   apostrophe alone, so a single-quoted one would not hold. A React-controlled field ignores
+   a plain \`value =\` — set it through the native setter and fire \`input\`:
+   \`const el = document.querySelector("<selector>"); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, decodeURIComponent("<text>")); el.dispatchEvent(new Event("input", {bubbles: true}))\`.
    Dismiss a cookie banner's own button before anything under it. Verify the way you would
-   in this browser: read \`location.href\`, the title, and the confirmation text back.
+   in this browser: read the title and the confirmation text back.
 4. **Consent.** The first Safari script raises a macOS Automation dialog that asks the
    owner; the call sits 'running' with a diagnosis until they click. Leave it running and
    tell them. Report the site as blocked only after Safari itself fails to load the page — not after a JavaScript read fails.
