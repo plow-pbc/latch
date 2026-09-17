@@ -88,12 +88,12 @@ describe("SkillRegistry", () => {
     ["telling a hard block from a challenge", /a challenge has something to click or type.*a hard block does not/is],
     ["not retrying the wall or substituting search", /neither a retry of the same URL.*nor a public web search/is],
     ["opening the page in the owner's Safari", /tell application "Safari"/],
-    ["binding a read to the requested URL, never the front page", /first document whose URL starts with item 1 of argv/],
-    // A window's title is its current tab's: the AX read makes the requested
-    // tab current before it looks the window up by name.
-    ["making the requested tab current before matching the window by title", /set current tab of win to first tab of win whose URL starts with u/],
+    ["binding every later script to the window step 1 opened, by id", /returns the id of the window it opened.*addresses that window by that id/is],
+    // Exact URL, or a refusal that names what the window shows: a prefix
+    // matched /account-other, and a title matched another window.
+    ["refusing unless the window shows exactly the expected URL", /if actual is not u then error "window shows " & actual & ", not " & u/],
     ["that nothing survives from one script to the next", /Nothing carries over between scripts.*same lookup lines/is],
-    ["the read's tab switch being called out to the owner", /changes what the window\s+shows, so say so if the owner is at the Mac/is],
+    ["the raise being called out to the owner", /reorders the owner's Safari windows, so say so if they are at\s+the Mac/is],
     ["the JavaScript-from-Apple-Events error being expected", /Allow JavaScript from Apple Events.*not a dead end/is],
     ["reading the page through the accessibility tree", /tell application "System Events" to tell process "Safari"/],
     ["that the tree walk is slow and returns a handle", /entire contents.*pending handle/is],
@@ -109,8 +109,8 @@ describe("SkillRegistry", () => {
 
   // The old step 2 read `front document` / `front window`, so a tab the owner
   // switched to between two script approvals was silently what got read.
-  // Every recipe now selects the document by the requested URL instead — this
-  // guards the class, not one call site.
+  // Every recipe now addresses the window step 1 opened, by id, and checks
+  // its URL first — this guards the class, not one call site.
   it("the built-in browsing skill documents that nothing in the recipe reads whatever is in front", () => {
     expect(BROWSING_SKILL.body).not.toMatch(/front (document|window)/);
   });
