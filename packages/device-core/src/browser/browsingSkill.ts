@@ -167,7 +167,7 @@ not yours to lift out of the tree.
    \`on run argv\\nset u to item 2 of argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  if URL of current tab of win is not u then error "window is not on the expected URL"\\n  set index of win to 1\\nend tell\\ntell application "System Events" to tell process "Safari"\\n  set out to {}\\n  repeat with e in (entire contents of window 1)\\n    if role of e is "AXStaticText" then set end of out to value of e\\n  end repeat\\nend tell\\ntell application "Safari" to if URL of current tab of win is not u then error "window is not on the expected URL"\\nreturn out\\nend run\`
    The walk of a content-heavy page takes a minute or more and comes back as a pending handle
    — poll \`plow_get_result\` then \`plow_get_output\`; it is working, not failed.
-   A refusal on the very first read means the page was still redirecting when step 1
+   A refusal on the very first read usually means the page was still redirecting when step 1
    returned its URL three seconds in — open it again and use the URL that returns.
 3. **Act, when you must.** Roles are uppercase \`AXButton\` / \`AXTextField\` / \`AXStaticText\`
    — the lowercase names in some dictionaries match nothing. A control's label is in
