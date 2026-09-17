@@ -2602,8 +2602,15 @@ async function renderPlugins() {
   // A row with no action (e.g. the Browser row's missing runtime) shows
   // just the sub text; one with an action gets a button whose click routes
   // to the Browser row's own flow or the existing account-connect flow.
+  // What each requirement is, in the owner's words. The Browser row's two are
+  // known here; anything else is an account the plugin's manifest names.
+  const REQUIREMENT = {
+    "safari-javascript-from-apple-events": { name: "Safari", sub: "Allow JavaScript from Apple Events — Safari relaunches" },
+    "browser-runtime": { name: "Browser runtime", sub: "Not in this build — from source, run just fetch-browser" },
+  };
   const unmetRow = (u, r) => {
     const isBrowser = r.kind === "Browser";
+    const label = REQUIREMENT[u.id] ?? { name: "Account", sub: u.id };
     const action = u.action
       ? el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } })
       : null;
@@ -2625,11 +2632,8 @@ async function renderPlugins() {
     return el("div", { class: "cap-row plugin-req" }, [
       el("span", { class: "status-dot off" }),
       el("div", {}, [
-        el("div", { class: "cap-name", text: isBrowser ? "Safari" : "Account" }),
-        el("div", {
-          class: "cap-sub",
-          text: isBrowser && u.action ? "Allow JavaScript from Apple Events — Safari relaunches" : u.id,
-        }),
+        el("div", { class: "cap-name", text: label.name }),
+        el("div", { class: "cap-sub", text: label.sub }),
       ]),
       action,
     ]);

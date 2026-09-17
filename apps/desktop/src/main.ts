@@ -1626,16 +1626,15 @@ ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
   return pluginsNow();
 });
 
-/** A requirement row's one action: the Browser row's Safari switch is
- *  performed here; every other row's is the existing "Connect Google" flow
- *  the account button already used. */
+/** A requirement row's one action. Only the Browser row's Safari switch is
+ *  performed here; an account row's button keeps the existing
+ *  "connectors:connect" flow, so any other pair is nothing to do. */
 ipcMain.handle("plugins:act", async (_e, rawName: unknown, rawId: unknown) => {
   const name = typeof rawName === "string" ? rawName : "";
   const id = typeof rawId === "string" ? rawId : "";
+  if (name !== BROWSER_PLUGIN || id !== SAFARI_JAVASCRIPT) return { ...(await pluginsNow()), error: "nothing to do" };
   try {
-    if (name === BROWSER_PLUGIN && id === SAFARI_JAVASCRIPT) await enableSafariJavaScript(unsandboxedRunner);
-    else if (id.length > 0 && name !== BROWSER_PLUGIN) await connectors?.connect();
-    else return { ...(await pluginsNow()), error: "nothing to do" };
+    await enableSafariJavaScript(unsandboxedRunner);
     return pluginsNow();
   } catch (error) {
     return { ...(await pluginsNow()), error: error instanceof Error ? error.message : String(error) };
