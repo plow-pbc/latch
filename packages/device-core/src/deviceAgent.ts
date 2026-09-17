@@ -61,6 +61,10 @@ import { registerImessageSkill } from "./imessageSkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
 
+/** The browser's own name in `disabledPlugins` — it has no manifest and is
+ *  not one of `this.plugins`, but the owner's off switch treats it the same. */
+export const BROWSER_PLUGIN = "browser";
+
 /**
  * A delegate that denies because the adversarial reviewer could not run for
  * want of Plow credits. Set as the decision's `source`, so it rides the channel
@@ -400,7 +404,8 @@ export class DeviceAgent {
     registerPlowFolderSkill(this.skills, ownerHome);
     registerContactsSkill(this.skills, ownerHome);
     if (browserRuntime) {
-      this.skills.register(BROWSING_SKILL);
+      // Not registered here: syncPluginSkills() owns it, on exactly while
+      // this runtime is present and the owner has not turned the browser off.
       const browserDir = path.join(home, "device/browser");
       // Earlier builds wrote every agent screenshot under here and never
       // removed one. Nothing reads them, so an install that still has the
@@ -882,6 +887,10 @@ export class DeviceAgent {
    * under a shared name — order is the whole mechanism, re-run each time.
    */
   private syncPluginSkills(): void {
+    // The browser is a plugin without a manifest: on exactly while a runtime is
+    // installed and the owner has not turned it off, like any staged plugin.
+    if (this.browserSessions !== null && !this.disabledPlugins.has(BROWSER_PLUGIN)) this.skills.register(BROWSING_SKILL);
+    else this.skills.unregister(BROWSING_SKILL.name);
     for (const staged of this.plugins) {
       const skill = this.pluginSkill(staged);
       if (skill === null) continue;
@@ -889,6 +898,14 @@ export class DeviceAgent {
       else this.skills.unregister(skill.name);
     }
     this.skills.loadDir(path.join(this.home, "device/skills"));
+  }
+
+  /** Why a browser call cannot proceed on this Mac right now, or null. One
+   *  answer for the tool's pre-intent check and the two execution seams. */
+  browserRefusal(): string | null {
+    if (this.browserSessions === null) return "no browser runtime installed on this device";
+    if (this.disabledPlugins.has(BROWSER_PLUGIN)) return "browser use is turned off on this Mac";
+    return null;
   }
 
   /**
@@ -1651,16 +1668,15 @@ export class DeviceAgent {
    * detail, like wait_ms; the approved bound is entirely in the capabilities).
    */
   private async executeBrowserIntent(intent: Intent, payload: JSONValue): Promise<JSONValue> {
-    if (!this.browserSessions) {
-      return { status: "error", error: "no browser runtime installed on this device" };
-    }
+    const refusal = this.browserRefusal();
+    if (refusal !== null) return { status: "error", error: refusal };
     const origins = intent.capabilities.find((c) => c.kind === "browser")?.origins ?? [];
     const items =
       intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
 
     const session = jv(payload).get("session").str;
     if (session !== null) {
-      return this.browserSessions.extend(intent.intentId, session, origins, items);
+      return this.browserSessions!.extend(intent.intentId, session, origins, items);
     }
     if (origins.length === 0) {
       return { status: "error", error: "plow_browser_open requires at least one origin" };
@@ -1669,7 +1685,7 @@ export class DeviceAgent {
     // owner approved, so it rides the payload and leaves the capability set —
     // and the rule the owner may have saved for these origins — untouched.
     const headed = jv(payload).get("headed").bool;
-    return this.browserSessions.open(
+    return this.browserSessions!.open(
       intent.intentId,
       intent.agentId,
       origins,
@@ -1683,13 +1699,12 @@ export class DeviceAgent {
    * already-approved run. Called in-process by the mcp-server's `browser` tool.
    */
   async browserCommand(session: string, params: JSONValue): Promise<JSONValue> {
-    if (!this.browserSessions) {
-      return { status: "error", error: "no browser runtime installed on this device" };
-    }
+    const refusal = this.browserRefusal();
+    if (refusal !== null) return { status: "error", error: refusal };
     if (jv(params).get("action").str === "close") {
-      return this.browserSessions.close(session, "agent");
+      return this.browserSessions!.close(session, "agent");
     }
-    return this.browserSessions.command(session, params);
+    return this.browserSessions!.command(session, params);
   }
 
   async getOutput(handle: string, since = 0): Promise<JSONValue> {

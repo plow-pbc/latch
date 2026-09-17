@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
-import { DeviceAgent, HeadlessPolicy, PolicyDelegate, ResolvedBrowserRuntime } from "@domo/device-core";
+import { BROWSER_PLUGIN, DeviceAgent, HeadlessPolicy, PolicyDelegate, ResolvedBrowserRuntime } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer, RelayAuth, SKILL_FOOTER } from "@domo/mcp-server";
 import { callTool, parse, pollUntil, rpc } from "./client.js";
 
@@ -321,6 +321,16 @@ describe("browser tools (fake runtime)", () => {
     const denied = await callTool(server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT);
     expect(denied.isError).toBe(true);
     expect(JSON.stringify(denied.payload)).toContain("denied");
+  });
+
+  it("plow_browser_open is refused before any intent when the owner turned the browser off", async () => {
+    const { server, device } = makeServer();
+    device.setDisabledPlugins([BROWSER_PLUGIN]);
+    const { payload, isError } = await callTool(server, "plow_browser_open", { origins: ["example.com"], goal: "x" }, AGENT);
+    expect(isError).toBe(true);
+    expect(JSON.stringify(payload)).toMatch(/turned off on this Mac/);
+    // Pre-intent: nothing was asked, nothing recorded.
+    expect(device.audit.entries().some((e) => jv(e as JSONValue).get("event").str === "intent_received")).toBe(false);
   });
 
   /** Window mode of each session the owner's log recorded, oldest first. */

@@ -870,6 +870,11 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const origins = strings(a.get("origins").arr);
       if (origins.length === 0) throw new ToolError("missing 'origins'");
+      // Same chokepoint as a staged plugin's off switch: refused by name
+      // before an intent exists, so nobody is asked to approve a call this
+      // Mac was always going to refuse.
+      const refusal = ctx.device.browserRefusal();
+      if (refusal !== null) throw new ToolError(refusal);
       const capabilities: Capability[] = [{ kind: "browser", origins }];
       // The owner does not see the browser unless this session asks for a
       // window: say when one is coming in the line they read, and carry the

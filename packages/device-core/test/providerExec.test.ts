@@ -13,6 +13,7 @@ import path from "node:path";
 import { JSONValue, jv, makeIntent } from "@domo/protocol";
 
 import {
+  BROWSER_PLUGIN,
   DeviceAgent,
   HeadlessPolicy,
   impliesNetwork,
@@ -107,6 +108,20 @@ function device(minter: Minter | null, plugins: StagedPlugin[], home: string = t
     minter,
     plugins,
   );
+}
+
+/**
+ * A device with a browser runtime resolved — same shape deviceCore.test.ts's
+ * fingerprint-pinning test constructs, trimmed to what this file needs.
+ */
+function makeDeviceWithBrowser(): DeviceAgent {
+  return new DeviceAgent(tmp(), "Test Mac", new HeadlessPolicy({ intent: "allow_once" }), {
+    serverCommand: ["node", "/x/server.js"],
+    credentialBrokerCommand: null,
+    mergeCookiesCommand: ["node", "/x/mergeCookies.js"],
+    env: {},
+    executablePath: "/x/camoufox",
+  });
 }
 
 
@@ -1216,5 +1231,19 @@ describe("a plugin the owner turned off", () => {
     expect(advertised()).toBe("The owner's own notes.");
     expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
     expect(d.skills.skill(GOG_SKILL)?.body).toBe("Drive it this way.");
+  });
+
+  it("turning the browser off unpublishes camoufox-browsing and refuses a browser command", async () => {
+    const d = makeDeviceWithBrowser();
+    expect(d.skills.manifest().map((s) => s.name)).toContain("camoufox-browsing");
+    d.setDisabledPlugins([BROWSER_PLUGIN]);
+    expect(d.skills.manifest().map((s) => s.name)).not.toContain("camoufox-browsing");
+    expect(d.browserRefusal()).toBe("browser use is turned off on this Mac");
+    const r = jv(await d.browserCommand("any-session", { action: "url" }));
+    expect(r.get("status").str).toBe("error");
+    expect(r.get("error").str).toMatch(/turned off/);
+    d.setDisabledPlugins([]);
+    expect(d.skills.manifest().map((s) => s.name)).toContain("camoufox-browsing");
+    expect(d.browserRefusal()).toBeNull();
   });
 });
