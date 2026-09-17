@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseManifest, type PluginManifest } from "@domo/device-core";
-import { pluginRows, type PluginsInput } from "../src/pluginsModel.js";
+import { browserPluginRow, BROWSER_RUNTIME, pluginRows, SAFARI_JAVASCRIPT, type PluginsInput } from "../src/pluginsModel.js";
 
 const manifest = (requires: object, name = "wiki"): PluginManifest =>
   parseManifest(JSON.stringify({
@@ -71,5 +71,25 @@ describe("the shipped plugins", () => {
   ])("reads gog as $status with connected accounts $connected", ({ connected, status, unmet }) => {
     const [row] = pluginRows({ plugins: [{ manifest: shipped("gog"), enabled: true }], connectedAccounts: connected });
     expect(row).toMatchObject({ name: "gog", status, unmet });
+  });
+});
+
+describe("browserPluginRow", () => {
+  const base = { enabled: true, runtimePresent: true, safariJavaScript: true, description: "Browse websites…" };
+  it.each([
+    ["ready when the runtime is present and Safari allows JavaScript", base, "ready", []],
+    ["needs setup with an Enable button when Safari does not", { ...base, safariJavaScript: false }, "needs-setup", [{ id: SAFARI_JAVASCRIPT, action: "Enable in Safari" }]],
+    ["needs setup with no button when the runtime is missing", { ...base, runtimePresent: false }, "needs-setup", [{ id: BROWSER_RUNTIME, action: null }]],
+    ["off hides its requirements", { ...base, enabled: false, safariJavaScript: false }, "off", []],
+  ] as const)("is %s", (_what, input, status, unmet) => {
+    const row = browserPluginRow(input);
+    expect(row).toMatchObject({ name: "browser", title: "Browser use", kind: "Browser", status, unmet });
+  });
+
+  it("every manifest plugin row is a CLI titled by its name", () => {
+    // gogManifest() doesn't exist in this file; the local manifest() fixture
+    // helper builds the same shape parseManifest expects.
+    const [row] = pluginRows({ plugins: [{ manifest: manifest(none, "gog"), enabled: true }], connectedAccounts: [] });
+    expect(row).toMatchObject({ kind: "CLI", title: row!.name });
   });
 });
