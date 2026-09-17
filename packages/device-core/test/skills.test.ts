@@ -83,47 +83,31 @@ describe("SkillRegistry", () => {
     ["switching to a popup", /use_page/],
     ["typing a vault value", /fill_secret/],
     ["widening scope", /plow_browser_request/],
-    // The Safari fallback. Every regex below is anchored to the sentence that
-    // states the rule, not a bare token, so deleting the rule leaves the row red.
-    ["telling a hard block from a challenge", /a challenge has something to click or type.*a hard block does not/is],
-    ["not retrying the wall or substituting search", /neither a retry of the same URL.*nor a public web search/is],
-    ["opening the page in the owner's Safari", /tell application "Safari"/],
-    ["binding every later script to the window step 1 opened, by id", /returns the id of the window it opened.*addresses that window by that id/is],
+    // The Safari fallback: the contracts, not the wording. Each regex is
+    // anchored to the sentence or script line that states the rule, so
+    // deleting the rule leaves the row red; a phrasing edit does not.
+    ["telling a hard block from a challenge", /a challenge has something to click\s+or type.*a hard block\s+does not/is],
+    ["not retrying the wall or substituting search", /neither a retry of\s+the same URL.*nor a public web search/is],
+    ["the owner's one-time Safari setting", /Allow JavaScript from Apple Events.*one-time step, not a dead end/is],
+    ["not falling back to positional UI scripting", /Do not fall back to System Events UI scripting/],
+    ["step 1 handing the window id back", /return id of window 1/],
     ["a later script taking the window by that id", /window id \(\(item 1 of argv\) as integer\)/],
-    // Exact URL, or a fixed refusal: a prefix matched /account-other, a title
-    // matched another window, and an error that named the URL leaked it.
-    ["refusing unless the window shows exactly the expected URL", /if URL of current tab of win is not u then error "window is not on the expected URL"/],
-    ["step 1 returning the URL the page landed on, after the redirect settles", /delay 3\\n  return \{id of window 1, URL of current tab of window 1\}/],
-    ["what a refusal on the first read means", /still redirecting when step 1\s+returned its URL/is],
-    ["that nothing survives from one script to the next", /Nothing carries over between scripts.*same lookup lines/is],
-    ["the raise being called out to the owner", /reorders the owner's Safari windows,\s+so say so if they are at the Mac/is],
-    ["the JavaScript-from-Apple-Events error being expected", /Allow JavaScript from Apple Events.*not a dead end/is],
-    ["reading the page through the accessibility tree", /tell application "System Events" to tell process "Safari"/],
-    ["that the tree walk is slow and returns a handle", /entire contents.*pending handle/is],
-    ["AX roles being uppercase", /Roles are uppercase.*AXButton/is],
-    ["a label living in either of two attributes", /`title` OR `value of attribute "AXDescription"`/],
-    ["React fields needing real keystrokes", /keystroke.*not `set value`/is],
-    ["the first System Events use asking the owner", /Automation dialog that\s+asks the owner/is],
-    ["that an Accessibility refusal is not yet diagnosed", /not allowed assistive access.*'host_gate': 'none'/is],
+    ["refusing unless the window is on the expected origin", /if URL of current tab of win does not start with item 2 of argv then error "window is not on the expected origin"/],
+    ["the first Safari script asking the owner", /Automation dialog that asks the\s+owner/is],
     ["when to finally report the site as blocked", /only after Safari itself fails to load/i],
   ])("the built-in browsing skill documents %s", (_what, pattern) => {
     expect(BROWSING_SKILL.body).toMatch(pattern);
   });
 
-  // The old step 2 read `front document` / `front window`, so a tab the owner
-  // switched to between two script approvals was silently what got read.
-  // Every recipe now addresses the window step 1 opened, by id, and checks
-  // its URL first — this guards the class, not one call site.
-  it("the built-in browsing skill documents that nothing in the recipe reads whatever is in front", () => {
+  // The old recipe read `front document` / `front window`, then a window found
+  // by URL prefix, then one found by title, then System Events' positional
+  // window 1 — each a page the owner could have open elsewhere. Every script
+  // now addresses the window step 1 opened, by Safari's id, and Safari's own
+  // do JavaScript is the only read and act path — this guards the class.
+  it("the built-in browsing skill reads Safari only through its own scripting seam, by window id", () => {
     expect(BROWSING_SKILL.body).not.toMatch(/front (document|window)/);
-  });
-
-  // Both read paths check before AND after the capture — four copies of the
-  // one refusal line, so a copy deleted from either side of either read shows;
-  // a toMatch would stay green on the survivors.
-  it("the built-in browsing skill checks the URL before and after both reads", () => {
-    const refusal = /if URL of current tab of win is not u then error "window is not on the expected URL"/g;
-    expect(BROWSING_SKILL.body.match(refusal)).toHaveLength(4);
+    expect(BROWSING_SKILL.body).not.toMatch(/tell application "System Events"/);
+    expect(BROWSING_SKILL.body).not.toMatch(/entire contents/);
   });
 });
 

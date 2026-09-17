@@ -138,58 +138,47 @@ url, title, links, forms, tables, pages.
 ## A hard block: the owner's own Safari
 
 Some sites refuse this browser outright — "You have been blocked", "Access denied", a
-Cloudflare page that never finishes. Screenshot and look: a challenge has something to click or type (a CAPTCHA, "confirm you are human", a code prompt) and you complete it;
-a hard block does not, and it often arrives as a plain 200 with no \`failed_requests\`.
-Neither a retry of the same URL in this session, nor waiting, nor a public web search
-answers a question about the OWNER's own account ("did my review post?") — ${SAFARI_HARD_BLOCK_ROUTING}; the owner approves each script. Nothing here
-is origin-bound — the approval is the script's text and nothing else — so ask for the one
-URL the task is about, and a value the owner keeps (a code, a card number, a password) is
-not yours to lift out of the tree.
+Cloudflare page that never finishes. Screenshot and look: a challenge has something to click
+or type (a CAPTCHA, "confirm you are human", a code prompt) and you complete it; a hard block
+does not, and it often arrives as a plain 200 with no \`failed_requests\`. Neither a retry of
+the same URL in this session, nor waiting, nor a public web search answers a question about
+the OWNER's own account ("did my review post?") — ${SAFARI_HARD_BLOCK_ROUTING}; the owner
+approves each script. A script is bound to no origin by the approval — it is the script's
+text and nothing else — so every script below binds itself: it addresses only the window it
+opened, by id, and refuses unless that window is on the origin you name. A value the owner
+keeps (a code, a card number, a password) is not yours to read out of a page.
 
-1. **Open the page, and keep the window's id.** Pass the URL in \`args\`, never pasted into
-   the script; the script returns the id of the window it opened and the URL the page landed
-   on (a redirect settles here), and every later script addresses that window by that id —
-   never a page found by URL or title, which can match a page the owner has open elsewhere:
-   \`plow_run_applescript {app: "Safari", args: ["<url>"], script: 'on run argv\\ntell application "Safari"\\n  activate\\n  make new document with properties {URL:item 1 of argv}\\n  delay 3\\n  return {id of window 1, URL of current tab of window 1}\\nend tell\\nend run'}\`
-2. **Read it — that window, showing that URL, or nothing.** Pass the id and the landed URL
-   in \`args\`; the script refuses unless the window's current tab shows exactly that URL,
-   before it reads and again after — a page the owner navigated to meanwhile is never what
-   you get — and the refusal is a fixed message that names nothing, so nothing the window
-   shows instead reaches you either. Try \`do JavaScript\` first:
-   \`plow_run_applescript {app: "Safari", args: ["<id>", "<url>"], script: 'on run argv\\nset u to item 2 of argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  if URL of current tab of win is not u then error "window is not on the expected URL"\\n  set out to do JavaScript "document.body.innerText" in current tab of win\\n  if URL of current tab of win is not u then error "window is not on the expected URL"\\n  return out\\nend tell\\nend run'}\`
-   Expect it to fail with "You must enable 'Allow JavaScript from Apple Events'" — that
-   Safari Developer setting is off by default and the error is not a dead end. Fall back to
-   the accessibility tree, which needs no Safari setting; these scripts go to
-   \`plow_run_applescript\` as \`app: "System Events"\`. The same checks around the read, and
-   between them the script raises that window — which reorders the owner's Safari windows,
-   so say so if they are at the Mac — and walks the process's window 1, which is now the
-   one it raised:
-   \`on run argv\\nset u to item 2 of argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  if URL of current tab of win is not u then error "window is not on the expected URL"\\n  set index of win to 1\\nend tell\\ntell application "System Events" to tell process "Safari"\\n  set out to {}\\n  repeat with e in (entire contents of window 1)\\n    if role of e is "AXStaticText" then set end of out to value of e\\n  end repeat\\nend tell\\ntell application "Safari" to if URL of current tab of win is not u then error "window is not on the expected URL"\\nreturn out\\nend run\`
-   The walk of a content-heavy page takes a minute or more and comes back as a pending handle
-   — poll \`plow_get_result\` then \`plow_get_output\`; it is working, not failed.
-   A refusal on the very first read usually means the page was still redirecting when step 1
-   returned its URL three seconds in — open it again and use the URL that returns.
-3. **Act, when you must.** Roles are uppercase \`AXButton\` / \`AXTextField\` / \`AXStaticText\`
-   — the lowercase names in some dictionaries match nothing. A control's label is in
-   \`title\` OR \`value of attribute "AXDescription"\`; check both. Click the cookie banner's
-   own button before anything under it. A React-controlled field responds to \`keystroke\`,
-   not \`set value\` — \`click\` it, then \`keystroke\` the text, which is what its listeners
-   hear — and do not name a variable \`result\`, it is reserved. \`keystroke\` goes to
-   whatever is frontmost, so \`activate\` Safari in the same script just before you type —
-   that brings it to the front of the owner's screen, so if they are at the Mac, say so
-   before you type. Nothing carries over between scripts — each call runs its script
-   from scratch — so a script that acts starts with the same lookup lines as the read
-   (the window by id, the URL check before and after, the raise) and acts on the process's window 1 it just
-   raised, never on whatever window was in front. Verify the way you would in this browser:
-   read the URL, the title, and the confirmation text back out of that window's tree.
-4. **Consent.** The first System Events script raises a macOS Automation dialog that
-   asks the owner; the call sits 'running' with a diagnosis until they click. Leave it
-   running and tell them. System Events also needs this Mac's Accessibility grant
-   (Privacy & Security → Accessibility), and that refusal is not yet diagnosed: it comes
-   back 'completed' with a non-zero exit, the macOS "is not allowed assistive access"
-   (-1719) message and 'host_gate': 'none' — read \`plow_device_status\`'s Accessibility
-   row and ask the owner for the grant; it is not the script's own error. Report the site
-   as blocked only after Safari itself fails to load the page — not after a JavaScript read fails.
+Everything runs through Safari's own \`do JavaScript\`, which addresses a tab by Safari's
+window id and needs one setting the owner turns on ONCE: Safari → Settings → Advanced →
+"Show features for web developers", then Develop → "Allow JavaScript from Apple Events". It
+is off by default, so the first read fails with "You must enable 'Allow JavaScript from
+Apple Events'"; that is the owner's one-time step, not a dead end — ask them, then retry.
+Do not fall back to System Events UI scripting: it addresses windows by position, which the
+owner's next click can change under you, and macOS gives no way to tie one to the window
+you opened.
+
+1. **Open the page, and keep the window's id.** The URL rides in \`args\`, never pasted into
+   the script; the script returns the id of the window it opened, and every later script
+   addresses that window by that id — never a page found by URL or title, which can match a
+   page the owner has open elsewhere:
+   \`plow_run_applescript {app: "Safari", args: ["<url>"], script: 'on run argv\\ntell application "Safari"\\n  activate\\n  make new document with properties {URL:item 1 of argv}\\n  return id of window 1\\nend tell\\nend run'}\`
+   \`activate\` brings Safari to the front of the owner's screen; say so if they are at the Mac.
+2. **Read it — that window, on that origin, or nothing.** Pass the id and the origin as
+   \`"https://host/"\`, slash included; the script refuses with a fixed message unless the
+   window's current tab is on it, so a page the owner navigated that window to is never what
+   you get, and a redirect within the site still passes:
+   \`plow_run_applescript {app: "Safari", args: ["<id>", "https://www.example.com/"], script: 'on run argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  if URL of current tab of win does not start with item 2 of argv then error "window is not on the expected origin"\\n  do JavaScript "document.body.innerText" in current tab of win\\nend tell\\nend run'}\`
+   The same script with another expression reads anything else: \`document.title\`,
+   \`location.pathname\`, a selector's \`innerText\`.
+3. **Act, when you must — the same script, a different expression.** Click with
+   \`document.querySelector("<selector>").click()\`. A React-controlled field ignores a plain
+   \`value =\` — set it through the native setter and fire \`input\`:
+   \`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, "<text>"); el.dispatchEvent(new Event("input", {bubbles: true}))\`.
+   Dismiss a cookie banner's own button before anything under it. Verify the way you would
+   in this browser: read \`location.href\`, the title, and the confirmation text back.
+4. **Consent.** The first Safari script raises a macOS Automation dialog that asks the
+   owner; the call sits 'running' with a diagnosis until they click. Leave it running and
+   tell them. Report the site as blocked only after Safari itself fails to load the page — not after a JavaScript read fails.
 
 ## Credentials (logins, cards, identities) — the value is never handed back to you
 
