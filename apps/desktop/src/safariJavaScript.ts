@@ -11,7 +11,7 @@
  * on macOS 14.5: the JavaScript pref takes effect without it. Pure over a
  * runner.
  */
-export type Runner = (argv: string[]) => Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
+export type Runner = (argv: string[]) => Promise<{ exitCode: number | null; stdout: string }>;
 
 const DEFAULTS = "/usr/bin/defaults";
 const DOMAIN = "com.apple.Safari";
@@ -25,7 +25,7 @@ async function safariRunning(run: Runner): Promise<boolean> {
   return (await run(["/usr/bin/pgrep", "-x", "Safari"])).exitCode === 0;
 }
 
-export async function enableSafariJavaScript(run: Runner): Promise<{ relaunched: boolean }> {
+export async function enableSafariJavaScript(run: Runner): Promise<void> {
   const wasRunning = await safariRunning(run);
   if (wasRunning) {
     const quit = await run(["/usr/bin/osascript", "-e", 'quit app "Safari"']);
@@ -49,5 +49,4 @@ export async function enableSafariJavaScript(run: Runner): Promise<{ relaunched:
     }
   }
   if (writeFailed) throw new Error("Safari's settings could not be written — this app needs Full Disk Access (Settings › Permissions)");
-  return { relaunched: wasRunning };
 }

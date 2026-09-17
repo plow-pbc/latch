@@ -93,9 +93,9 @@ contextBridge.exposeInMainWorld("domo", {
   // `setEnabled` is the owner's off switch and answers with the fresh state.
   pluginsGet: () => ipcRenderer.invoke("plugins:get"),
   pluginsSetEnabled: (name: string, on: boolean) => ipcRenderer.invoke("plugins:setEnabled", name, on),
-  // A requirement row's one action — today, enabling Safari's JavaScript
-  // setting for the Browser row; other rows still use connectorsConnect.
-  pluginsAct: (name: string, id: string) => ipcRenderer.invoke("plugins:act", name, id),
+  // The Browser row's one action: enable Safari's JavaScript setting. Other
+  // rows still use connectorsConnect.
+  pluginsEnableSafari: () => ipcRenderer.invoke("plugins:enableSafari"),
   // A block by this Mac lands the tray item and the notification on its
   // switch (Settings), or on the Audit tab's Blocked view when it named none.
   onShowCapabilities: (cb: () => void) => ipcRenderer.on("ui:showCapabilities", cb),

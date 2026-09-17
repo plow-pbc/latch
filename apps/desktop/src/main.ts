@@ -63,7 +63,7 @@ import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
-import { browserPluginRow, pluginRows, SAFARI_JAVASCRIPT } from "./pluginsModel.js";
+import { browserPluginRow, pluginRows } from "./pluginsModel.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
@@ -1580,11 +1580,11 @@ ipcMain.handle("capabilities:bannerSeen", async () => {
  *  and cannot write into Safari's container. */
 const unsandboxedRunner: Runner = async (argv) => {
   try {
-    const { stdout, stderr } = await promisify(execFile)(argv[0]!, argv.slice(1), { timeout: 30_000 });
-    return { exitCode: 0, stdout, stderr };
+    const { stdout } = await promisify(execFile)(argv[0]!, argv.slice(1), { timeout: 30_000 });
+    return { exitCode: 0, stdout };
   } catch (e) {
-    const err = e as { code?: unknown; stdout?: string; stderr?: string };
-    return { exitCode: typeof err.code === "number" ? err.code : 1, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
+    const err = e as { code?: unknown; stdout?: string };
+    return { exitCode: typeof err.code === "number" ? err.code : 1, stdout: err.stdout ?? "" };
   }
 };
 
@@ -1604,7 +1604,7 @@ async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; erro
     enabled: !disabled.has(BROWSER_PLUGIN),
     runtimePresent: device !== null && device.browserSessions !== null,
     safariJavaScript: process.platform === "darwin" ? await safariJavaScriptEnabled(unsandboxedRunner) : false,
-    description: BROWSING_SKILL.description,
+    description: device?.skills.skill(BROWSING_SKILL.name)?.description ?? BROWSING_SKILL.description,
   }));
   return { rows, error: null };
 }
@@ -1621,18 +1621,16 @@ ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
     if (on) disabled.delete(name);
     else disabled.add(name);
     saveSettings(home, { ...settings, disabledPlugins: [...disabled] });
-    device?.setDisabledPlugins([...disabled]);
+    await device?.setDisabledPlugins([...disabled]);
   }
   return pluginsNow();
 });
 
-/** A requirement row's one action. Only the Browser row's Safari switch is
- *  performed here; an account row's button keeps the existing
- *  "connectors:connect" flow, so any other pair is nothing to do. */
-ipcMain.handle("plugins:act", async (_e, rawName: unknown, rawId: unknown) => {
-  const name = typeof rawName === "string" ? rawName : "";
-  const id = typeof rawId === "string" ? rawId : "";
-  if (name !== BROWSER_PLUGIN || id !== SAFARI_JAVASCRIPT) return { ...(await pluginsNow()), error: "nothing to do" };
+/** The Browser row's one action: enable Safari's "Allow JavaScript from
+ *  Apple Events". An account row's button keeps the existing
+ *  "connectors:connect" flow instead — there is nothing else for this one
+ *  to do. */
+ipcMain.handle("plugins:enableSafari", async () => {
   if (!(await probeFullDiskAccess())) {
     return {
       ...(await pluginsNow()),

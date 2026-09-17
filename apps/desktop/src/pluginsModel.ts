@@ -5,7 +5,7 @@
  * the tab is a list of what is stopping the agent, not an inventory (that is
  * Settings' Permissions section).
  */
-import type { PluginManifest } from "@domo/device-core";
+import { BROWSER_PLUGIN, type PluginManifest } from "@domo/device-core";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
@@ -90,7 +90,7 @@ export function browserPluginRow(input: {
   }
   const status: PluginStatus = !input.enabled ? "off" : unmet.length > 0 ? "needs-setup" : "ready";
   return {
-    name: "browser",
+    name: BROWSER_PLUGIN,
     title: "Browser use",
     kind: "Browser",
     description: input.description,

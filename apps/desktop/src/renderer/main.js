@@ -2614,7 +2614,7 @@ async function renderPlugins() {
               // A failed write's error line is drawn BEFORE throwing —
               // busy()'s catch only resets this button, which draw() has by
               // then replaced; success leaves the redraw to busy()'s reload.
-              const v = await window.domo.pluginsAct(r.name, u.id);
+              const v = await window.domo.pluginsEnableSafari();
               if (v.error) {
                 draw(v);
                 throw new Error(v.error);
@@ -2664,9 +2664,7 @@ async function renderPlugins() {
   };
 
   const draw = (state) => {
-    const rows = state.rows.length
-      ? state.rows.map(pluginRow)
-      : [el("p", { class: "faint", text: "No plugins are installed on this Mac." })];
+    const rows = state.rows.map(pluginRow);
     panel.replaceChildren(group(
       "Plugins",
       "The tools agents can run on this Mac. Turning one off unpublishes its skill and refuses its commands.",

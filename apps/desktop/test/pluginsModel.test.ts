@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseManifest, type PluginManifest } from "@domo/device-core";
+import { BROWSER_PLUGIN, parseManifest, type PluginManifest } from "@domo/device-core";
 import { browserPluginRow, BROWSER_RUNTIME, pluginRows, SAFARI_JAVASCRIPT, type PluginsInput } from "../src/pluginsModel.js";
 
 const manifest = (requires: object, name = "wiki"): PluginManifest =>
@@ -83,7 +83,7 @@ describe("browserPluginRow", () => {
     ["off hides its requirements", { ...base, enabled: false, safariJavaScript: false }, "off", []],
   ] as const)("is %s", (_what, input, status, unmet) => {
     const row = browserPluginRow(input);
-    expect(row).toMatchObject({ name: "browser", title: "Browser use", kind: "Browser", status });
+    expect(row).toMatchObject({ name: BROWSER_PLUGIN, title: "Browser use", kind: "Browser", status });
     // The words the owner reads, exactly — a swap of the two would otherwise pass.
     expect(row.unmet).toEqual(unmet);
   });
