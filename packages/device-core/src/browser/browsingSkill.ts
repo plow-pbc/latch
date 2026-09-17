@@ -156,7 +156,7 @@ not yours to lift out of the tree.
    URL, and names what it shows instead, so after a redirect you retry with the URL the
    page landed on rather than reading whatever the owner navigated to. Try
    \`do JavaScript\` first:
-   \`plow_run_applescript {app: "Safari", args: ["<id>", "<url>"], script: 'on run argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  set actual to URL of current tab of win\\n  if actual is not item 2 of argv then error "window shows " & actual & ", not " & item 2 of argv\\n  do JavaScript "document.body.innerText" in current tab of win\\nend tell\\nend run'}\`
+   \`plow_run_applescript {app: "Safari", args: ["<id>", "<url>"], script: 'on run argv\\nset u to item 2 of argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  set actual to URL of current tab of win\\n  if actual is not u then error "window shows " & actual & ", not " & u\\n  do JavaScript "document.body.innerText" in current tab of win\\nend tell\\nend run'}\`
    Expect it to fail with "You must enable 'Allow JavaScript from Apple Events'" — that
    Safari Developer setting is off by default and the error is not a dead end. Fall back to
    the accessibility tree, which needs no Safari setting; these scripts go to

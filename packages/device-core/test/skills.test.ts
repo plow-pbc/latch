@@ -89,6 +89,8 @@ describe("SkillRegistry", () => {
     ["not retrying the wall or substituting search", /neither a retry of the same URL.*nor a public web search/is],
     ["opening the page in the owner's Safari", /tell application "Safari"/],
     ["binding every later script to the window step 1 opened, by id", /returns the id of the window it opened.*addresses that window by that id/is],
+    ["step 1 handing the window id back", /return id of window 1/],
+    ["a later script taking the window by that id", /window id \(\(item 1 of argv\) as integer\)/],
     // Exact URL, or a refusal that names what the window shows: a prefix
     // matched /account-other, and a title matched another window.
     ["refusing unless the window shows exactly the expected URL", /if actual is not u then error "window shows " & actual & ", not " & u/],
@@ -113,6 +115,13 @@ describe("SkillRegistry", () => {
   // its URL first — this guards the class, not one call site.
   it("the built-in browsing skill documents that nothing in the recipe reads whatever is in front", () => {
     expect(BROWSING_SKILL.body).not.toMatch(/front (document|window)/);
+  });
+
+  // Both read paths carry the one refusal line, so a copy deleted from either
+  // shows — a toMatch would stay green on the survivor.
+  it("the built-in browsing skill refuses a URL mismatch in both read paths", () => {
+    const refusal = /if actual is not u then error "window shows " & actual & ", not " & u/g;
+    expect(BROWSING_SKILL.body.match(refusal)).toHaveLength(2);
   });
 });
 
