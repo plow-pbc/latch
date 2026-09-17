@@ -63,7 +63,6 @@ const ACTIVE_AGENT = {
   name: "Household helper",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
   canMessage: true,
-  canRetry: true,
   threads: [{ uid: "chat_groceries", label: CHAT_TITLE }],
   status: "running",
   failureReason: null,
@@ -74,7 +73,6 @@ const PROVISIONING_AGENT = {
   name: "Trip planner",
   line: { uid: "lin_trip", label: "+1 628-555-0144" },
   canMessage: true,
-  canRetry: true,
   threads: [{ uid: "chat_trip", label: TRIP_CHAT_TITLE }],
   status: "provisioning",
   failureReason: null,
@@ -84,7 +82,6 @@ const NO_LINE_AGENT = {
   ...ACTIVE_AGENT,
   line: null,
   canMessage: false,
-  canRetry: false,
   threads: [],
 };
 const NO_NUMBER_AGENT = {
@@ -139,18 +136,11 @@ const ROSTER = {
 const CLOUD_EMPTY = {
   cloudAgents: [],
   cloudProviders: [
-    { id: "exe:hermes", name: "Hermes" },
-    { id: "exe:life", name: "Life" },
+    { id: "exe:hermes", name: "Hermes", phrases: ["Start Hermes"] },
+    { id: "exe:life", name: "Life", phrases: ["Start Life"] },
   ],
   cloudProvidersError: null,
   cloudFreeLines: [],
-  cloudLineFlow: {
-    phase: "idle",
-    activation: null,
-    message: null,
-    completedAgentId: null,
-    retryNewLine: false,
-  },
   cloudAgentsError: null,
   cloudChatsError: null,
   cloudChatsNeedReactivation: false,
@@ -183,7 +173,6 @@ const RULES = [
 ];
 let cloudFixture = CLOUD_EMPTY;
 let rosterFixture = EMPTY_ROSTER;
-let exhaustNextCloudActivation = false;
 const cloudRemovals = [];
 let connectorsFixture = CONNECTORS_EMPTY;
 
@@ -232,114 +221,8 @@ async function setUp() {
   const state = () => ({ ...connect.state(), roster: rosterFixture, ...cloudFixture });
   ipcMain.handle("connect:get", async () => state());
   ipcMain.handle("cloud:refresh", async () => state());
-  ipcMain.handle("cloud:cancelLineFlow", async () => {
-    cloudFixture = {
-      ...cloudFixture,
-      cloudLineFlow: { ...CLOUD_EMPTY.cloudLineFlow },
-    };
-    return state();
-  });
-  ipcMain.handle("cloud:create", async (_e, input) => {
-    if (input?.lineUid === "lin_error") {
-      cloudFixture = {
-        ...cloudFixture,
-        cloudLineFlow: {
-          phase: "error",
-          activation: null,
-          message: "Plow returned 422.",
-          completedAgentId: null,
-          retryNewLine: false,
-        },
-      };
-    } else if (input?.lineUid === null && exhaustNextCloudActivation) {
-      exhaustNextCloudActivation = false;
-      cloudFixture = {
-        ...cloudFixture,
-        cloudLineFlow: {
-          phase: "error",
-          activation: null,
-          message: "No numbers are available right now. Try again later.",
-          completedAgentId: null,
-          retryNewLine: false,
-          terminal: "no_numbers",
-        },
-      };
-    } else if (input?.lineUid === null) {
-      cloudFixture = {
-        ...cloudFixture,
-        cloudLineFlow: {
-          phase: "waiting",
-          activation: {
-            displayCode: "LINE42",
-            sendTo: "+1 555-123-0000",
-            smsBody: "Plow Activate: LINE42",
-          },
-          message: null,
-          completedAgentId: null,
-          retryNewLine: false,
-        },
-      };
-    } else if (typeof input?.lineUid === "string") {
-      const created = {
-        agentId: "cag_created",
-        name: input.name || "Cloud agent",
-        line: { uid: input.lineUid, label: "Ash · +1 415-555-0199" },
-        canMessage: true,
-        canRetry: true,
-        threads: [],
-        status: "provisioning",
-        failureReason: null,
-        createdAt: new Date().toISOString(),
-      };
-      cloudFixture = {
-        ...cloudFixture,
-        cloudAgents: [created, ...cloudFixture.cloudAgents],
-        cloudFreeLines: [],
-        cloudLineFlow: {
-          ...CLOUD_EMPTY.cloudLineFlow,
-          completedAgentId: created.agentId,
-        },
-      };
-    }
-    return state();
-  });
-  ipcMain.handle("cloud:retryLineFlow", async () => state());
-  ipcMain.handle("cloud:retryFailed", async () => state());
-  ipcMain.handle("cloud:changeLine", async (_e, input) => {
-    if (input?.lineUid === null) {
-      cloudFixture = {
-        ...cloudFixture,
-        cloudLineFlow: {
-          phase: "waiting",
-          activation: {
-            displayCode: "MOVE42",
-            sendTo: "+1 555-123-0000",
-            smsBody: "Plow Activate: MOVE42",
-          },
-          message: null,
-          completedAgentId: null,
-          retryNewLine: false,
-        },
-      };
-    } else if (typeof input?.lineUid === "string") {
-      cloudFixture = {
-        ...cloudFixture,
-        cloudAgents: cloudFixture.cloudAgents.map((agent) => agent.agentId === input.agentId
-          ? {
-              ...agent,
-              line: { uid: input.lineUid, label: "Ash · +1 415-555-0199" },
-              threads: [],
-            }
-          : agent),
-        cloudFreeLines: [],
-        cloudLineFlow: {
-          ...CLOUD_EMPTY.cloudLineFlow,
-          completedAgentId: input.agentId,
-        },
-      };
-    }
-    return state();
-  });
+  ipcMain.handle("cloud:newAgentMessages", async () => true);
+  ipcMain.handle("cloud:changeLine", async () => state());
   ipcMain.handle("cloud:openMessages", async () => true);
   ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
@@ -542,250 +425,6 @@ const SCREENS = [
     ],
   },
   {
-    name: "cloud-create-picker",
-    cloud: {
-      ...CLOUD_READY,
-      cloudFreeLines: [
-        { uid: "lin_ash", label: "Ash · +1 415-555-0199" },
-        { uid: "lin_trip", label: "+1 628-555-0144" },
-      ],
-    },
-    prepare: async (win) => {
-      await clickText(win, "New agent", 0);
-      await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
-        "the New agent picker");
-      const initial = await win.webContents.executeJavaScript(`(() => {
-        const modal = document.querySelector(".cloud-modal");
-        const provider = modal.querySelector('select[aria-label="Agent type"]');
-        const line = modal.querySelector('select[aria-label="Line"]');
-        const submit = [...modal.querySelectorAll("button")]
-          .find((button) => button.textContent.trim() === "Create agent");
-        const fields = [...modal.querySelectorAll(".field")];
-        provider.value = "exe:life";
-        return {
-          options: [...provider.options]
-            .map((option) => option.textContent.trim() + ":" + option.value),
-          lines: [...line.options]
-            .map((option) => option.textContent.trim() + ":" + option.value),
-          selectedLine: line.value,
-          disabled: submit.disabled,
-          fieldGaps: fields.slice(1).map((field, index) =>
-            Math.round(field.getBoundingClientRect().top -
-              fields[index].getBoundingClientRect().bottom)),
-          labelGaps: fields.map((field) => Math.round(
-            field.querySelector("input, select").getBoundingClientRect().top -
-              field.querySelector("label").getBoundingClientRect().bottom,
-          )),
-        };
-      })()`);
-      if (
-        initial.options.join("|") !== "Hermes:exe:hermes|Life:exe:life" ||
-        initial.lines.join("|") !==
-          "Choose a line…:|Ash · +1 415-555-0199:lin_ash|+1 628-555-0144:lin_trip|New line:__new_line__" ||
-        initial.selectedLine !== "" || !initial.disabled ||
-        initial.fieldGaps.join("|") !== "14|14" ||
-        !initial.labelGaps.every((gap) => gap === initial.labelGaps[0] && gap >= 4)
-      ) {
-        throw new Error(`New agent form layout or defaults are wrong: ${JSON.stringify(initial)}`);
-      }
-    },
-    expect: [
-      "New agent", "Name (optional)", "Agent type", "Life", "Line",
-      "Choose a line…", "Ash · +1 415-555-0199", "+1 628-555-0144",
-      "New line", "Cancel", "Create agent",
-    ],
-  },
-  {
-    name: "cloud-create-code",
-    cloud: {
-      ...CLOUD_READY,
-      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
-    },
-    prepare: async (win) => {
-      await clickText(win, "New agent", 0);
-      await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
-        "the New agent picker");
-      await win.webContents.executeJavaScript(`(() => {
-        const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-        line.value = line.options[line.options.length - 1].value;
-        line.dispatchEvent(new Event("change"));
-      })()`);
-      await clickText(win, "Create agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
-        "the New line activation code");
-    },
-    expect: [
-      "New line", "Text this code to +1 555-123-0000 from your phone.",
-      "LINE42", "Plow Activate: LINE42", "Copy", "Cancel", "Open Messages…",
-    ],
-  },
-  {
-    name: "cloud-create-existing-result",
-    cloud: {
-      ...CLOUD_READY,
-      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
-    },
-    prepare: async (win) => {
-      await clickText(win, "New agent", 0);
-      await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
-        "the existing-line New agent picker");
-      await win.webContents.executeJavaScript(`(() => {
-        document.querySelector('.cloud-modal input[aria-label="Agent name"]').value = "New helper";
-        document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:hermes";
-        const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-        line.value = "lin_ash";
-        line.dispatchEvent(new Event("change"));
-      })()`);
-      await clickText(win, "Create agent", 0);
-      await waitFor(win, `!document.querySelector(".cloud-modal")`,
-        "the existing-line create modal to close");
-    },
-    expect: ["Agents", "New helper", "Ash · +1 415-555-0199", "Setting up…", "Created today"],
-  },
-  {
-    name: "cloud-code-confirmed",
-    cloud: {
-      ...CLOUD_READY,
-      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
-    },
-    prepare: async (win) => {
-      await clickText(win, "New agent", 0);
-      await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
-        "the confirmed-code New agent picker");
-      await win.webContents.executeJavaScript(`(() => {
-        const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-        line.value = line.options[line.options.length - 1].value;
-        line.dispatchEvent(new Event("change"));
-      })()`);
-      await clickText(win, "Create agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
-        "the confirmed-code activation screen");
-      const created = {
-        agentId: "cag_confirmed",
-        name: "Cloud agent",
-        line: { uid: "lin_new", label: "+1 415-555-0999" },
-        canMessage: true,
-        canRetry: true,
-        threads: [],
-        status: "provisioning",
-        failureReason: null,
-        createdAt: new Date().toISOString(),
-      };
-      cloudFixture = {
-        ...cloudFixture,
-        cloudAgents: [created],
-        cloudFreeLines: [],
-        cloudLineFlow: {
-          ...CLOUD_EMPTY.cloudLineFlow,
-          completedAgentId: created.agentId,
-        },
-      };
-      win.webContents.send("connect:changed");
-      await waitFor(win, `document.querySelector(".cloud-modal")?.textContent
-        .includes("Code confirmed")`, "the Code confirmed state");
-      const buttons = await win.webContents.executeJavaScript(
-        `document.querySelectorAll(".cloud-modal button").length`,
-      );
-      if (buttons !== 0) throw new Error("Code confirmed exposed a manual acknowledgement");
-    },
-    expect: ["New agent", "Code confirmed", "Setting up your agent…"],
-  },
-  {
-    name: "cloud-no-numbers",
-    cloud: { ...CLOUD_READY, cloudFreeLines: [] },
-    prepare: async (win) => {
-      exhaustNextCloudActivation = true;
-      await clickText(win, "New agent", 0);
-      await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
-        "the no-free-lines New agent picker");
-      const picker = await win.webContents.executeJavaScript(`(() => {
-        const modal = document.querySelector(".cloud-modal");
-        const line = modal.querySelector('select[aria-label="Line"]');
-        const submit = [...modal.querySelectorAll("button")]
-          .find((button) => button.textContent.trim() === "Create agent");
-        return {
-          options: [...line.options].map((option) => option.textContent.trim()),
-          value: line.value,
-          enabled: !submit.disabled,
-        };
-      })()`);
-      if (
-        picker.options.join("|") !== "Choose a line…|New line" ||
-        picker.value !== "" || picker.enabled
-      ) {
-        throw new Error(`no-free-lines dropdown is wrong: ${JSON.stringify(picker)}`);
-      }
-      await win.webContents.executeJavaScript(`(() => {
-        const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-        line.value = line.options[line.options.length - 1].value;
-        line.dispatchEvent(new Event("change"));
-      })()`);
-      await clickText(win, "Create agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal")?.textContent
-        .includes("No numbers are available right now. Try again later.")`,
-        "the no-numbers terminal state");
-      const buttons = await win.webContents.executeJavaScript(
-        `[...document.querySelectorAll(".cloud-modal button")]
-          .map((button) => button.textContent.trim())`,
-      );
-      if (buttons.join("|") !== "Close") {
-        throw new Error(`no-numbers state exposed retry controls: ${buttons.join("|")}`);
-      }
-    },
-    expect: ["New agent", "No numbers are available right now. Try again later.", "Close"],
-  },
-  {
-    name: "cloud-create-error",
-    cloud: {
-      ...CLOUD_READY,
-      cloudFreeLines: [{ uid: "lin_error", label: "Error line" }],
-    },
-    prepare: async (win) => {
-      await clickText(win, "New agent", 0);
-      await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
-        "the create-error picker");
-      await win.webContents.executeJavaScript(`(() => {
-        const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-        line.value = "lin_error";
-        line.dispatchEvent(new Event("change"));
-      })()`);
-      await clickText(win, "Create agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
-        .includes("wasn't created")`, "the create error card");
-    },
-    expect: [
-      "The agent wasn't created", "Plow couldn't complete that request. Try again.",
-      "Cancel", "Try again",
-    ],
-  },
-  {
-    name: "cloud-lines-unknown",
-    cloud: {
-      ...CLOUD_READY,
-      cloudAgents: [ACTIVE_AGENT],
-      cloudFreeLines: [],
-      cloudChatsError: "Plow returned 503.",
-      cloudLinesLoaded: false,
-      cloudChatsLoaded: false,
-    },
-    prepare: async (win) => {
-      await clickText(win, "New agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")
-        ?.textContent.trim() === "Lines could not be loaded"`, "the unknown-lines picker");
-      const buttons = await win.webContents.executeJavaScript(
-        `[...document.querySelectorAll(".cloud-modal button")]
-          .map((button) => button.textContent.trim())`,
-      );
-      if (buttons.join("|") !== "Cancel") {
-        throw new Error(`unknown chats exposed a line action: ${buttons.join("|")}`);
-      }
-    },
-    expect: [
-      "New agent", "Lines could not be loaded",
-      "Plow couldn't complete that request. Try again.", "Cancel",
-    ],
-  },
-  {
     name: "cloud-detail",
     roster: { ...ROSTER, mcp: [], other: [] },
     cloud: { ...CLOUD_READY, cloudAgents: [ACTIVE_AGENT] },
@@ -824,7 +463,6 @@ const SCREENS = [
       cloudAgents: [{
         ...ACTIVE_AGENT,
         status: "failed",
-        canRetry: false,
         failureReason: "Set up failed",
       }],
     },
@@ -848,104 +486,6 @@ const SCREENS = [
       }
     },
     expect: ["Household helper", "Failed · Set up failed", "Close", "Message", "Delete agent"],
-  },
-  {
-    name: "cloud-change-line-picker",
-    cloud: {
-      ...CLOUD_READY,
-      cloudAgents: [ACTIVE_AGENT],
-      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
-    },
-    prepare: async (win) => {
-      await win.webContents.executeJavaScript(
-        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
-      );
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
-        "the line agent detail");
-      await clickText(win, "Change line", 0);
-      await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
-        "the Change line picker");
-      const picker = await win.webContents.executeJavaScript(`(() => {
-        const modal = document.querySelector(".cloud-modal");
-        const line = modal.querySelector('select[aria-label="Line"]');
-        const submit = [...modal.querySelectorAll("button")]
-          .find((button) => button.textContent.trim() === "Change line");
-        return {
-          options: [...line.options]
-            .map((option) => option.textContent.trim() + ":" + option.value),
-          value: line.value,
-          enabled: !submit.disabled,
-        };
-      })()`);
-      if (
-        picker.options.join("|") !==
-          "Choose a line…:|Ash · +1 415-555-0199:lin_ash|New line:__new_line__" ||
-        picker.value !== "" || picker.enabled
-      ) {
-        throw new Error("Change line dropdown does not expose the expected defaults");
-      }
-    },
-    expect: [
-      "Change line", "The agent keeps its name and memory and moves to the new number.",
-      "Line", "Choose a line…", "Ash · +1 415-555-0199", "New line", "Cancel", "Change line",
-    ],
-  },
-  {
-    name: "cloud-change-line-code",
-    cloud: {
-      ...CLOUD_READY,
-      cloudAgents: [ACTIVE_AGENT],
-      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
-    },
-    prepare: async (win) => {
-      await win.webContents.executeJavaScript(
-        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
-      );
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
-        "the line agent detail");
-      await clickText(win, "Change line", 0);
-      await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
-        "the Change line picker");
-      await win.webContents.executeJavaScript(`(() => {
-        const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-        line.value = line.options[line.options.length - 1].value;
-        line.dispatchEvent(new Event("change"));
-      })()`);
-      await clickText(win, "Change line", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
-        "the Change line activation code");
-    },
-    expect: [
-      "New line", "Text this code to +1 555-123-0000 from your phone.",
-      "MOVE42", "Plow Activate: MOVE42", "Copy", "Cancel", "Open Messages…",
-    ],
-  },
-  {
-    name: "cloud-change-line-result",
-    cloud: {
-      ...CLOUD_READY,
-      cloudAgents: [ACTIVE_AGENT],
-      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
-    },
-    prepare: async (win) => {
-      await win.webContents.executeJavaScript(
-        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
-      );
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
-        "the line agent detail");
-      await clickText(win, "Change line", 0);
-      await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
-        "the Change line picker");
-      await win.webContents.executeJavaScript(`(() => {
-        const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-        line.value = "lin_ash";
-        line.dispatchEvent(new Event("change"));
-      })()`);
-      await clickText(win, "Change line", 0);
-      await waitFor(win, `!document.querySelector(".cloud-modal")`,
-        "the changed agent roster");
-    },
-    expect: ["Household helper", "Ash · +1 415-555-0199", "Ready"],
   },
   {
     name: "cloud-chat-loading-detail",
@@ -1002,7 +542,7 @@ const SCREENS = [
     },
     expect: [
       "Delete Household helper?",
-      "The agent will stop reading and replying, and your conversations on this line may be removed. To use an agent again, you’ll need to activate again and may get a different number.",
+      "The agent will stop reading and replying, and your conversations on this line may be removed. To get another agent, use New agent to send a setup text.",
       "Cancel", "Delete agent",
     ],
     after: async (win) => {

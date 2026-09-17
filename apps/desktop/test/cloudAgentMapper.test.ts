@@ -23,7 +23,6 @@ describe("cloud-agent pure mappings", () => {
     const row = toCloudAgentDisplayRow(agent(), {
       line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
       canMessage: true,
-      canRetry: true,
       threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
 
@@ -31,7 +30,6 @@ describe("cloud-agent pure mappings", () => {
       agentId: "agent_stable",
       line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
       canMessage: true,
-      canRetry: true,
       threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
     expect(row).not.toHaveProperty("credential");

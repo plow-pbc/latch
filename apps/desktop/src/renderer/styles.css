@@ -882,19 +882,10 @@ pre.script {
 .cloud-callout .btn { margin-top: 10px; }
 .cloud-error { border-color: var(--red-bd); background: var(--red-bg); }
 .cloud-error .cloud-callout-title { color: var(--red-fg); }
+.cloud-new-agent .text { width: auto; }
+.cloud-new-agent .btn { white-space: nowrap; }
 .cloud-modal-actions { margin-top: 18px; }
 .cloud-modal .field + .field { margin-top: 14px; }
-.cloud-agent-name { margin-top: 0; }
-.cloud-agent-line { margin-top: 14px; }
-.cloud-confirmed {
-  margin-top: 18px; color: var(--green-fg); font-size: 16px; font-weight: 600;
-}
-.cloud-activation-code {
-  margin: 14px 0; padding: 14px;
-  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  background: var(--bg); font-size: 24px; font-weight: 600;
-  letter-spacing: 0.12em; text-align: center;
-}
 .cloud-detail-meta {
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
   margin-top: 14px;

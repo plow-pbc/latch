@@ -13,11 +13,7 @@ const snapshot = source.statements.find((node) =>
 )!;
 
 it.each([
-  ["cloud:create", "create"],
   ["cloud:changeLine", "move"],
-  ["cloud:retryLineFlow", "create"],
-  ["cloud:retryLineFlow", "move"],
-  ["cloud:retryFailed", "create"],
 ] as const)("%s returns current free lines after %s", async (channel, action) => {
   const registration = source.statements.find((node) =>
     ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
@@ -44,10 +40,8 @@ it.each([
   let handler!: (...args: unknown[]) => Promise<{ cloudFreeLines: { uid: string }[] }>;
   vm.runInNewContext(compiled, {
     ipcMain: { handle: (_channel: string, fn: typeof handler) => { handler = fn; } },
-    agentToken: null,
-    requireAgentTokenSaved: () => {},
     cloudAgents: {
-      create: mutate, changeLine: mutate, retryLineFlow: mutate, retryFailed: mutate,
+      changeLine: mutate,
       refresh: async () => { await setImmediate(); cachedLines = lines; },
       state: () => ({ cloudFreeLines: cachedLines.filter((line) => line.agentUid === null) }),
     },
@@ -57,8 +51,7 @@ it.each([
       state: () => ({}),
     },
   });
-  const input = channel === "cloud:retryFailed" ? "agent"
-    : { name: "Agent", provider: "local", agentId: "agent-old", lineUid: "line-new" };
+  const input = { name: "Agent", provider: "local", agentId: "agent-old", lineUid: "line-new" };
   const result = await handler({}, input, "line-new");
   expect(result.cloudFreeLines.map((line) => line.uid)).toEqual(action === "move" ? ["line-old"] : []);
 });
@@ -81,8 +74,6 @@ it("connect:create refreshes the roster, so the new credential is listed and rev
   let handler!: (...args: unknown[]) => Promise<{ roster: unknown }>;
   vm.runInNewContext(compiled, {
     ipcMain: { handle: (_channel: string, fn: typeof handler) => { handler = fn; } },
-    agentToken: null,
-    requireAgentTokenSaved: () => {},
     cloudAgents: {
       refresh: async () => { throw new Error("A mint must not re-read the cloud agents"); },
       state: () => ({ cloudFreeLines: [] }),

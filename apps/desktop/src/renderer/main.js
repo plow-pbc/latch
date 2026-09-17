@@ -20,7 +20,6 @@ const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
-const NEW_LINE_VALUE = "__new_line__";
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
 // but boot must still RENDER that pane, and "already on this tab" now returns
@@ -1106,10 +1105,7 @@ function syncStaticModal(s, redraw) {
   // ever taken away by one.
   staticModal.nameInput.disabled = !!s.busy;
   for (const b of staticModal.panel.querySelectorAll("button")) b.disabled = !!s.busy;
-  // A name is all this mint needs. The one other bar is a cloud-agent token
-  // still on screen: a second one-time secret would overwrite the copy nobody
-  // has saved yet.
-  if (kind === "form") staticModal.actions[1].disabled = !!s.busy || !!s.agentToken;
+
 }
 
 /**
@@ -1224,6 +1220,7 @@ function openMcpModal(trigger, s, redraw) {
 /** The cloud-agent dialog, if one is open. It lives outside #view so a state
     refresh can redraw the roster without taking an in-progress choice away. */
 let cloudModal = null;
+let selectedCloudProvider = null;
 
 function closeCloudModal() {
   if (!cloudModal) return;
@@ -1259,378 +1256,40 @@ function cloudLine(agent) {
   return agent?.line?.label || "No line";
 }
 
-function focusCloudAgent(agentId) {
-  const row = [...document.querySelectorAll(".cloud-agent-row")]
-    .find((candidate) => candidate.dataset.cloudAgentId === agentId);
-  row?.querySelector(".cloud-agent-open")?.focus();
-}
-
-function dismissCloudLineModal() {
-  if (cloudModal?.kind === "line-flow" && cloudModal.phase === "creating") return;
-  if (cloudModal?.kind === "line-flow") void window.domo.cloudCancelLineFlow();
-  closeCloudModal();
-}
-
-function cloudLineProgress(
-  panel,
-  text,
-  cancellable = true,
-  title = "New agent",
-) {
-  const cancel = cancellable ? el("button", { class: "btn", text: "Cancel" }) : null;
-  cancel?.addEventListener("click", dismissCloudLineModal);
-  panel.replaceChildren(
-    el("div", { class: "group-title", text: title }),
-    el("div", { class: "cloud-progress" }, [
-      el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
-      el("span", { text }),
-    ]),
-    el("div", { class: "row cloud-modal-actions" }, [
-      el("div", { class: "spacer" }),
-      cancel,
-    ]),
-  );
-  cancel?.focus();
-}
-
-function cloudActivationScreen(panel, flow) {
-  const cancel = el("button", { class: "btn", text: "Cancel" });
-  const messages = el("button", { class: "btn primary", text: "Open Messages…" });
-  cancel.addEventListener("click", dismissCloudLineModal);
-  messages.addEventListener("click", () => window.domo.cloudOpenMessages());
-  panel.replaceChildren(
-    el("div", { class: "group-title", text: "New line" }),
-    el("p", {
-      class: "conn-note",
-      text: `Text this code to ${flow.activation.sendTo} from your phone.`,
-    }),
-    el("div", { class: "cloud-activation-code mono", text: flow.activation.displayCode }),
-    el("div", { class: "field" }, [
-      el("label", { text: "Send this exact message" }),
-      copyRow(flow.activation.smsBody, "Copy"),
-    ]),
-    ...(flow.message ? [el("p", { class: "faint modal-note", text: flow.message })] : []),
-    el("div", { class: "row cloud-modal-actions" }, [
-      cancel,
-      el("div", { class: "spacer" }),
-      messages,
-    ]),
-  );
-  messages.focus();
-}
-
-function cloudLinePickerNodes(state, modal, start, cancel, message = null) {
-  if (state.cloudLinesLoaded !== true) {
-    const unavailable = state.cloudChatsError
-      ? cloudErrorCopy(state.cloudChatsError)
-      : "Your lines couldn't be loaded yet. Try again.";
-    return [
-      el("div", { class: "cloud-callout cloud-error" }, [
-        el("div", { class: "cloud-callout-title", text: "Lines could not be loaded" }),
-        el("p", { class: "faint", text: unavailable }),
-      ]),
-      el("div", { class: "row cloud-modal-actions" }, [cancel]),
-    ];
-  }
-  const freeLines = state.cloudFreeLines ?? [];
-  const lineSelect = el("select", {
-    class: "text",
-    attrs: { "aria-label": "Line" },
-  }, [
-    el("option", { text: "Choose a line…", attrs: { value: "", disabled: "" } }),
-    ...freeLines.map((line) => el("option", { text: line.label, attrs: { value: line.uid } })),
-    el("option", { text: "New line", attrs: { value: NEW_LINE_VALUE } }),
-  ]);
-  const available = new Set(freeLines.map((line) => line.uid));
-  if (modal.selectedLineUid !== undefined && modal.selectedLineUid !== null &&
-      !available.has(modal.selectedLineUid)) {
-    modal.selectedLineUid = undefined;
-  }
-  lineSelect.value = modal.selectedLineUid === null
-    ? NEW_LINE_VALUE
-    : modal.selectedLineUid ?? "";
-  const submit = el("button", {
-    class: "btn primary",
-    text: modal.mode === "change" ? "Change line" : "Create agent",
-  });
-  submit.disabled = modal.selectedLineUid === undefined;
-  lineSelect.addEventListener("change", () => {
-    modal.selectedLineUid = lineSelect.value === NEW_LINE_VALUE
-      ? null
-      : lineSelect.value || undefined;
-    submit.disabled = modal.selectedLineUid === undefined;
-  });
-  submit.addEventListener("click", () => {
-    if (modal.selectedLineUid !== undefined) start(modal.selectedLineUid);
-  });
-  return [
-    ...(message ? [el("div", { class: "cloud-callout cloud-error" }, [
-      el("p", { class: "faint", text: cloudErrorCopy(message) }),
-    ])] : []),
-    el("div", { class: "field cloud-agent-line" }, [
-      el("label", { text: "Line" }),
-      lineSelect,
-    ]),
-    el("div", { class: "row cloud-modal-actions" }, [
-      cancel,
-      el("div", { class: "spacer" }),
-      submit,
-    ]),
-  ];
-}
-
-function cloudLineConfirmed(panel, title) {
-  panel.replaceChildren(
-    el("div", { class: "group-title", text: title }),
-    el("div", { class: "cloud-confirmed", text: "Code confirmed" }),
-    el("p", { class: "faint modal-note", text: "Setting up your agent…" }),
-  );
-}
-
-function syncCloudLineModal(state, redraw) {
-  if (cloudModal?.kind !== "line-flow") return;
-  const modal = cloudModal;
-  const changing = modal.mode === "change";
-  const title = changing ? "Change line" : "New agent";
-  const agent = changing
-    ? (state.cloudAgents ?? []).find((candidate) => candidate.agentId === modal.agentId)
-    : null;
-  if (changing && !agent) {
-    void window.domo.cloudCancelLineFlow();
-    closeCloudModal();
-    return;
-  }
-  const flow = state.cloudLineFlow ?? { phase: "idle" };
-  const { panel } = modal;
-  modal.phase = flow.phase;
-
-  const providers = changing ? null : state.cloudProviders;
-  const providerView = cloudProviderPickerViewModel(
-    providers,
-    state.cloudProvidersError,
-  );
-  if (!changing && !modal.started && providers) {
-    const selected = modal.providerSelect.value;
-    modal.providerSelect.replaceChildren(...providers.map((provider) =>
-      el("option", { text: provider.name, attrs: { value: provider.id } })));
-    if (providers.some((provider) => provider.id === selected)) {
-      modal.providerSelect.value = selected;
-    }
-  }
-
-  if (!changing && !modal.started && providerView.mode === "blocked") {
-    const cancel = el("button", { class: "btn", text: "Cancel" });
-    cancel.addEventListener("click", dismissCloudLineModal);
-    panel.replaceChildren(
-      el("div", { class: "group-title", text: title }),
-      cloudErrorBanner(providerView.message, providerView.heading),
-      el("div", { class: "row cloud-modal-actions" }, [cancel]),
-    );
-    cancel.focus();
-    return;
-  }
-
-  if (modal.started && flow.completedAgentId) {
-    const completedAgentId = flow.completedAgentId;
-    if (modal.selectedLineUid === null) {
-      if (!modal.confirmationTimer) {
-        const confirmedModal = modal;
-        modal.phase = "confirmed";
-        cloudLineConfirmed(panel, title);
-        modal.confirmationTimer = setTimeout(() => {
-          if (cloudModal !== confirmedModal) return;
-          closeCloudModal();
-          focusCloudAgent(completedAgentId);
-        }, 1_500);
-      }
-      return;
-    }
-    closeCloudModal();
-    focusCloudAgent(completedAgentId);
-    return;
-  }
-
-  if (modal.started && flow.phase === "activating") {
-    cloudLineProgress(panel, "Getting a new line from Plow…", true, title);
-    return;
-  }
-  if (modal.started && flow.phase === "creating") {
-    cloudLineProgress(panel, changing ? "Moving the agent…" : "Setting up the agent…", false, title);
-    return;
-  }
-
-  if (modal.started && flow.phase === "waiting" && flow.activation) {
-    cloudActivationScreen(panel, flow);
-    return;
-  }
-
-  if (modal.started && flow.phase === "error" && flow.terminal === "no_numbers") {
-    const close = el("button", { class: "btn primary", text: "Close" });
-    close.addEventListener("click", dismissCloudLineModal);
-    panel.replaceChildren(
-      el("div", { class: "group-title", text: title }),
-      el("div", { class: "cloud-callout cloud-error" }, [
-        el("p", {
-          class: "faint",
-          text: "No numbers are available right now. Try again later.",
-        }),
-      ]),
-      el("div", { class: "row cloud-modal-actions" }, [
-        el("div", { class: "spacer" }),
-        close,
-      ]),
-    );
-    close.focus();
-    return;
-  }
-
-  if (modal.started && flow.phase === "error") {
-    const cancel = el("button", { class: "btn", text: "Cancel" });
-    const retry = el("button", {
-      class: "btn primary",
-      text: !changing && flow.retryNewLine ? "Retry New agent" : "Try again",
-    });
-    cancel.addEventListener("click", dismissCloudLineModal);
-    retry.addEventListener("click", async () => {
-      retry.disabled = true;
-      cancel.disabled = true;
-      await window.domo.cloudRetryLineFlow();
-      await redraw();
-    });
-    panel.replaceChildren(
-      el("div", { class: "group-title", text: title }),
-      el("div", { class: "cloud-callout cloud-error" }, [
-        el("div", {
-          class: "cloud-callout-title",
-          text: changing ? "The line change did not finish" : "The agent wasn't created",
-        }),
-        el("p", {
-          class: "faint",
-          text: cloudErrorCopy(flow.message || "Something went wrong. Try again."),
-        }),
-      ]),
-      el("div", { class: "row cloud-modal-actions" }, [
-        cancel,
-        el("div", { class: "spacer" }),
-        retry,
-      ]),
-    );
-    retry.focus();
-    return;
-  }
-
-  if (modal.started && flow.phase === "idle") {
-    modal.started = false;
-    modal.selectedLineUid = undefined;
-  }
-
-  const start = async (lineUid) => {
-    modal.started = true;
-    modal.phase = lineUid === null ? "activating" : "creating";
-    cloudLineProgress(
-      panel,
-      lineUid === null
-        ? "Getting a new line from Plow…"
-        : changing ? "Moving the agent…" : "Setting up the agent…",
-      lineUid === null,
-      title,
-    );
-    if (changing) {
-      await window.domo.cloudChangeLine({ agentId: agent.agentId, lineUid });
-    } else {
-      await window.domo.cloudCreate({
-        name: modal.nameInput.value.trim(),
-        provider: modal.providerSelect.value,
-        lineUid,
-      });
-    }
-    await redraw();
-  };
-  const cancel = el("button", { class: "btn", text: "Cancel" });
-  cancel.addEventListener("click", dismissCloudLineModal);
-  panel.replaceChildren(
-    el("div", { class: "group-title", text: title }),
-    ...(changing ? [el("p", {
-      class: "conn-note",
-      text: "The agent keeps its name and memory and moves to the new number.",
-    })] : [el("div", { class: "field cloud-agent-name" }, [
-      el("label", { text: "Name (optional)" }),
-      modal.nameInput,
-    ]), el("div", { class: "field" }, [
-      el("label", { text: "Agent type" }),
-      modal.providerSelect,
-    ])]),
-    ...cloudLinePickerNodes(state, modal, start, cancel, changing ? flow.message : null),
-  );
-  if (modal.firstPaint) {
-    modal.firstPaint = false;
-    if (changing) panel.querySelector('select[aria-label="Line"]')?.focus();
-    else modal.nameInput.focus();
-  }
-}
-
-function openCloudCreate(trigger, state, redraw) {
-  const nameInput = el("input", {
-    class: "text",
-    attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" },
-  });
-  const providerSelect = el("select", {
-    class: "text",
-    attrs: { "aria-label": "Agent type" },
-  });
-  if (!openCloudModal(trigger, [], nameInput, dismissCloudLineModal)) return;
-  Object.assign(cloudModal, {
-    kind: "line-flow",
-    mode: "create",
-    nameInput,
-    providerSelect,
-    selectedLineUid: undefined,
-    started: false,
-    phase: "idle",
-    firstPaint: true,
-  });
-  cloudLineProgress(cloudModal.panel, "Loading your lines…");
-  void (async () => {
-    await window.domo.cloudCancelLineFlow();
-    const refreshed = await window.domo.cloudRefresh();
-    if (cloudModal?.kind === "line-flow") syncCloudLineModal(refreshed ?? state, redraw);
-  })();
-}
-
 function openCloudChangeLine(agent, state, redraw) {
   if (!cloudModal) return;
-  Object.assign(cloudModal, {
-    kind: "line-flow",
-    mode: "change",
-    agentId: agent.agentId,
-    selectedLineUid: undefined,
-    started: false,
-    phase: "idle",
-    firstPaint: true,
-    dismiss: dismissCloudLineModal,
+  const { panel } = cloudModal;
+  cloudModal.kind = "change-line";
+  const close = el("button", { class: "btn", text: "Cancel" });
+  close.addEventListener("click", closeCloudModal);
+  const note = el("p", { class: "faint", text: "Choose an existing line for this agent." });
+  const choices = (state.cloudFreeLines ?? []).map((line) => {
+    const button = el("button", { class: "btn", text: line.label });
+    button.addEventListener("click", async () => {
+      for (const choice of panel.querySelectorAll("button")) choice.disabled = true;
+      const result = await window.domo.cloudChangeLine({ agentId: agent.agentId, lineUid: line.uid });
+      if (result?.cloudActionError) {
+        note.textContent = cloudErrorCopy(result.cloudActionError);
+        for (const choice of panel.querySelectorAll("button")) choice.disabled = false;
+      } else {
+        closeCloudModal();
+      }
+      await redraw();
+    });
+    return button;
   });
-  cloudLineProgress(
-    cloudModal.panel,
-    "Loading your lines…",
-    true,
-    "Change line",
+  panel.replaceChildren(
+    el("div", { class: "group-title", text: "Change line" }),
+    note,
+    ...choices,
+    ...(!choices.length ? [el("p", { class: "faint", text: "No available lines." })] : []),
+    close,
   );
-  void (async () => {
-    await window.domo.cloudCancelLineFlow();
-    const refreshed = await window.domo.cloudRefresh();
-    if (cloudModal?.kind === "line-flow") {
-      syncCloudLineModal(refreshed ?? state, redraw);
-    }
-  })();
 }
 
-/** Repaint the open agent detail from the same state as the roster behind it. */
 function syncCloudModal(state, redraw) {
   if (!cloudModal) return;
-  if (cloudModal.kind === "line-flow") {
-    syncCloudLineModal(state, redraw);
-    return;
-  }
+  if (cloudModal.kind === "change-line") return;
   const agent = (state.cloudAgents ?? [])
     .find((candidate) => candidate.agentId === cloudModal.agentId);
   if (!agent) {
@@ -1648,7 +1307,6 @@ function syncCloudModal(state, redraw) {
       : el("button", { class: "btn", text: "Change line" });
     const message = agent.canMessage ? el("button", { class: "btn", text: "Message" }) : null;
     const remove = el("button", { class: "btn danger", text: "Delete agent" });
-    remove.disabled = Boolean(state.agentToken);
     close.addEventListener("click", closeCloudModal);
     message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId));
     changeLine?.addEventListener("click", () => openCloudChangeLine(agent, state, redraw));
@@ -1713,7 +1371,7 @@ function syncCloudModal(state, redraw) {
       el("div", { class: "group-title", text: `Delete ${name}?` }),
       el("p", {
         class: "conn-note",
-        text: "The agent will stop reading and replying, and your conversations on this line may be removed. To use an agent again, you’ll need to activate again and may get a different number.",
+        text: "The agent will stop reading and replying, and your conversations on this line may be removed. To get another agent, use New agent to send a setup text.",
       }),
       note,
       el("div", { class: "row cloud-modal-actions" }, [
@@ -1943,9 +1601,6 @@ function cloudEntityRow(agent, state, redraw) {
     event.preventDefault();
     openCloudDetail(main, agent, state, redraw);
   });
-  const retry = agent.status === "failed" && agent.canRetry
-    ? el("button", { class: "btn small", text: "Retry" })
-    : null;
   const message = agent.canMessage
     ? el("button", {
         class: "btn small message-btn",
@@ -1954,12 +1609,7 @@ function cloudEntityRow(agent, state, redraw) {
       })
     : null;
   message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId));
-  retry?.addEventListener("click", async () => {
-    retry.disabled = true;
-    await window.domo.cloudRetryFailed(agent.agentId);
-    await redraw();
-  });
-  const actions = [message, retry].filter(Boolean);
+  const actions = [message].filter(Boolean);
   return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent.agentId } }, [
     entityMark(name),
     main,
@@ -2012,8 +1662,24 @@ function sectionHeader(title, count, unit, action) {
 
 function cloudSection(s, redraw) {
   const add = el("button", { class: "btn primary", text: "New agent" });
-  add.disabled = Boolean(s.agentToken);
-  add.addEventListener("click", () => openCloudCreate(add, s, redraw));
+  const providers = s.cloudProviders ?? [];
+  const providerView = cloudProviderPickerViewModel(s.cloudProviders, s.cloudProvidersError);
+  const select = providers.length > 1 ? el("select", {
+    class: "text", attrs: { "aria-label": "Agent type" },
+  }, providers.map((provider) => el("option", {
+    text: provider.name, attrs: { value: provider.id },
+  }))) : null;
+  if (select) {
+    if (providers.some((provider) => provider.id === selectedCloudProvider)) select.value = selectedCloudProvider;
+    select.addEventListener("change", () => { selectedCloudProvider = select.value; });
+  }
+  add.disabled = providers.length === 0;
+  const note = el("p", { class: "faint", text: "" });
+  add.addEventListener("click", async () => {
+    const opened = await window.domo.cloudNewAgentMessages(select?.value ?? providers[0]?.id);
+    note.textContent = opened ? "Send the prefilled message to start your agent." : "Could not open Messages. Refresh and try again.";
+  });
+  const action = el("div", { class: "row cloud-new-agent" }, [select, add].filter(Boolean));
   const rows = s.cloudAgents.map((agent) => cloudEntityRow(agent, s, redraw));
   const notices = [];
   if (!s.cloudChatsLoaded) {
@@ -2031,7 +1697,9 @@ function cloudSection(s, redraw) {
   if (refreshError) notices.push(refreshError);
   if (s.cloudActionError) notices.push(cloudErrorBanner(s.cloudActionError, "That change did not finish"));
   return el("section", { class: "list-section" }, [
-    sectionHeader("Agents", rows.length, "agent", add),
+    sectionHeader("Agents", rows.length, "agent", action),
+    ...(providerView.mode === "blocked" ? [cloudErrorBanner(providerView.message, providerView.heading)] : []),
+    note,
     ...notices,
     el("div", { class: "entity-list compact-list" }, rows.length
       ? rows
@@ -2082,12 +1750,6 @@ async function renderAgents() {
     const s = await window.domo.connectGet();
     if (!s || !panel.isConnected) return s;
     panel.replaceChildren(...[
-      ...(s.agentToken ? [el("div", { class: "cloud-callout" }, [
-        el("p", { text: "Copy this agent token now. It is only shown once." }),
-        copyRow(s.agentToken, "Copy token"),
-        (() => { const done = el("button", { class: "btn", text: "I saved the token" });
-          done.addEventListener("click", async () => { await window.domo.agentDismissToken(); await refreshConnect(); }); return done; })(),
-      ])] : []),
       rosterNotice(s),
       cloudSection(s, refreshConnect),
       sessionSection("MCP clients", s.roster?.mcp ?? [], "mcp", s, refreshConnect),
@@ -2958,6 +2620,7 @@ window.domo.onVaultExchange(async () => {
 // this app when it does — the moment a pane can learn the outcome is when
 // the person comes back.
 window.addEventListener("focus", () => {
+  if (currentTab === "agents") void window.domo.cloudRefresh();
   if (currentTab === "settings") settingsMounted?.refresh();
   if (currentTab === "capabilities") capabilitiesMounted?.refresh();
   else refreshCapabilitiesBadge();

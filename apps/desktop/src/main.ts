@@ -230,10 +230,6 @@ let onboarding: Onboarding | null = null;
 let connectors: Connectors | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
-let agentToken: string | null = null;
-function requireAgentTokenSaved(): void {
-  if (agentToken) throw new Error("Save the agent token before creating or deleting an agent.");
-}
 let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
@@ -664,7 +660,6 @@ function signOut() {
   // And the cloud group: its rows, its chat list and any provision still being
   // polled all belong to the account that just went away.
   cloudAgents?.signedOut();
-  agentToken = null;
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
   // Opening it boots at Welcome. Activation is deliberately deferred until
@@ -773,7 +768,6 @@ ipcMain.handle("cloud:agents", async () => {
   return cloudAgentsIpcResult(cloudAgents);
 });
 ipcMain.handle("connect:create", async (_e, name: string) => {
-  requireAgentTokenSaved();
   await connectClient?.createCredential(name);
   // The ROSTER, not the cloud agents: what was just minted is a credential,
   // and it is the MCP clients list it appears in. Refreshing the agents left
@@ -796,36 +790,14 @@ ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
   return agentsTabState();
 });
 
-ipcMain.handle("cloud:create", async (_e, input: unknown) => {
-  const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
-  await cloudAgents?.create({
-    name: typeof raw.name === "string" ? raw.name : "",
-    provider: typeof raw.provider === "string" ? raw.provider : "",
-    lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
-  });
-  await cloudAgents?.refresh();
-  return agentsTabState();
-});
-ipcMain.handle("agents:dismissToken", () => { agentToken = null; });
-ipcMain.handle("cloud:cancelLineFlow", async () => {
-  cloudAgents?.cancelLineFlow();
-  return agentsTabState();
-});
-ipcMain.handle("cloud:retryLineFlow", async () => {
-  await cloudAgents?.retryLineFlow();
-  await cloudAgents?.refresh();
-  return agentsTabState();
-});
-ipcMain.handle("cloud:retryFailed", async (_e, agentId: string) => {
-  await cloudAgents?.retryFailed(agentId);
-  await cloudAgents?.refresh();
-  return agentsTabState();
+ipcMain.handle("cloud:newAgentMessages", async (_e, providerId: unknown) => {
+  return openSmsUrl(typeof providerId === "string" ? cloudAgents?.newAgentSmsUrl(providerId) : null);
 });
 ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
   await cloudAgents?.changeLine({
     agentId: typeof raw.agentId === "string" ? raw.agentId : "",
-    lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
+    lineUid: typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
   await cloudAgents?.refresh();
   return agentsTabState();
@@ -833,7 +805,7 @@ ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
 ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown) => {
   const url = typeof agentId === "string"
     ? cloudAgents?.agentSmsUrl(agentId)
-    : cloudAgents?.createSmsUrl();
+    : null;
   return openSmsUrl(url);
 });
 
@@ -863,7 +835,7 @@ function agentsTabState(): Record<string, unknown> | null {
   const connect = connectClient?.state() ?? null;
   const cloud = cloudAgents?.state() ?? null;
   if (!connect) return null;
-  return { ...connect, ...(cloud ?? {}), agentToken };
+  return { ...connect, ...(cloud ?? {}) };
 }
 
 // MARK: IPC for the first-run setup window
@@ -2209,13 +2181,7 @@ app.whenReady().then(async () => {
     },
   });
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
-  const cloudAgentsClient = new CloudAgentsClient(cloudApi, undefined, (token, owner) => {
-    if (loadSettings(home).relayCredential.trim() !== owner) return;
-    agentToken = token;
-    notifyRenderer("connect:changed");
-  }, (owner) => {
-    if (loadSettings(home).relayCredential.trim() === owner) requireAgentTokenSaved();
-  });
+  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
@@ -2235,14 +2201,11 @@ app.whenReady().then(async () => {
     // There is no server-side request log we can read, and during the rollout
     // that account is the only one there is.
     agents: cloudAgentsClient,
-    activation: cloudApi,
     chats: new CloudChatsClient(cloudApi),
     providers: cloudApi,
     lines: new CloudLinesClient(cloudApi),
     home,
-    recordAudit: (event, fields) => device?.audit.record(event, fields),
     onChange: () => notifyRenderer("connect:changed"),
-    warn: (message) => console.log(message),
   });
 
   // Only a packaged install updates: a from-source run has no app-update.yml
@@ -2420,8 +2383,7 @@ let leaveInFlight: Promise<boolean> | null = null;
 let settleLeave: ((ok: boolean) => void) | null = null;
 function hasPendingAgentSetup(): boolean {
   const connect = connectClient?.state();
-  return Boolean(agentToken || connect?.busy || connect?.credential ||
-    cloudAgents?.state().cloudLineFlow.phase === "creating");
+  return Boolean(connect?.busy || connect?.credential);
 }
 function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
   if (!win || win.isDestroyed()) return Promise.resolve(true);

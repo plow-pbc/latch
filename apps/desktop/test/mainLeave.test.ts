@@ -15,12 +15,11 @@ const compiled = ts.transpileModule(gates.map((gate) => gate.getText(source)).jo
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-function setup(agentToken: string | null = "pending-setup-token", busy = false, credential: unknown = null, phase = "idle") {
+function setup(busy = false, credential: unknown = null) {
   const ipcMain = new EventEmitter();
   const mayLeave = vm.runInNewContext(`${compiled}; mayLeaveMain`, {
-    ipcMain, agentToken, leaveInFlight: null, settleLeave: null,
+    ipcMain, leaveInFlight: null, settleLeave: null,
     connectClient: { state: () => ({ busy, credential }) },
-    cloudAgents: { state: () => ({ cloudLineFlow: { phase } }) },
   }) as (win: unknown) => Promise<boolean>;
   return { ipcMain, mayLeave };
 }
@@ -31,7 +30,7 @@ describe("main window leave decision", () => {
   });
 
   it.each([true, false])("honours the renderer answer %s with a pending token", async (answer) => {
-    const { ipcMain, mayLeave } = setup();
+    const { ipcMain, mayLeave } = setup(false, { token: "static-token" });
     const send = vi.fn(() => ipcMain.emit("ui:confirmLeaveReply", {}, answer));
     const result = await mayLeave({
       isDestroyed: () => false,
@@ -45,12 +44,11 @@ describe("main window leave decision", () => {
 });
 
 it.each([
-  [true, null, "idle", true],
-  [false, { token: "static-token" }, "idle", true],
-  [false, null, "creating", true],
-  [false, null, "idle", false],
-] as const)("passes pending setup state to the renderer: %s %s %s", async (busy, credential, phase, pending) => {
-  const { ipcMain, mayLeave } = setup(null, busy, credential, phase);
+  [true, null, true],
+  [false, { token: "static-token" }, true],
+  [false, null, false],
+] as const)("passes pending setup state to the renderer: %s %s %s", async (busy, credential, pending) => {
+  const { ipcMain, mayLeave } = setup(busy, credential);
   const send = vi.fn(() => ipcMain.emit("ui:confirmLeaveReply", {}, !pending));
   expect(await mayLeave({
     isDestroyed: () => false, isVisible: () => true,

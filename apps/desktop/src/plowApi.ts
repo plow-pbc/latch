@@ -121,9 +121,15 @@ export interface ConnectorsOverview {
 
 /** Provider identity and display copy accepted by the cloud-agent picker. */
 export interface CloudAgentProvider {
-  /** Opaque server-owned value sent back to the create endpoint unchanged. */
+  /** Opaque server-owned identity used to select the signup phrase. */
   id: string;
   name: string;
+  phrases: string[];
+}
+
+export interface CloudAgentProviders {
+  managedPhone: string;
+  providers: CloudAgentProvider[];
 }
 
 interface MintedCredential {
@@ -161,28 +167,11 @@ export function echoesCredential(text: string, credential: string): boolean {
   );
 }
 
-/** Decode either provider's create receipt before exposing its one-time token. */
-export function decodeAgentCreateReceipt(data: unknown, deviceCredential: string): {
-  agent: Record<string, unknown> & { uid: string; name: string };
-  token: string | null;
-} {
-  const receipt = data as { agent?: { uid?: unknown; name?: unknown }; token?: unknown } | null;
-  if (!receipt?.agent || typeof receipt.agent.uid !== "string" ||
-      typeof receipt.agent.name !== "string" ||
-      (receipt.token !== null && typeof receipt.token !== "string")) {
-    throw new PlowApiError("http", "Plow returned an invalid agent response.");
-  }
-  if (echoesCredential(JSON.stringify(receipt), deviceCredential)) {
-    throw new PlowApiError("http", "Plow returned an unsafe agent response.");
-  }
-  return receipt as ReturnType<typeof decodeAgentCreateReceipt>;
-}
-
 /**
  * Decode the mint receipt from `POST /v1/api-keys` before exposing its
  * one-time token.
  *
- * The same guard `decodeAgentCreateReceipt` applies, for the same reason: the
+ * Reject credential echoes: the
  * response comes from an origin that already holds this Mac's credential, and
  * a body echoing it back — in any encoding this can see — is never shown, kept
  * or handed on. The token in `token` is the MINTED one and is the point of the
@@ -371,19 +360,6 @@ export type ActivationRedeem =
   | { status: "pending" }
   | { status: "verified"; token: string | null; chat: ActivationChat | null };
 
-/** The new-agent activation result. Its session token has no representation. */
-export type ProvisionedActivationRedeem =
-  | { status: "pending" }
-  | {
-      status: "verified";
-      chat: ActivationChat | null;
-      shape: {
-        chat: "missing" | "invalid" | "object";
-        participantTypes: Array<"agent" | "member" | "other" | "invalid">;
-        agentLine: "missing" | "invalid" | "uid_missing" | "uid_string";
-      };
-    };
-
 /**
  * Read the chat out of a verified redeem, tolerating a server that sends less
  * than we expect.
@@ -440,42 +416,6 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
     // that cannot be used.
     memberCount: Math.max(0, all.length - (agent ? 1 : 0)),
     createdAt: typeof chat.created_at === "string" ? chat.created_at : "",
-  };
-}
-
-function provisionedActivationShape(
-  raw: unknown,
-): Extract<ProvisionedActivationRedeem, { status: "verified" }>["shape"] {
-  if (raw === undefined || raw === null) {
-    return { chat: "missing", participantTypes: [], agentLine: "missing" };
-  }
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    return { chat: "invalid", participantTypes: [], agentLine: "missing" };
-  }
-  const participants = Array.isArray((raw as Record<string, unknown>).participants)
-    ? (raw as Record<string, unknown>).participants as unknown[]
-    : [];
-  const records = participants.filter(
-    (participant): participant is Record<string, unknown> =>
-      typeof participant === "object" && participant !== null && !Array.isArray(participant),
-  );
-  const participantTypes = records.map((participant) =>
-    participant.type === "agent" || participant.type === "member"
-      ? participant.type
-      : typeof participant.type === "string" ? "other" : "invalid");
-  const agent = records.find((participant) => participant.type === "agent");
-  if (!agent || agent.line === undefined || agent.line === null) {
-    return { chat: "object", participantTypes, agentLine: "missing" };
-  }
-  if (typeof agent.line !== "object" || Array.isArray(agent.line)) {
-    return { chat: "object", participantTypes, agentLine: "invalid" };
-  }
-  return {
-    chat: "object",
-    participantTypes,
-    agentLine: typeof (agent.line as Record<string, unknown>).uid === "string"
-      ? "uid_string"
-      : "uid_missing",
   };
 }
 
@@ -553,20 +493,6 @@ export class PlowApi {
     };
   }
 
-  /** Mint a code whose verified text provisions one new line and home chat. */
-  async createProvisionedActivation(): Promise<Activation> {
-    const data = await this.call<{ display_code: string; activation_secret: string; send_to: string }>(
-      "POST",
-      "/v1/auth/activate",
-      { body: { provision_chat: true } },
-    );
-    return {
-      displayCode: data.display_code,
-      activationSecret: data.activation_secret,
-      sendTo: data.send_to,
-    };
-  }
-
   /**
    * Has the text arrived yet? `410` means the code expired *without* being
    * completed — the server honours a completion that raced past the deadline,
@@ -586,29 +512,6 @@ export class PlowApi {
       return { status: "verified", token: data.token ?? null, chat: parseActivationChat(data.chat) };
     }
     return { status: "pending" };
-  }
-
-  /**
-   * Redeem a new-line activation without returning its session token.
-   * Only the provisioned chat and value-free shape diagnostics leave here.
-   */
-  async redeemProvisionedActivation(
-    activationSecret: string,
-  ): Promise<ProvisionedActivationRedeem> {
-    const data = await this.call<{ status: string; token?: unknown; chat?: unknown }>(
-      "POST",
-      "/v1/auth/activate/redeem",
-      { body: { activation_secret: activationSecret } },
-    );
-    if (data.status !== "verified") return { status: "pending" };
-    const token = typeof data.token === "string" ? data.token.trim() : "";
-    const shape = provisionedActivationShape(data.chat);
-    const parsed = parseActivationChat(data.chat);
-    return {
-      status: "verified",
-      chat: parsed && !valueEchoesSecret(parsed, token) ? parsed : null,
-      shape,
-    };
   }
 
   /**
@@ -660,39 +563,28 @@ export class PlowApi {
     await this.call<unknown>("POST", "/v1/relay/devices/self/revoke", { token });
   }
 
-  /** List the providers accepted by the cloud-agent create endpoint.
-   * Provider ids are opaque server-owned values: preserve their bytes and order. */
-  async listCloudAgentProviders(token: string): Promise<CloudAgentProvider[]> {
-    const data = await this.call<unknown>("GET", "/v1/agents/providers", { token })
-      .catch((error) => {
-        if (error instanceof PlowApiError && error.status === 503) {
-          throw new PlowApiError(
-            error.kind,
-            "Plow couldn't load agent types right now. Try again.",
-            error.status,
-            error.code,
-          );
-        }
-        throw error;
-      });
-    if (!Array.isArray(data)) {
+  /** Read the server-owned text-to-start destinations and phrases. */
+  async listCloudAgentProviders(token: string): Promise<CloudAgentProviders> {
+    const data = await this.call<unknown>("GET", "/v1/agents/providers", { token });
+    const root = data && typeof data === "object" && !Array.isArray(data)
+      ? data as Record<string, unknown> : null;
+    if (!root || typeof root.managed_phone !== "string" ||
+        !/^\+[1-9]\d{1,14}$/.test(root.managed_phone) || !Array.isArray(root.providers) ||
+        echoesCredential(JSON.stringify(root), token)) {
       throw new PlowApiError("http", "Plow did not return a usable cloud-agent provider list.");
     }
-    return data.map((provider) => {
+    const providers = root.providers.map((provider): CloudAgentProvider => {
       const row = provider && typeof provider === "object" && !Array.isArray(provider)
-        ? provider as Record<string, unknown>
-        : null;
-      if (
-        !row ||
-        typeof row.id !== "string" ||
-        row.id.trim().length === 0 ||
-        typeof row.name !== "string" ||
-        row.name.trim().length === 0
-      ) {
+        ? provider as Record<string, unknown> : null;
+      if (!row || typeof row.id !== "string" || !row.id.trim() ||
+          typeof row.name !== "string" || !row.name.trim() ||
+          !Array.isArray(row.phrases) ||
+          !row.phrases.every((phrase): phrase is string => typeof phrase === "string" && !!phrase.trim())) {
         throw new PlowApiError("http", "Plow did not return a usable cloud-agent provider list.");
       }
-      return { id: row.id, name: row.name };
+      return { id: row.id, name: row.name, phrases: row.phrases };
     });
+    return { managedPhone: root.managed_phone, providers };
   }
 
   /** List the Google accounts available to Gmail and Calendar. */
