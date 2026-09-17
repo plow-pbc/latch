@@ -89,6 +89,10 @@ describe("SkillRegistry", () => {
     ["not retrying the wall or substituting search", /neither a retry of the same URL.*nor a public web search/is],
     ["opening the page in the owner's Safari", /tell application "Safari"/],
     ["binding a read to the requested URL, never the front page", /first document whose URL starts with item 1 of argv/],
+    // A window's title is its current tab's: the AX read makes the requested
+    // tab current before it looks the window up by name.
+    ["making the requested tab current before matching the window by title", /set current tab of win to first tab of win whose URL starts with u/],
+    ["that nothing survives from one script to the next", /Nothing carries over between scripts.*same lookup lines/is],
     ["the JavaScript-from-Apple-Events error being expected", /Allow JavaScript from Apple Events.*not a dead end/is],
     ["reading the page through the accessibility tree", /tell application "System Events" to tell process "Safari"/],
     ["that the tree walk is slow and returns a handle", /entire contents.*pending handle/is],

@@ -157,9 +157,9 @@ not yours to lift out of the tree.
    Expect it to fail with "You must enable 'Allow JavaScript from Apple Events'" — that
    Safari Developer setting is off by default and the error is not a dead end. Fall back to
    the accessibility tree, which needs no Safari setting; these scripts go to
-   \`plow_run_applescript\` as \`app: "System Events"\`, and find the window by the title
-   Safari gives the document you asked for:
-   \`on run argv\\ntell application "Safari" to set t to name of (first document whose URL starts with item 1 of argv)\\ntell application "System Events" to tell process "Safari"\\n  set w to first window whose name is t\\n  set out to {}\\n  repeat with e in (entire contents of w)\\n    if role of e is "AXStaticText" then set end of out to value of e\\n  end repeat\\nend tell\\nreturn out\\nend run\`
+   \`plow_run_applescript\` as \`app: "System Events"\`. A window's title is its CURRENT tab's,
+   so first have Safari make the tab you asked for current, then find the window by that title:
+   \`on run argv\\nset u to item 1 of argv\\nset t to missing value\\ntell application "Safari"\\n  repeat with win in windows\\n    if (count of (tabs of win whose URL starts with u)) > 0 then\\n      set current tab of win to first tab of win whose URL starts with u\\n      set t to name of win\\n      exit repeat\\n    end if\\n  end repeat\\nend tell\\nif t is missing value then error "no Safari tab shows " & u\\ntell application "System Events" to tell process "Safari"\\n  set w to first window whose name is t\\n  set out to {}\\n  repeat with e in (entire contents of w)\\n    if role of e is "AXStaticText" then set end of out to value of e\\n  end repeat\\nend tell\\nreturn out\\nend run\`
    The walk of a content-heavy page takes a minute or more and comes back as a pending handle
    — poll \`plow_get_result\` then \`plow_get_output\`; it is working, not failed.
 3. **Act, when you must.** Roles are uppercase \`AXButton\` / \`AXTextField\` / \`AXStaticText\`
@@ -170,9 +170,12 @@ not yours to lift out of the tree.
    hear — and do not name a variable \`result\`, it is reserved. \`keystroke\` goes to
    whatever is frontmost, so \`activate\` Safari in the same script just before you type —
    that brings it to the front of the owner's screen, so if they are at the Mac, say so
-   before you type. Act on \`w\` found the same way — \`perform action "AXRaise" of w\` brings
-   it to the front — and verify the way you would in this browser: read the URL, the title,
-   and the confirmation text back out of that window's tree.
+   before you type. Nothing carries over between scripts — each call runs its script
+   from scratch — so a script that acts starts with the same lookup lines as the read
+   (find the tab, make it current, take \`w\` by title), then \`perform action "AXRaise" of
+   w\` to bring it to the front, and acts on \`w\`, never on whatever window is in front.
+   Verify the way you would in this browser: read the URL, the title, and the confirmation
+   text back out of that window's tree.
 4. **Consent.** The first System Events script raises a macOS Automation dialog that
    asks the owner; the call sits 'running' with a diagnosis until they click. Leave it
    running and tell them. System Events also needs this Mac's Accessibility grant
