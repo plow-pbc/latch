@@ -66,8 +66,8 @@ export function activationSmsBody(displayCode: string): string {
 
 /** The draft Messages opens with, in the form the shipping Plow app uses
  * (`app/Phoenix/DaemonClient.swift`): `sms:<phone>?&body=<encoded>`. */
-export function activationSmsUrl(sendTo: string, displayCode: string): string {
-  return `sms:${sendTo}?&body=${encodeURIComponent(activationSmsBody(displayCode))}`;
+export function smsUrl(sendTo: string, body: string): string {
+  return `sms:${sendTo}?&body=${encodeURIComponent(body)}`;
 }
 
 export interface OnboardingActivation {
@@ -333,7 +333,7 @@ export class Onboarding {
           displayCode: created.displayCode,
           sendTo: created.sendTo,
           smsBody: activationSmsBody(created.displayCode),
-          smsUrl: activationSmsUrl(created.sendTo, created.displayCode),
+          smsUrl: smsUrl(created.sendTo, activationSmsBody(created.displayCode)),
           pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS,
         };
         // Polling starts here, not when the user taps the button: a user who

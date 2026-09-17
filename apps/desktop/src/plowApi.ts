@@ -124,7 +124,7 @@ export interface CloudAgentProvider {
   /** Opaque server-owned identity used to select the signup phrase. */
   id: string;
   name: string;
-  phrases: string[];
+  phrase: string | null;
 }
 
 export interface CloudAgentProviders {
@@ -564,13 +564,12 @@ export class PlowApi {
   }
 
   /** Read the server-owned text-to-start destinations and phrases. */
-  async listCloudAgentProviders(token: string): Promise<CloudAgentProviders> {
-    const data = await this.call<unknown>("GET", "/v1/agents/providers", { token });
+  async listCloudAgentProviders(): Promise<CloudAgentProviders> {
+    const data = await this.call<unknown>("GET", "/v1/signup");
     const root = data && typeof data === "object" && !Array.isArray(data)
       ? data as Record<string, unknown> : null;
     if (!root || typeof root.managed_phone !== "string" ||
-        !/^\+[1-9]\d{1,14}$/.test(root.managed_phone) || !Array.isArray(root.providers) ||
-        echoesCredential(JSON.stringify(root), token)) {
+        !/^\+[1-9]\d{1,14}$/.test(root.managed_phone) || !Array.isArray(root.providers)) {
       throw new PlowApiError("http", "Plow did not return a usable cloud-agent provider list.");
     }
     const providers = root.providers.map((provider): CloudAgentProvider => {
@@ -582,7 +581,7 @@ export class PlowApi {
           !row.phrases.every((phrase): phrase is string => typeof phrase === "string" && !!phrase.trim())) {
         throw new PlowApiError("http", "Plow did not return a usable cloud-agent provider list.");
       }
-      return { id: row.id, name: row.name, phrases: row.phrases };
+      return { id: row.id, name: row.name, phrase: row.phrases[0] ?? null };
     });
     return { managedPhone: root.managed_phone, providers };
   }

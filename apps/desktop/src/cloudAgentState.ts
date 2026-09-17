@@ -22,6 +22,7 @@ import {
   ChatRecipients,
   activationChatLabel,
   activationChatRecipients,
+  smsUrl,
 } from "./onboarding.js";
 import {
   CloudAgentProvider,
@@ -153,7 +154,7 @@ export interface CloudChatsApi {
 }
 
 export interface CloudProvidersApi {
-  listCloudAgentProviders(deviceCredential: string): Promise<CloudAgentProviders>;
+  listCloudAgentProviders(): Promise<CloudAgentProviders>;
 }
 
 export interface CloudAgentStateDeps {
@@ -261,7 +262,7 @@ export class CloudAgentState {
     const generation = this.generation;
     const read = ++this.viewReads;
     let view = Promise.all([
-      this.refreshProviders(credential, generation, read),
+      this.refreshProviders(generation, read),
       this.refreshChats(credential, generation, read),
       this.refreshLines(credential, generation, read),
     ]).then(() => {});
@@ -287,22 +288,13 @@ export class CloudAgentState {
 
   /** Ask Plow which providers can be started by text. */
   private async refreshProviders(
-    credential: string,
     generation: number,
     read: number,
   ): Promise<void> {
     try {
-      const { providers, managedPhone } = await this.deps.providers.listCloudAgentProviders(credential);
+      const { providers, managedPhone } = await this.deps.providers.listCloudAgentProviders();
       if (generation !== this.generation || read !== this.viewReads) return;
-      if (providers.some((provider) =>
-        echoesCredential(JSON.stringify(provider), credential)
-      )) {
-        throw new PlowApiError(
-          "http",
-          "Plow returned an unsafe cloud-agent provider list.",
-        );
-      }
-      this.providers = providers.filter((provider) => provider.phrases.length > 0);
+      this.providers = providers.filter((provider) => provider.phrase !== null);
       this.managedPhone = managedPhone;
       this.providersError = null;
     } catch (error) {
@@ -331,9 +323,9 @@ export class CloudAgentState {
 
   /** A text-to-start link built only from the current server catalog. */
   newAgentSmsUrl(providerId: string): string | null {
-    const phrase = this.providers?.find((provider) => provider.id === providerId)?.phrases[0];
+    const phrase = this.providers?.find((provider) => provider.id === providerId)?.phrase;
     if (!this.credential() || !this.managedPhone || !phrase) return null;
-    return `sms:${this.managedPhone}?&body=${encodeURIComponent(phrase)}`;
+    return smsUrl(this.managedPhone, phrase);
   }
 
   /** A Messages deep link for one resolved agent line, kept in main-process state. */

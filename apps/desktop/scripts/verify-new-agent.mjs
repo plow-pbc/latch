@@ -52,7 +52,10 @@ app.whenReady().then(async () => {
       return new Response(JSON.stringify(agentRows[0]), { status: 200 });
     }
     if (init.method !== "GET") throw new Error("Unexpected mutation");
-    const body = new URL(url).pathname === "/v1/agents/providers"
+    if (new URL(url).pathname === "/v1/signup") {
+      assert.equal(new Headers(init.headers).has("authorization"), false);
+    }
+    const body = new URL(url).pathname === "/v1/signup"
       ? { managed_phone: "+15551234567", providers } : agentRows;
     return new Response(JSON.stringify(body), { status: 200 });
   });

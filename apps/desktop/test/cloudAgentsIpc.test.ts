@@ -6,7 +6,7 @@ describe("cloud:agents IPC result", () => {
   it("returns only agents and their error without exposing the provider catalog", async () => {
     const pendingState: CloudAgentsUiState = {
       cloudAgents: [],
-      cloudProviders: [{ id: "provider-secret", name: "Provider", phrases: ["Start Provider"] }],
+      cloudProviders: [{ id: "provider-secret", name: "Provider", phrase: "Start Provider" }],
       cloudProvidersError: "provider error",
       cloudFreeLines: [{ uid: "line-free", displayName: "Free", number: "+15550100" }],
       cloudAgentsError: null,

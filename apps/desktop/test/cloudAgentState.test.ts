@@ -20,8 +20,6 @@ import { loadSettings, saveSettings } from "../src/settings.js";
 import { deferred } from "./deferred.js";
 
 const CREDENTIAL = "plow_session_123456789";
-const CREDENTIAL_PREFIX = CREDENTIAL.slice(0, 10);
-const ENCODED_CREDENTIAL = Buffer.from(CREDENTIAL).toString("base64");
 
 function tempHome(): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "cloud-line-state-"));
@@ -131,7 +129,7 @@ function build(options: {
         calls.push("listProviders");
         return { managedPhone: "+15551234567", providers: options.listProviders
           ? await options.listProviders()
-          : [{ id: "provider/default", name: "Default", phrases: ["Start Default"] }] };
+          : [{ id: "provider/default", name: "Default", phrase: "Start Default" }] };
       },
     },
     lines: {
@@ -151,8 +149,8 @@ describe("CloudAgentState line and thread display", () => {
 
   it("keeps live provider ids opaque and in the endpoint's order", async () => {
     const providers = [
-      { id: " provider/Zeta ", name: "Zeta", phrases: ["Start"] },
-      { id: "exe:life", name: "Life", phrases: ["Start"] },
+      { id: " provider/Zeta ", name: "Zeta", phrase: "Start" },
+      { id: "exe:life", name: "Life", phrase: "Start" },
     ];
     const { state, calls } = build({ listProviders: async () => providers });
 
@@ -161,33 +159,6 @@ describe("CloudAgentState line and thread display", () => {
     expect(state.state().cloudProviders).toEqual(providers);
     expect(state.state().cloudProvidersError).toBeNull();
     expect(calls.filter((call) => call === "listProviders")).toHaveLength(1);
-  });
-
-  it.each([
-    ["id", "plaintext", `provider/${CREDENTIAL_PREFIX}`],
-    ["name", "plaintext", `Agent ${CREDENTIAL_PREFIX}`],
-    ["name", "base64", ENCODED_CREDENTIAL],
-    ["name", "base64 prefix", ENCODED_CREDENTIAL.slice(0, 10)],
-  ])("rejects the provider list when one %s reflects the %s credential", async (
-    field,
-    _encoding,
-    reflected,
-  ) => {
-    const provider = { id: "provider/reflected", name: "Reflected", phrases: ["Start"], [field]: reflected };
-    const { state } = build({
-      listProviders: async () => [
-        { id: "provider/safe", name: "Safe", phrases: ["Start"] },
-        provider,
-      ],
-    });
-
-    await state.refresh();
-
-    expect(state.state().cloudProviders).toBeNull();
-    expect(state.state().cloudProvidersError).toBe(
-      "Plow returned an unsafe cloud-agent provider list.",
-    );
-    expect(JSON.stringify(state.state())).not.toContain(reflected);
   });
 
   it("reports an initial provider-list failure without inventing a fallback roster", async () => {
@@ -208,7 +179,7 @@ describe("CloudAgentState line and thread display", () => {
     const { state } = build({
       listProviders: async () => {
         if (fail) throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
-        return [{ id: "provider/available", name: "Available", phrases: ["Start"] }];
+        return [{ id: "provider/available", name: "Available", phrase: "Start" }];
       },
     });
     await state.refresh();
@@ -622,11 +593,11 @@ describe("Plow line display metadata", () => {
 });
 
 describe("CloudAgentState text-to-start", () => {
-  it("uses the selected provider's first phrase, escaping message text", async () => {
+  it("uses the selected provider's phrase, escaping message text", async () => {
     const { state } = build({ listProviders: async () => [
-      { id: "one", name: "One", phrases: ["Start One"] },
-      { id: "two", name: "Two", phrases: ["Start Two & café?", "alias"] },
-      { id: "self_hosted", name: "Self-hosted", phrases: [] },
+      { id: "one", name: "One", phrase: "Start One" },
+      { id: "two", name: "Two", phrase: "Start Two & café?" },
+      { id: "self_hosted", name: "Self-hosted", phrase: null },
     ] });
     expect(state.newAgentSmsUrl("two")).toBeNull();
     await state.refresh();
@@ -642,7 +613,7 @@ describe("CloudAgentState text-to-start", () => {
     let fail = false;
     const { state } = build({ listProviders: async () => {
       if (fail) throw new Error("unavailable");
-      return [{ id: "one", name: "One", phrases: ["Start One"] }];
+      return [{ id: "one", name: "One", phrase: "Start One" }];
     } });
     await state.refresh();
     fail = true;

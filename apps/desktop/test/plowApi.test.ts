@@ -459,26 +459,31 @@ describe("PlowApi", () => {
     }[why]);
   });
 
-  it("reads managed phone and provider phrases with bearer authentication", async () => {
-    const providers = [{ id: "exe:life", name: "Life", phrases: ["Start Life", "Life alias"] }];
+  it("reads the public signup catalog without authentication and normalizes phrases", async () => {
+    const providers = [
+      { id: "exe:life", name: "Life", phrases: ["Start Life", "Life alias"] },
+      { id: "self_hosted", name: "Self-hosted", phrases: [] },
+    ];
     const { fetchImpl, calls } = recordingFetch([{ status: 200, body: {
       managed_phone: "+15551234567", providers,
     } }]);
-    const result = await new PlowApi("https://stub.invalid", fetchImpl).listCloudAgentProviders("device-token");
-    expect(result).toEqual({ managedPhone: "+15551234567", providers });
-    expect(calls[0].url).toBe("https://stub.invalid/v1/agents/providers");
-    expect(calls[0].init.headers.authorization).toBe("Bearer device-token");
+    const result = await new PlowApi("https://stub.invalid", fetchImpl).listCloudAgentProviders();
+    expect(result).toEqual({ managedPhone: "+15551234567", providers: [
+      { id: "exe:life", name: "Life", phrase: "Start Life" },
+      { id: "self_hosted", name: "Self-hosted", phrase: null },
+    ] });
+    expect(calls[0].url).toBe("https://stub.invalid/v1/signup");
+    expect(calls[0].init.headers.authorization).toBeUndefined();
   });
 
   it.each([
     { managed_phone: "https://wrong.invalid", providers: [] },
     { managed_phone: "+15551234567", providers: [{ id: "a", name: "A" }] },
     { managed_phone: "+15551234567", providers: [{ id: "a", name: "A", phrases: [""] }] },
-    { managed_phone: "+15551234567", providers: [{ id: "a", name: "A", phrases: ["device-token"] }] },
     [],
-  ])("rejects an unusable or credential-bearing signup catalog: %j", async (body) => {
+  ])("rejects an unusable signup catalog: %j", async (body) => {
     const { fetchImpl } = recordingFetch([{ status: 200, body }]);
-    await expect(new PlowApi("https://stub.invalid", fetchImpl).listCloudAgentProviders("device-token"))
+    await expect(new PlowApi("https://stub.invalid", fetchImpl).listCloudAgentProviders())
       .rejects.toThrow("usable cloud-agent provider list");
   });
 
