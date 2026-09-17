@@ -322,6 +322,14 @@ export class BrowserSessions {
       return { status: "error", error: `browser failed to start: ${message}` };
     }
 
+    // The claim was taken before this awaited, so the off switch's
+    // closeOpen() could already have found this session and started closing
+    // it — a browser this open must not publish as opened.
+    if (session.closing) {
+      await session.closing;
+      return { status: "error", error: "browser use was turned off while the browser was starting" };
+    }
+
     // Same order as extend(), and for the same reason: a session the owner's
     // log has no event for is a browser they cannot see being used at all.
     try {

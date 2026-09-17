@@ -1073,6 +1073,21 @@ describe.skipIf(!ON_MAC)("every browser opens as the user, already signed in", (
     expect(closed[0].fields.reason).toBe("agent");
   });
 
+  it("does not publish a session the off switch closed while it was still starting", async () => {
+    // open() claims the map entry before it awaits ensureReady(), so
+    // closeOpen() — the off switch — can find this session and start
+    // closing it while the open is still in flight.
+    const opened = ctx.sessions.open("int-1", AGENT, ["a.example"]);
+    const closed = ctx.sessions.closeOpen("turned_off");
+    const result = jv(await opened);
+    await closed;
+
+    expect(result.get("status").str).toBe("error");
+    expect(result.get("error").str).toBe("browser use was turned off while the browser was starting");
+    expect(ctx.events.some((e) => e.event === "browser_session_opened")).toBe(false);
+    expect(ctx.sessions.current()).toBeNull();
+  });
+
   it("refuses to open once the app is on its way out", async () => {
     // An intent can sit waiting for the owner and be approved mid-quit. The
     // browser it would start is one nobody is left to close.
