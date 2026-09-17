@@ -1575,7 +1575,7 @@ ipcMain.handle("capabilities:bannerSeen", async () => {
 
 // MARK: The Plugins tab (pluginsModel.ts)
 
-/** A runner Task 3's safariJavaScript.ts drives directly against this Mac —
+/** A runner safariJavaScript.ts drives directly against this Mac —
  *  never the device's sandboxed inventory runner, which runs under seatbelt
  *  and cannot write into Safari's container. */
 const unsandboxedRunner: Runner = async (argv) => {
