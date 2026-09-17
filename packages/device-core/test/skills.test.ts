@@ -89,13 +89,14 @@ describe("SkillRegistry", () => {
     ["not retrying the wall or substituting search", /neither a retry of the same URL.*nor a public web search/is],
     ["opening the page in the owner's Safari", /tell application "Safari"/],
     ["binding every later script to the window step 1 opened, by id", /returns the id of the window it opened.*addresses that window by that id/is],
-    ["step 1 handing the window id back", /return id of window 1/],
     ["a later script taking the window by that id", /window id \(\(item 1 of argv\) as integer\)/],
-    // Exact URL, or a refusal that names what the window shows: a prefix
-    // matched /account-other, and a title matched another window.
-    ["refusing unless the window shows exactly the expected URL", /if actual is not u then error "window shows " & actual & ", not " & u/],
+    // Exact URL, or a fixed refusal: a prefix matched /account-other, a title
+    // matched another window, and an error that named the URL leaked it.
+    ["refusing unless the window shows exactly the expected URL", /if URL of current tab of win is not u then error "window is not on the expected URL"/],
+    ["step 1 returning the URL the page landed on", /return \{id of window 1, URL of current tab of window 1\}/],
+    ["the refusal naming nothing", /a fixed message that names nothing/],
     ["that nothing survives from one script to the next", /Nothing carries over between scripts.*same lookup lines/is],
-    ["the raise being called out to the owner", /reorders the owner's Safari windows, so say so if they are at\s+the Mac/is],
+    ["the raise being called out to the owner", /reorders the owner's Safari windows,\s+so say so if they are at the Mac/is],
     ["the JavaScript-from-Apple-Events error being expected", /Allow JavaScript from Apple Events.*not a dead end/is],
     ["reading the page through the accessibility tree", /tell application "System Events" to tell process "Safari"/],
     ["that the tree walk is slow and returns a handle", /entire contents.*pending handle/is],
@@ -117,11 +118,12 @@ describe("SkillRegistry", () => {
     expect(BROWSING_SKILL.body).not.toMatch(/front (document|window)/);
   });
 
-  // Both read paths carry the one refusal line, so a copy deleted from either
-  // shows — a toMatch would stay green on the survivor.
-  it("the built-in browsing skill refuses a URL mismatch in both read paths", () => {
-    const refusal = /if actual is not u then error "window shows " & actual & ", not " & u/g;
-    expect(BROWSING_SKILL.body.match(refusal)).toHaveLength(2);
+  // Both read paths check before AND after the capture — four copies of the
+  // one refusal line, so a copy deleted from either side of either read shows;
+  // a toMatch would stay green on the survivors.
+  it("the built-in browsing skill checks the URL before and after both reads", () => {
+    const refusal = /if URL of current tab of win is not u then error "window is not on the expected URL"/g;
+    expect(BROWSING_SKILL.body.match(refusal)).toHaveLength(4);
   });
 });
 

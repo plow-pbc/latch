@@ -147,23 +147,24 @@ URL the task is about, and a value the owner keeps (a code, a card number, a pas
 not yours to lift out of the tree.
 
 1. **Open the page, and keep the window's id.** Pass the URL in \`args\`, never pasted into
-   the script; the script returns the id of the window it opened, and every later script
-   addresses that window by that id — never a page found by URL or title, which can match
-   a page the owner has open elsewhere:
-   \`plow_run_applescript {app: "Safari", args: ["<url>"], script: 'on run argv\\ntell application "Safari"\\n  activate\\n  make new document with properties {URL:item 1 of argv}\\n  return id of window 1\\nend tell\\nend run'}\`
-2. **Read it — that window, showing that URL, or nothing.** Pass the id and the URL you
-   expect in \`args\`; the script refuses unless the window's current tab shows exactly that
-   URL, and names what it shows instead, so after a redirect you retry with the URL the
-   page landed on rather than reading whatever the owner navigated to. Try
-   \`do JavaScript\` first:
-   \`plow_run_applescript {app: "Safari", args: ["<id>", "<url>"], script: 'on run argv\\nset u to item 2 of argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  set actual to URL of current tab of win\\n  if actual is not u then error "window shows " & actual & ", not " & u\\n  do JavaScript "document.body.innerText" in current tab of win\\nend tell\\nend run'}\`
+   the script; the script returns the id of the window it opened and the URL the page landed
+   on (a redirect settles here), and every later script addresses that window by that id —
+   never a page found by URL or title, which can match a page the owner has open elsewhere:
+   \`plow_run_applescript {app: "Safari", args: ["<url>"], script: 'on run argv\\ntell application "Safari"\\n  activate\\n  make new document with properties {URL:item 1 of argv}\\n  delay 3\\n  return {id of window 1, URL of current tab of window 1}\\nend tell\\nend run'}\`
+2. **Read it — that window, showing that URL, or nothing.** Pass the id and the landed URL
+   in \`args\`; the script refuses unless the window's current tab shows exactly that URL,
+   before it reads and again after — a page the owner navigated to meanwhile is never what
+   you get — and the refusal is a fixed message that names nothing, so nothing the window
+   shows instead reaches you either. Try \`do JavaScript\` first:
+   \`plow_run_applescript {app: "Safari", args: ["<id>", "<url>"], script: 'on run argv\\nset u to item 2 of argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  if URL of current tab of win is not u then error "window is not on the expected URL"\\n  set out to do JavaScript "document.body.innerText" in current tab of win\\n  if URL of current tab of win is not u then error "window is not on the expected URL"\\n  return out\\nend tell\\nend run'}\`
    Expect it to fail with "You must enable 'Allow JavaScript from Apple Events'" — that
    Safari Developer setting is off by default and the error is not a dead end. Fall back to
    the accessibility tree, which needs no Safari setting; these scripts go to
-   \`plow_run_applescript\` as \`app: "System Events"\`. The same check, then the script
-   raises that window — which reorders the owner's Safari windows, so say so if they are at
-   the Mac — and reads the process's window 1, which is now the one it raised:
-   \`on run argv\\nset u to item 2 of argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  set actual to URL of current tab of win\\n  if actual is not u then error "window shows " & actual & ", not " & u\\n  set index of win to 1\\nend tell\\ntell application "System Events" to tell process "Safari"\\n  set out to {}\\n  repeat with e in (entire contents of window 1)\\n    if role of e is "AXStaticText" then set end of out to value of e\\n  end repeat\\nend tell\\nreturn out\\nend run\`
+   \`plow_run_applescript\` as \`app: "System Events"\`. The same checks around the read, and
+   between them the script raises that window — which reorders the owner's Safari windows,
+   so say so if they are at the Mac — and walks the process's window 1, which is now the
+   one it raised:
+   \`on run argv\\nset u to item 2 of argv\\ntell application "Safari"\\n  set win to window id ((item 1 of argv) as integer)\\n  if URL of current tab of win is not u then error "window is not on the expected URL"\\n  set index of win to 1\\nend tell\\ntell application "System Events" to tell process "Safari"\\n  set out to {}\\n  repeat with e in (entire contents of window 1)\\n    if role of e is "AXStaticText" then set end of out to value of e\\n  end repeat\\nend tell\\ntell application "Safari" to if URL of current tab of win is not u then error "window is not on the expected URL"\\nreturn out\\nend run\`
    The walk of a content-heavy page takes a minute or more and comes back as a pending handle
    — poll \`plow_get_result\` then \`plow_get_output\`; it is working, not failed.
 3. **Act, when you must.** Roles are uppercase \`AXButton\` / \`AXTextField\` / \`AXStaticText\`
@@ -176,7 +177,7 @@ not yours to lift out of the tree.
    that brings it to the front of the owner's screen, so if they are at the Mac, say so
    before you type. Nothing carries over between scripts — each call runs its script
    from scratch — so a script that acts starts with the same lookup lines as the read
-   (the window by id, the URL check, the raise) and acts on the process's window 1 it just
+   (the window by id, the URL check before and after, the raise) and acts on the process's window 1 it just
    raised, never on whatever window was in front. Verify the way you would in this browser:
    read the URL, the title, and the confirmation text back out of that window's tree.
 4. **Consent.** The first System Events script raises a macOS Automation dialog that
