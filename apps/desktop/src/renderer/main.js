@@ -2317,9 +2317,9 @@ async function renderPlugins() {
 
   draw(await window.domo.pluginsGet());
   pluginsMounted = { refresh: reload };
-  // Main knows no accounts until something asks Plow, so a launch straight into
-  // this tab said "Needs setup" for a connected Google. The answer lands through
-  // onConnectorsChanged, which redraws this tab.
+  // Main holds no accounts until something asks Plow, so a launch straight into
+  // this tab said "Needs setup" for a connected Google. Not awaited — selecting
+  // a tab never waits on the network; onConnectorsChanged redraws this tab.
   void window.domo.connectorsRefresh();
 }
 

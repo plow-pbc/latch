@@ -85,9 +85,9 @@ ipcMain.handle("capabilities:dismiss", async () => probeCapabilities().view);
 ipcMain.handle("capabilities:bannerSeen", async () => probeCapabilities().view);
 ipcMain.handle("grant:state", async () => ({ key: "full_disk_access", label: "Full Disk Access", granted: false }));
 // The Plugins tab renders from the REAL view model (pluginsModel.ts) over the
-// SHIPPED gog manifest, read off disk, with no account connected: what the tab
-// tells the owner is what the file declares. The off switch answers with the
-// fresh state, exactly as main does.
+// SHIPPED gog manifest, read off disk: what the tab tells the owner is what the
+// file declares. Like main, it knows the Google accounts only once a connector
+// refresh has asked. The off switch answers with the fresh state, as main does.
 const probePlugins = { gog: true };
 const probeStaged = [{
   manifest: parseManifest(fs.readFileSync(path.join(dir, "../plugins/gog/latch-plugin.json"), "utf8")),
@@ -96,7 +96,7 @@ const probeStaged = [{
 const probePluginRows = () => ({
   rows: pluginRows({
     plugins: probeStaged.map((p) => ({ ...p, enabled: probePlugins[p.manifest.name] })),
-    connectedAccounts: [],
+    connectedAccounts: probeAccountsLoaded && connectorProbe.google.accounts.length ? ["google"] : [],
   }),
 });
 ipcMain.handle("plugins:get", async () => probePluginRows());
@@ -233,9 +233,10 @@ const connectorProbe = {
     ],
   },
 };
-let connectorRefreshes = 0;
-ipcMain.handle("connectors:refresh", async () => {
-  connectorRefreshes += 1;
+let probeAccountsLoaded = false;
+ipcMain.handle("connectors:refresh", async (e) => {
+  probeAccountsLoaded = true;
+  e.sender.send("connectors:changed", connectorProbe);
   return connectorProbe;
 });
 ipcMain.handle("connectors:connect", async () => connectorProbe);
@@ -1446,46 +1447,49 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
-  // The Plugins tab: the row, its CLI badge and skill description, and the
-  // unmet account with the button that fixes it. Opening the tab asks Plow for
-  // the accounts: main holds none until asked, so a tab that only read them
-  // told a launch with Google connected that it needed setup.
-  const refreshesBeforePlugins = connectorRefreshes;
+  // The Plugins tab, as a launch straight into it finds main: no accounts until
+  // something asks Plow. Google is connected, so the tab asks and settles on
+  // Ready with no requirement — not the reconnect prompt the owner saw.
+  probeAccountsLoaded = false;
+  const gogRow = `[...document.querySelectorAll(".plugin-row")].find((r) => r.querySelector(".plugin-name span")?.textContent === "gog")`;
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("plugins")`);
-  await waitFor(win, `document.querySelectorAll(".plugin-row").length === 1`, "the Plugins tab");
-  await waitForNode(() => connectorRefreshes > refreshesBeforePlugins, "the Plugins tab loading the connected accounts");
+  await waitFor(win, `(${gogRow})?.textContent.includes("Ready")`, "the Plugins tab to find Google connected");
   const plugins = await win.webContents.executeJavaScript(`(${() => {
     const rows = [...document.querySelectorAll(".plugin-row")];
     const gog = rows.find((r) => r.querySelector(".plugin-name span")?.textContent === "gog");
-    const req = gog?.parentElement.querySelector(".plugin-req");
     return {
       names: rows.map((r) => r.querySelector(".plugin-name span")?.textContent),
       cliBadges: rows.every((r) => r.querySelector(".plugin-name .badge")?.textContent.trim() === "CLI"),
       describes: (gog?.querySelector(".cap-sub")?.textContent ?? "").includes("Gmail and Calendar"),
-      saysNeedsSetup: (gog?.textContent ?? "").includes("Needs setup"),
-      // The unmet requirement, named, with its action as a button.
-      namesRequirement: req?.querySelector(".cap-name")?.textContent === "Account",
-      offersTheFix: req?.querySelector("button.btn")?.textContent.trim() === "Connect Google",
+      saysReady: (gog?.textContent ?? "").includes("Ready"),
+      noRequirement: !document.querySelector(".plugin-req"),
       // The switch is on, and it is a real control (the off switch).
       switchesOn: [...document.querySelectorAll(".plugin-switch input")].every((b) => b.checked),
     };
   }})()`);
-  // The off switch: unchecking it answers with the fresh state, and the row
-  // says Off with its requirements withdrawn — the owner's problem again only
-  // when they turn it back on.
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".plugin-row")]
-       .find((r) => r.querySelector(".plugin-name span")?.textContent === "gog")
-       .querySelector(".plugin-switch input").click(), true`);
-  await waitFor(win, `!document.querySelector(".plugin-req")`, "the disabled plugin to drop its requirements");
-  const pluginOff = await win.webContents.executeJavaScript(`(${() => {
-    const gog = [...document.querySelectorAll(".plugin-row")]
-      .find((r) => r.querySelector(".plugin-name span")?.textContent === "gog");
+  // With no account connected: the off switch answers with the fresh state, and
+  // the row says Off with its requirement withdrawn — the owner's problem again
+  // only when they turn it back on, which names the account and offers the fix.
+  const connectedAccounts = connectorProbe.google.accounts;
+  connectorProbe.google.accounts = [];
+  const flipGog = () => win.webContents.executeJavaScript(`(${gogRow}).querySelector(".plugin-switch input").click(), true`);
+  await flipGog();
+  await waitFor(win, `(${gogRow})?.textContent.includes("Off")`, "the disabled plugin");
+  const pluginOff = await win.webContents.executeJavaScript(`({
+    saysOff: (${gogRow})?.textContent.includes("Off"),
+    noRequirements: !document.querySelector(".plugin-req"),
+  })`);
+  await flipGog();
+  await waitFor(win, `document.querySelector(".plugin-req")`, "the unmet account");
+  const pluginUnmet = await win.webContents.executeJavaScript(`(() => {
+    const req = document.querySelector(".plugin-req");
     return {
-      saysOff: (gog?.textContent ?? "").includes("Off"),
-      noRequirements: !document.querySelector(".plugin-req"),
+      saysNeedsSetup: (${gogRow})?.textContent.includes("Needs setup"),
+      namesRequirement: req?.querySelector(".cap-name")?.textContent === "Account",
+      offersTheFix: req?.querySelector("button.btn")?.textContent.trim() === "Connect Google",
     };
-  }})()`);
+  })()`);
+  connectorProbe.google.accounts = connectedAccounts;
 
   // The permission inventory, now a section of Settings: on a Mac whose
   // inventory says Full Disk Access is off, the row names the permission, its
@@ -1679,12 +1683,14 @@ app.whenReady().then(async () => {
     plugins.names.join("|") === "gog" &&
     plugins.cliBadges &&
     plugins.describes &&
-    plugins.saysNeedsSetup &&
-    plugins.namesRequirement &&
-    plugins.offersTheFix &&
+    plugins.saysReady &&
+    plugins.noRequirement &&
     plugins.switchesOn &&
     pluginOff.saysOff &&
     pluginOff.noRequirements &&
+    pluginUnmet.saysNeedsSetup &&
+    pluginUnmet.namesRequirement &&
+    pluginUnmet.offersTheFix &&
     capabilities.fdaNoInlineDragTile &&
     settings.supportMarks &&
     settings.launchTitle &&
@@ -1749,7 +1755,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, capabilities, plugins, pluginOff, blockLanding, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, capabilities, plugins, pluginOff, pluginUnmet, blockLanding, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {
