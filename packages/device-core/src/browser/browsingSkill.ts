@@ -168,8 +168,9 @@ you opened.
    JavaScript expression are its three args, so the owner reads one script and the values
    beside it. The expression runs behind an origin check in the SAME document, so the
    check and the effect target one page — a tab the owner switched to between events is
-   never what runs — and the refusal is a fixed message:
-   \`plow_run_applescript {app: "Safari", args: ["<id>", "www.example.com", "document.body.innerText"], script: 'on run argv\\ntell application "Safari"\\n  do JavaScript ("if (location.origin !== \\"https://" & item 2 of argv & "\\") throw new Error(\\"window is not on the expected origin\\"); " & item 3 of argv) in current tab of (window id ((item 1 of argv) as integer))\\nend tell\\nend run'}\`
+   never what runs — and the refusal is a fixed message. The host goes into that
+   expression, so the script first refuses any character outside a hostname's alphabet:
+   \`plow_run_applescript {app: "Safari", args: ["<id>", "www.example.com", "document.body.innerText"], script: 'on run argv\\nset h to item 2 of argv\\nrepeat with c in characters of h\\n  if "abcdefghijklmnopqrstuvwxyz0123456789.-" does not contain (c as text) then error "host is not a host"\\nend repeat\\ntell application "Safari"\\n  do JavaScript ("if (location.origin !== \\"https://" & h & "\\") throw new Error(\\"window is not on the expected origin\\"); " & item 3 of argv) in current tab of (window id ((item 1 of argv) as integer))\\nend tell\\nend run'}\`
    Read what you need with the expression: \`document.title\`, a selector's \`innerText\`, the
    confirmation text — never \`location.href\` or \`location.search\`, which can carry a token
    the page was given.
