@@ -92,7 +92,10 @@ describe("SkillRegistry", () => {
     ["not falling back to positional UI scripting", /Do not fall back to System Events UI scripting/],
     ["step 1 handing the window id back", /return id of window 1/],
     ["a later script taking the window by that id", /window id \(\(item 1 of argv\) as integer\)/],
-    ["refusing unless the window is on the expected origin", /if URL of current tab of win does not start with item 2 of argv then error "window is not on the expected origin"/],
+    ["building the origin from a host, so no calling convention carries the bound", /set origin to "https:\/\/" & item 2 of argv & "\/"/],
+    ["refusing unless the window is on the expected origin", /if URL of current tab of win does not start with origin then error "window is not on the expected origin"/],
+    ["every acting script carrying the same check", /Every script that\s+acts is that script — same window id, same origin check/is],
+    ["typed text riding in args, encoded", /percent-encoded so no quote in it can break the script/],
     ["the first Safari script asking the owner", /Automation dialog that asks the\s+owner/is],
     ["when to finally report the site as blocked", /only after Safari itself fails to load/i],
   ])("the built-in browsing skill documents %s", (_what, pattern) => {

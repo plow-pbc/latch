@@ -996,7 +996,7 @@ export const TOOLS: ToolSpec[] = [
       "reported success changed nothing, so read it before retrying. " +
       "A page that says you are blocked and offers nothing to solve — no CAPTCHA, no button, " +
       "often a plain 200 with no failed_requests at all — is a hard block: the same URL in this " +
-      "browser will not change, and waiting will not help. " +
+      "browser will not change, and waiting will not help: " +
       `${SAFARI_HARD_BLOCK_ROUTING}. The camoufox-browsing skill's Safari section has the recipe.`,
     inputSchema: {
       type: "object",
