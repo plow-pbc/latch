@@ -421,6 +421,11 @@ function compactEvent(item: Record<string, unknown>): Record<string, unknown> {
     startLocal: item.startLocal ?? null,
     endLocal: item.endLocal ?? null,
   };
+  // Which calendar an event sits on, when gog says: a read that covers
+  // several of them is how a commitment on a shared calendar is told from one
+  // on the owner's own.
+  const calendarId = item.CalendarID ?? item.calendarId;
+  if (typeof calendarId === "string") event.calendarId = calendarId;
   if (isAllDay(item)) event.allDay = true;
   const attendees = Array.isArray(item.attendees) ? (item.attendees as unknown[]) : [];
   if (attendees.length > 0) event.attendees = attendees.length;

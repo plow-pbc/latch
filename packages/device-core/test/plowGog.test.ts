@@ -621,6 +621,27 @@ describe("compactCalendarEvents", () => {
     });
   });
 
+  it("says which calendar an event sits on when the read covered several", () => {
+    // gog spells it CalendarID, and only fills it when more than one calendar
+    // was read — a commitment on a shared calendar reads no differently from
+    // one on the owner's own without it.
+    const { items } = compactCalendarEvents([
+      {
+        summary: "Freddy — early pickup",
+        start: { dateTime: "2026-09-18T14:00:00-07:00" },
+        startDayOfWeek: "Friday",
+        startLocal: "2026-09-18T14:00:00-07:00",
+        endLocal: "2026-09-18T14:30:00-07:00",
+        CalendarID: "luca@group.calendar.google.com",
+        id: "evt-1",
+        account: "a@example.com",
+      },
+      { summary: "solo", start: { dateTime: "2026-09-18T16:00:00-07:00" }, startLocal: "2026-09-18T16:00:00-07:00", account: "a@example.com" },
+    ]);
+    expect(items[0]!.calendarId).toBe("luca@group.calendar.google.com");
+    expect(items[1]).not.toHaveProperty("calendarId");
+  });
+
   it("keeps an all-day date as its own day, and marks the ways an event leaves the owner free", () => {
     const { items } = compactCalendarEvents([
       {

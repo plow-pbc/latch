@@ -42,7 +42,10 @@ accounts rather than all, name them: \`--account a@x,b@y\`. A calendar id
 
 **Calendar events come back compact, with the day already named.** Each
 fanned-out \`calendar events\` item is \`{summary, startDayOfWeek, startLocal,
-endLocal, allDay?, attendees?, transparency?, declined?, id, account}\`.
+endLocal, calendarId?, allDay?, attendees?, transparency?, declined?, id,
+account}\`. \`calendarId\` says which calendar the event sits on, and is
+there whenever the read covered more than one — how a commitment on a shared
+calendar is told from one on the owner's own.
 \`startLocal\`/\`endLocal\` are the owner's local time with its UTC offset (a
 bare date for all-day events, whose \`endLocal\` is the day AFTER the last
 one), and \`startDayOfWeek\` is the weekday of \`startLocal\` in the owner's
