@@ -66,6 +66,16 @@ first (\`calendar calendars\` fans out) and read every one the owner shows
 <that account>\`. \`--all\` is not the same: it also reads the calendars they
 have hidden.
 
+**"Am I free at 2pm?" is a busy-time read, never a conflict check.** For
+availability — one slot, or finding a time — read the window across every
+shown calendar: \`calendar freebusy --cal <ids> --account <email>\` for the
+busy intervals, and \`calendar events --calendars <ids> --account <email>\`
+when you need the event names too. \`calendar conflicts\` answers a different
+question: it lists commitments that overlap EACH OTHER, so an empty result
+means nothing is double-booked, NOT that the owner is free — a single event
+sitting alone in the window appears in neither, and reading that as free tells
+the owner they are available when they are not.
+
     ["plow-gog", "accounts"]
 
 lists the connected accounts, from the mint — no Google call at all. Which is
