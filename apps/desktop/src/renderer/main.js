@@ -2611,7 +2611,11 @@ async function renderPlugins() {
       action.addEventListener("click", () =>
         isBrowser
           ? busy(action, "Enabling…", async () => {
+              // Draw the fresh state (including a failed write's error line)
+              // BEFORE throwing — busy()'s catch only resets this button,
+              // which draw() has by then already replaced.
               const v = await window.domo.pluginsAct(r.name, u.id);
+              draw(v);
               if (v.error) throw new Error(v.error);
             })
           : busy(action, "Connecting…", () => window.domo.connectorsConnect()));
