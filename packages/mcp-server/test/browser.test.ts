@@ -231,6 +231,29 @@ describe("browser tools (fake runtime)", () => {
     expect(fs.readFileSync(device.audit.file, "utf8")).not.toContain("hunter2");
   });
 
+  // With a runtime present and the plugin on, a widen has no pre-intent
+  // refusal of its own (unlike open) — it reaches the browser and fails
+  // there, so unlike the no-runtime case (mcpServer.test.ts), the request
+  // still becomes an intent and still ends up in the owner's log.
+  it("a widen against an unknown session still creates an intent, and the log attributes the failure to it", async () => {
+    const { server, device } = makeServer();
+    const widen = await callTool(
+      server,
+      "plow_browser_request",
+      { session: "no-such-session", origins: ["https://example.org"], goal: "widen it" },
+      AGENT,
+    );
+    expect(widen.isError).toBe(true);
+    expect(JSON.stringify(widen.payload)).toMatch(/unknown session/);
+    const tools = device.audit
+      .entries()
+      .filter((e) => jv(e as JSONValue).get("event").str === "tool_error")
+      .map((e) => jv(e as JSONValue).get("tool").str);
+    expect(tools).toEqual(["plow_browser_request"]);
+    const rows = (await callTool(server, "plow_history", {}, AGENT)).payload as { rows: { status: string }[] };
+    expect(rows.rows[0]!.status).toBe("Error");
+  });
+
   it("splits a code across single-character boxes when 'selectors' crosses the seam", async () => {
     // End to end through the MCP tool surface: 'selectors' has to survive the
     // argument copy in tools.ts, and the split itself happens on the device —

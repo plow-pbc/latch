@@ -10,10 +10,12 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { JSONValue, jv, makeIntent } from "@domo/protocol";
 
 import {
   BROWSER_PLUGIN,
+  BrowserSessions,
   DeviceAgent,
   HeadlessPolicy,
   impliesNetwork,
@@ -26,6 +28,8 @@ import {
   type StagedPlugin,
 } from "@domo/device-core";
 import { fakePlugin } from "./pluginFixtures.js";
+
+const FAKE_SERVER = fileURLToPath(new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url));
 
 /**
  * Only the tests that SPAWN need macOS — /usr/bin/sandbox-exec exists nowhere
@@ -123,7 +127,6 @@ function makeDeviceWithBrowser(): DeviceAgent {
     executablePath: "/x/camoufox",
   });
 }
-
 
 /**
  * Refused, recorded as refused, and never started.
@@ -1245,5 +1248,37 @@ describe("a plugin the owner turned off", () => {
     d.setDisabledPlugins([]);
     expect(d.skills.manifest().map((s) => s.name)).toContain("camoufox-browsing");
     expect(d.browserRefusal()).toBeNull();
+  });
+
+  // makeDeviceWithBrowser's server command names a file that does not exist —
+  // fine for the refusal test above, which never opens one, but a session
+  // that must actually close needs a browser that actually starts.
+  it("closes every open session the moment the switch flips, and lets a fresh one open once it flips back", async () => {
+    const home = tmp();
+    const d = device(null, [], home);
+    const browsers = {
+      command: ["node", FAKE_SERVER],
+      profileDir: path.join(home, "profiles"),
+      audit: (event: string, fields: { [k: string]: JSONValue }) => d.audit.record(event, fields),
+    };
+    const sessions = new BrowserSessions(browsers, null, (event, fields) => d.audit.record(event, fields));
+    // The same substitution deviceCore.test.ts's shutdown test uses: a real
+    // BrowserSessions the runtime never had to be resolved for.
+    Object.assign(d, { browserSessions: sessions });
+
+    const opened = jv(await sessions.open("int-1", "agent-1", ["pizza.example"]));
+    expect(opened.get("status").str).toBe("completed");
+
+    await d.setDisabledPlugins([BROWSER_PLUGIN]);
+    const closed = d.audit.entries().find((e) => jv(e).get("event").str === "browser_session_closed");
+    expect(closed).toBeDefined();
+    expect(jv(closed).get("reason").str).toBe("turned_off");
+
+    // Not closeAll: the switch flipping back on must open a fresh browser,
+    // not find the runtime latched shut behind it.
+    await d.setDisabledPlugins([]);
+    const reopened = jv(await sessions.open("int-2", "agent-1", ["pizza.example"]));
+    expect(reopened.get("status").str).toBe("completed");
+    await sessions.closeAll("test");
   });
 });

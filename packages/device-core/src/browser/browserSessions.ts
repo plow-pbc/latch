@@ -634,15 +634,16 @@ export class BrowserSessions {
   }
 
   /**
-   * Every session goes down at once. Serially, quitting could spend one
+   * Every open session closes, without refusing the next open — `closeAll`
+   * latches that refusal for the app's quit path, and the owner turning the
+   * plugin off must be able to turn it back on and open a fresh browser a
+   * moment later.
+   *
+   * Concurrently, not one at a time: serially, this could spend one
    * browser's whole shutdown budget before the next session was even asked to
-   * stop — and a quit that outruns this leaves a disposable profile, cookies
-   * and all, on disk. They share nothing, so nothing here has to be ordered.
+   * stop. They share nothing, so nothing here has to be ordered.
    */
-  async closeAll(reason: string): Promise<void> {
-    // Latched before the snapshot, so an open that resumes mid-shutdown is
-    // refused rather than registering behind us.
-    this.quitting = true;
+  async closeOpen(reason: string): Promise<void> {
     // settled, not fail-fast: one close that throws (a full disk on the audit
     // append) must not resolve this while a sibling browser is still inside
     // its shutdown timeout — the caller quits the app on this promise. The
@@ -652,6 +653,17 @@ export class BrowserSessions {
     );
     const failed = results.find((r) => r.status === "rejected");
     if (failed) throw failed.reason;
+  }
+
+  /**
+   * Every session goes down at once, and nothing opens again after — a quit
+   * that outruns this leaves a disposable profile, cookies and all, on disk.
+   */
+  async closeAll(reason: string): Promise<void> {
+    // Latched before the snapshot, so an open that resumes mid-shutdown is
+    // refused rather than registering behind us.
+    this.quitting = true;
+    await this.closeOpen(reason);
   }
 
   /**

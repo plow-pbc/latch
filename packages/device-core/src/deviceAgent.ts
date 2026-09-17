@@ -874,10 +874,21 @@ export class DeviceAgent {
    * this device is concerned, skill unpublished, commands refused by name at
    * the pre-intent chokepoint. Called at startup and on every toggle — one
    * code path.
+   *
+   * The browser carries a fourth: a session already open when the switch
+   * flips is a live window onto the owner's logins that the Plugins tab can
+   * no longer see or stop, so turning it off closes every one of them —
+   * `closeOpen`, not `closeAll`, because the switch flipping back on must be
+   * able to open a fresh browser, not find the runtime latched shut.
    */
-  setDisabledPlugins(names: readonly string[]): void {
+  setDisabledPlugins(names: readonly string[]): Promise<void> {
+    const turningBrowserOff = names.includes(BROWSER_PLUGIN) && !this.disabledPlugins.has(BROWSER_PLUGIN);
     this.disabledPlugins = new Set(names);
     this.syncPluginSkills();
+    if (!turningBrowserOff || this.browserSessions === null) return Promise.resolve();
+    return this.browserSessions.closeOpen("turned_off").catch((error: unknown) => {
+      console.error("[browser] closing open sessions after the plugin was turned off:", error);
+    });
   }
 
   /**
