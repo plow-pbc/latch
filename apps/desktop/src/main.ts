@@ -1633,6 +1633,12 @@ ipcMain.handle("plugins:act", async (_e, rawName: unknown, rawId: unknown) => {
   const name = typeof rawName === "string" ? rawName : "";
   const id = typeof rawId === "string" ? rawId : "";
   if (name !== BROWSER_PLUGIN || id !== SAFARI_JAVASCRIPT) return { ...(await pluginsNow()), error: "nothing to do" };
+  if (!(await probeFullDiskAccess())) {
+    return {
+      ...(await pluginsNow()),
+      error: "Safari's setting needs this app to have Full Disk Access (Settings › Permissions)",
+    };
+  }
   try {
     await enableSafariJavaScript(unsandboxedRunner);
     return pluginsNow();

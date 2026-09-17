@@ -2649,7 +2649,7 @@ async function renderPlugins() {
       el("span", { class: "status-dot" + s.dot, attrs: { title: s.word } }),
       el("div", {}, [
         el("div", { class: "cap-name plugin-name" }, [
-          el("span", { text: r.title || r.name }),
+          el("span", { text: r.title }),
           badge("zinc", r.kind),
         ]),
         r.description ? el("div", { class: "cap-sub", text: r.description }) : null,
@@ -2670,7 +2670,7 @@ async function renderPlugins() {
     panel.replaceChildren(group(
       "Plugins",
       "The tools agents can run on this Mac. Turning one off unpublishes its skill and refuses its commands.",
-      state.error ? [el("div", { class: "cap-sub attention", text: state.error }), ...rows] : rows,
+      state.error ? [el("p", { class: "warn", text: state.error }), ...rows] : rows,
     ));
   };
 

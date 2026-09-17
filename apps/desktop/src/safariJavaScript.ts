@@ -5,7 +5,11 @@
  * the write goes through `defaults` into Safari's container and needs Full
  * Disk Access, which this app already asks for; and a pref written while
  * Safari is running is overwritten with Safari's cached value when it quits,
- * so Safari is quit first and relaunched after. Pure over a runner.
+ * so Safari is quit first and relaunched after. Only this one key is
+ * written — an earlier version also set IncludeDevelopMenu on the guess that
+ * Safari needed its Develop menu to honor the pref, which was never verified
+ * on macOS 14.5: the JavaScript pref takes effect without it. Pure over a
+ * runner.
  */
 export type Runner = (argv: string[]) => Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
 
@@ -24,18 +28,18 @@ async function safariRunning(run: Runner): Promise<boolean> {
 export async function enableSafariJavaScript(run: Runner): Promise<{ relaunched: boolean }> {
   const wasRunning = await safariRunning(run);
   if (wasRunning) {
-    await run(["/usr/bin/osascript", "-e", 'quit app "Safari"']);
+    const quit = await run(["/usr/bin/osascript", "-e", 'quit app "Safari"']);
+    // A non-zero exit means the ask itself failed (no Automation consent, no
+    // Safari to ask) — polling for a quit that was never sent just spends 10s
+    // finding out what this already knows.
+    if (quit.exitCode !== 0) throw new Error("Safari could not be asked to quit — close it and try again");
     for (let i = 0; i < 20 && (await safariRunning(run)); i++) await new Promise((r) => setTimeout(r, 500));
     if (await safariRunning(run)) throw new Error("Safari did not quit; close it and try again");
   }
   // A failed write must not strand the owner with Safari quit and no
   // explanation why — the relaunch below runs whether or not it succeeded.
-  let writeFailed = false;
-  for (const key of ["IncludeDevelopMenu", "AllowJavaScriptFromAppleEvents"]) {
-    if (writeFailed) break;
-    const w = await run([DEFAULTS, "write", DOMAIN, key, "-bool", "true"]);
-    if (w.exitCode !== 0) writeFailed = true;
-  }
+  const w = await run([DEFAULTS, "write", DOMAIN, "AllowJavaScriptFromAppleEvents", "-bool", "true"]);
+  const writeFailed = w.exitCode !== 0;
   if (wasRunning) {
     const opened = await run(["/usr/bin/open", "-a", "Safari"]);
     // A relaunch failure is only reported when the write itself succeeded —

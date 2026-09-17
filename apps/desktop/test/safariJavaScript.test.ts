@@ -31,27 +31,25 @@ describe("safariJavaScriptEnabled", () => {
 });
 
 describe("enableSafariJavaScript", () => {
-  it("quits a running Safari before writing, writes both prefs, then relaunches it", async () => {
-    const { run, calls } = fake({ "/usr/bin/pgrep -x": { stdout: "123\n" } });
+  it("quits a running Safari before writing, writes the pref, then relaunches it", async () => {
+    const { run, calls } = fake({});
     const result = await enableSafariJavaScript(quittingSafari(run));
     expect(result).toEqual({ relaunched: true });
     const order = calls.map((c) => c.join(" "));
     const quit = order.findIndex((c) => c.startsWith("/usr/bin/osascript -e quit app \"Safari\""));
-    const writeA = order.findIndex((c) => c === "/usr/bin/defaults write com.apple.Safari IncludeDevelopMenu -bool true");
-    const writeB = order.findIndex((c) => c === "/usr/bin/defaults write com.apple.Safari AllowJavaScriptFromAppleEvents -bool true");
+    const write = order.findIndex((c) => c === "/usr/bin/defaults write com.apple.Safari AllowJavaScriptFromAppleEvents -bool true");
     const open = order.findIndex((c) => c === "/usr/bin/open -a Safari");
     // Written only once Safari is out — a running Safari overwrites a pref with its cached value on quit.
     expect(quit).toBeGreaterThanOrEqual(0);
-    expect(writeA).toBeGreaterThan(quit);
-    expect(writeB).toBeGreaterThan(quit);
-    expect(open).toBeGreaterThan(Math.max(writeA, writeB));
+    expect(write).toBeGreaterThan(quit);
+    expect(open).toBeGreaterThan(write);
   });
   it("writes without quitting or relaunching when Safari is not running", async () => {
     const { run, calls } = fake({ "/usr/bin/pgrep -x": { exitCode: 1 } });
     expect(await enableSafariJavaScript(run)).toEqual({ relaunched: false });
     expect(calls.some((c) => c[0] === "/usr/bin/osascript")).toBe(false);
     expect(calls.some((c) => c[0] === "/usr/bin/open")).toBe(false);
-    expect(calls.filter((c) => c[1] === "write")).toHaveLength(2);
+    expect(calls.filter((c) => c[1] === "write")).toHaveLength(1);
   });
   it("fails loudly, naming Full Disk Access, when the write is refused", async () => {
     const { run } = fake({ "/usr/bin/pgrep -x": { exitCode: 1 }, "/usr/bin/defaults write": { exitCode: 1, stderr: "Could not write domain" } });
@@ -59,14 +57,21 @@ describe("enableSafariJavaScript", () => {
   });
   it("still relaunches a running Safari when the write fails, and the error names Full Disk Access", async () => {
     const { run, calls } = fake({
-      "/usr/bin/pgrep -x": { stdout: "123\n" },
       "/usr/bin/defaults write": { exitCode: 1, stderr: "Could not write domain" },
     });
     await expect(enableSafariJavaScript(quittingSafari(run))).rejects.toThrow(/Full Disk Access/);
     expect(calls.some((c) => c.join(" ") === "/usr/bin/open -a Safari")).toBe(true);
   });
   it("names the relaunch, not the write, when the write succeeds but the reopen fails", async () => {
-    const { run } = fake({ "/usr/bin/pgrep -x": { stdout: "123\n" }, "/usr/bin/open -a": { exitCode: 1 } });
+    const { run } = fake({ "/usr/bin/open -a": { exitCode: 1 } });
     await expect(enableSafariJavaScript(quittingSafari(run))).rejects.toThrow(/did not relaunch/);
+  });
+  it("rejects at once when Safari cannot be asked to quit, and never attempts the write", async () => {
+    const { run, calls } = fake({
+      "/usr/bin/pgrep -x": { stdout: "123\n" },
+      "/usr/bin/osascript -e": { exitCode: 1 },
+    });
+    await expect(enableSafariJavaScript(run)).rejects.toThrow(/could not be asked to quit/);
+    expect(calls.some((c) => c[1] === "write")).toBe(false);
   });
 });
