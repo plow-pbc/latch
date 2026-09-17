@@ -93,6 +93,7 @@ describe("SkillRegistry", () => {
     // tab current before it looks the window up by name.
     ["making the requested tab current before matching the window by title", /set current tab of win to first tab of win whose URL starts with u/],
     ["that nothing survives from one script to the next", /Nothing carries over between scripts.*same lookup lines/is],
+    ["the read's tab switch being called out to the owner", /changes what the window\s+shows, so say so if the owner is at the Mac/is],
     ["the JavaScript-from-Apple-Events error being expected", /Allow JavaScript from Apple Events.*not a dead end/is],
     ["reading the page through the accessibility tree", /tell application "System Events" to tell process "Safari"/],
     ["that the tree walk is slow and returns a handle", /entire contents.*pending handle/is],
