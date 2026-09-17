@@ -149,13 +149,13 @@ opened, by id, and refuses unless that window is on the origin you name. A value
 keeps (a code, a card number, a password) is not yours to read out of a page.
 
 Everything runs through Safari's own \`do JavaScript\`, which addresses a tab by Safari's
-window id and needs one setting the owner turns on ONCE: Safari → Settings → Advanced →
-"Show features for web developers", then Develop → "Allow JavaScript from Apple Events". It
-is off by default, so the first read fails with "You must enable 'Allow JavaScript from
-Apple Events'"; that is the owner's one-time step, not a dead end — ask them, then retry.
-Do not fall back to System Events UI scripting: it addresses windows by position, which the
-owner's next click can change under you, and macOS gives no way to tie one to the window
-you opened.
+window id and needs one Safari setting, "Allow JavaScript from Apple Events". It is off by
+default, so the first read fails with "You must enable 'Allow JavaScript from Apple
+Events'" — that is not a dead end: the owner turns it on with one click in this app's
+Plugins tab, on the **Browser use** row (Enable; Safari relaunches). Tell them that, then
+retry. Do not fall back to System Events UI scripting: it addresses windows by position,
+which the owner's next click can change under you, and macOS gives no way to tie one to the
+window you opened.
 
 1. **Open the page, and keep the window's id.** The URL rides in \`args\`, never pasted into
    the script; the script returns the id of the window it opened, and every later script

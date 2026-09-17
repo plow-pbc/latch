@@ -88,7 +88,7 @@ describe("SkillRegistry", () => {
     // deleting the rule leaves the row red; a phrasing edit does not.
     ["telling a hard block from a challenge", /a challenge has something to click\s+or type.*a hard block\s+does not/is],
     ["not retrying the wall or substituting search", /neither a retry of\s+the same URL.*nor a public web search/is],
-    ["the owner's one-time Safari setting", /Allow JavaScript from Apple Events.*one-time step, not a dead end/is],
+    ["the owner's one-time Safari setting", /Allow JavaScript from Apple Events.*Plugins tab.*Browser use.*Enable/is],
     ["not falling back to positional UI scripting", /Do not fall back to System Events UI scripting/],
     ["step 1 handing the window id back", /return id of window 1/],
     ["a later script taking the window by that id", /window id \(\(item 1 of argv\) as integer\)/],
