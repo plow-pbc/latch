@@ -91,10 +91,10 @@ describe("SkillRegistry", () => {
     ["the JavaScript-from-Apple-Events error being expected", /Allow JavaScript from Apple Events.*not a dead end/is],
     ["reading the page through the accessibility tree", /tell application "System Events" to tell process "Safari"/],
     ["that the tree walk is slow and returns a handle", /entire contents.*pending handle/is],
-    ["AX roles being uppercase", /AXStaticText/],
-    ["a label living in either of two attributes", /`title` OR `AXDescription`/],
+    ["AX roles being uppercase", /Roles are uppercase.*AXButton/is],
+    ["a label living in either of two attributes", /`title` OR `value of attribute "AXDescription"`/],
     ["React fields needing real keystrokes", /keystroke.*not `set value`/is],
-    ["the first System Events use asking the owner", /Automation.*asks the owner/is],
+    ["the first System Events use asking the owner", /Automation dialog that\s+asks the owner/is],
     ["when to finally report the site as blocked", /only after Safari itself fails to load/i],
   ])("the built-in browsing skill documents %s", (_what, pattern) => {
     expect(BROWSING_SKILL.body).toMatch(pattern);

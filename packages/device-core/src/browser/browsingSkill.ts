@@ -135,27 +135,37 @@ a hard block does not, and it often arrives as a plain 200 with no \`failed_requ
 Neither a retry of the same URL in this session, nor waiting, nor a public web search
 answers a question about the OWNER's own account ("did my review post?") — the owner's
 real Safari, with their real fingerprint and cookies, usually loads what this browser
-cannot. Drive it with \`plow_run_applescript\`; the owner approves each script.
+cannot. Drive it with \`plow_run_applescript\`; the owner approves each script. Nothing here
+is origin-bound — the approval is the script's text and nothing else — so ask for the one
+URL the task is about, and a value the owner keeps (a code, a card number, a password) is
+not yours to lift out of the tree.
 
 1. **Open the page.** Pass the URL in \`args\`, never pasted into the script:
-   \`plow_run_applescript {app: "Safari", args: ["<url>"], script: 'on run argv\\ntell application "Safari"\\n  activate\\n  if (count of windows) = 0 then make new document with properties {URL:item 1 of argv}\\n  set URL of front document to item 1 of argv\\nend tell\\nend run'}\`
+   \`plow_run_applescript {app: "Safari", args: ["<url>"], script: 'on run argv\\ntell application "Safari"\\n  activate\\n  make new document with properties {URL:item 1 of argv}\\nend tell\\nend run'}\`
 2. **Read it.** Try \`do JavaScript "document.body.innerText" in front document\` first. Expect
    it to fail with "You must enable 'Allow JavaScript from Apple Events'" — that Safari
    Developer setting is off by default and the error is not a dead end. Fall back to the
-   accessibility tree, which needs no setting: \`tell application "System Events" to tell process "Safari"\`, take \`entire contents of front window\`, keep the elements whose
+   accessibility tree, which needs no Safari setting — these scripts go to
+   \`plow_run_applescript\` as \`app: "System Events"\`, not Safari:
+   \`tell application "System Events" to tell process "Safari"\`, take \`entire contents of front window\`, keep the elements whose
    \`role is "AXStaticText"\` and collect their \`value\`. The walk of a content-heavy page
    takes a minute or more and comes back as a pending handle — poll \`plow_get_result\`
    then \`plow_get_output\`; it is working, not failed.
 3. **Act, when you must.** Roles are uppercase \`AXButton\` / \`AXTextField\` / \`AXStaticText\`
    — the lowercase names in some dictionaries match nothing. A control's label is in
-   \`title\` OR \`AXDescription\`; check both. Click the cookie banner's own button before
-   anything under it. A React-controlled field responds to \`keystroke\`, not \`set value\` —
-   \`click\` it, then \`keystroke\` the text, which is what its listeners hear — and do not
-   name a variable \`result\`, it is reserved. Verify the way you would in this browser:
-   read the URL, the title, and the confirmation text back out of the tree.
+   \`title\` OR \`value of attribute "AXDescription"\`; check both. Click the cookie banner's
+   own button before anything under it. A React-controlled field responds to \`keystroke\`,
+   not \`set value\` — \`click\` it, then \`keystroke\` the text, which is what its listeners
+   hear — and do not name a variable \`result\`, it is reserved. \`keystroke\` goes to
+   whatever is frontmost, so \`activate\` Safari in the same script just before you type —
+   that brings it to the front of the owner's screen, so if they are at the Mac, say so
+   before you type. Verify the way you would in this browser: read the URL, the title, and
+   the confirmation text back out of the tree.
 4. **Consent.** The first System Events script raises a macOS Automation dialog that
-   asks the owner; the call sits 'running' with a diagnosis until they click. Leave it
-   running and tell them. Report the site as blocked only after Safari itself fails to load the page — not after a JavaScript read fails.
+   asks the owner; the call sits 'running' with a diagnosis until they click. System Events
+   also needs this Mac's Accessibility grant (Privacy & Security → Accessibility);
+   \`plow_device_status\` shows the row, and a refusal there comes back 'blocked' rather than
+   parked on a dialog. Leave it running and tell them. Report the site as blocked only after Safari itself fails to load the page — not after a JavaScript read fails.
 
 ## Credentials (logins, cards, identities) — the value is never handed back to you
 
