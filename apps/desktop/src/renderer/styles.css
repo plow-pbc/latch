@@ -33,6 +33,17 @@
   --volt: #d5ef8a;
   --volt-glow: rgba(213, 239, 138, 0.28);
   --midnight: #01000a;
+  /* The shared switch (switch.css) in this window's colors: the primary
+     button's fill when on — blue here, volt in the dark theme, which keeps
+     switch.css's own look. */
+  --switch-track: var(--hover);
+  --switch-border: var(--border-strong);
+  --switch-knob: var(--faint);
+  --switch-on-track: var(--blue-fg);
+  --switch-on-border: var(--blue-fg);
+  --switch-on-knob: #fff;
+  --switch-on-shadow: none;
+  --switch-focus: var(--focus);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -50,6 +61,9 @@
     --zinc-bg: #1c1c20; --zinc-fg: #b7b7c0; --zinc-bd: #27272a;
     --focus: #93c5fd;
     --dot-off: #e47278;
+    /* `initial` unsets a custom property, so switch.css's volt fallbacks win. */
+    --switch-on-track: initial; --switch-on-border: initial; --switch-on-knob: initial;
+    --switch-on-shadow: initial;
   }
 }
 
@@ -508,7 +522,6 @@ textarea.text { min-height: 70px; resize: vertical; }
 .plugin-row { grid-template-columns: 8px 1fr auto auto; }
 .plugin-req { grid-template-columns: 8px 1fr auto; }
 .plugin-name { display: flex; align-items: center; gap: 8px; }
-.plugin-switch { margin-top: 0; }
 /* Settings holds the permission inventory in a container of its own so it can
    be drawn and refreshed as one thing; `contents` keeps its cards in the
    pane's own column, and the last one keeps the gap before what follows. */

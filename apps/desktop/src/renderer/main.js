@@ -8,7 +8,7 @@ import {
   PURPOSE_PLACEHOLDER,
 } from "./approvals.js";
 
-import { el, icon } from "./dom.js";
+import { el, icon, switchEl } from "./dom.js";
 import { singleFlight } from "./onboardingAction.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 import {
@@ -2296,7 +2296,7 @@ async function renderPlugins() {
 
   const pluginRow = (r) => {
     const s = STATUS[r.status];
-    const box = el("input", { attrs: { type: "checkbox" } });
+    const box = el("input", { attrs: { type: "checkbox", "aria-label": `Turn ${r.title} on or off` } });
     box.checked = r.status !== "off";
     box.addEventListener("change", async () => {
       box.disabled = true;
@@ -2317,7 +2317,7 @@ async function renderPlugins() {
         r.description ? el("div", { class: "cap-sub", text: r.description }) : null,
       ]),
       badge(s.tone, s.word),
-      el("label", { class: "check plugin-switch", attrs: { title: "Turn this plugin on or off" } }, [box]),
+      switchEl(box, { title: "Turn this plugin on or off" }),
     ]);
     return el("div", { class: "cap-group open" }, [
       head,

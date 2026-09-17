@@ -2,7 +2,7 @@
    state after each action; this file only redraws that state inside one
    persistent shell. The page is sandboxed and receives no Node primitives. */
 
-import { el, icon } from "./dom.js";
+import { el, icon, switchEl } from "./dom.js";
 import { googleConnectorCard } from "./connectorsCard.js";
 import { singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
@@ -384,11 +384,7 @@ function toggleRow(box, strong, detail, extra = []) {
       ]),
       ...extra,
     ]),
-    el("label", { class: "switch" }, [
-      box,
-      el("span", { class: "track", attrs: { "aria-hidden": "true" } }),
-      el("span", { class: "knob", attrs: { "aria-hidden": "true" } }),
-    ]),
+    switchEl(box),
   ]);
 }
 

@@ -99,3 +99,14 @@ export function icon(name, opts = {}) {
   }
   return svg;
 }
+
+/** The on/off switch (switch.css) around a checkbox `box`: the input stays
+ *  the control — check it, disable it, listen to it — and the track and knob
+ *  draw its state. `attrs` go on the label (a title, say). */
+export function switchEl(box, attrs) {
+  return el("label", { class: "switch", attrs }, [
+    box,
+    el("span", { class: "track", attrs: { "aria-hidden": "true" } }),
+    el("span", { class: "knob", attrs: { "aria-hidden": "true" } }),
+  ]);
+}

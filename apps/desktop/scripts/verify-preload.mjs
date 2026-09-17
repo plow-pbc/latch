@@ -1464,7 +1464,7 @@ app.whenReady().then(async () => {
       saysReady: (gog?.textContent ?? "").includes("Ready"),
       noRequirement: !document.querySelector(".plugin-req"),
       // The switch is on, and it is a real control (the off switch).
-      switchesOn: [...document.querySelectorAll(".plugin-switch input")].every((b) => b.checked),
+      switchesOn: [...document.querySelectorAll(".plugin-row .switch input")].every((b) => b.checked),
     };
   }})()`);
   // With no account connected: the off switch answers with the fresh state, and
@@ -1472,7 +1472,7 @@ app.whenReady().then(async () => {
   // only when they turn it back on, which names the account and offers the fix.
   const connectedAccounts = connectorProbe.google.accounts;
   connectorProbe.google.accounts = [];
-  const flipGog = () => win.webContents.executeJavaScript(`(${gogRow}).querySelector(".plugin-switch input").click(), true`);
+  const flipGog = () => win.webContents.executeJavaScript(`(${gogRow}).querySelector(".switch input").click(), true`);
   await flipGog();
   await waitFor(win, `(${gogRow})?.textContent.includes("Off")`, "the disabled plugin");
   const pluginOff = await win.webContents.executeJavaScript(`({
