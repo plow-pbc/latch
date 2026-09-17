@@ -233,7 +233,11 @@ const connectorProbe = {
     ],
   },
 };
-ipcMain.handle("connectors:refresh", async () => connectorProbe);
+let connectorRefreshes = 0;
+ipcMain.handle("connectors:refresh", async () => {
+  connectorRefreshes += 1;
+  return connectorProbe;
+});
 ipcMain.handle("connectors:connect", async () => connectorProbe);
 ipcMain.handle("connectors:disconnect", async () => connectorProbe);
 ipcMain.handle("connectors:setDefault", async () => connectorProbe);
@@ -1443,9 +1447,13 @@ app.whenReady().then(async () => {
   }})()`);
 
   // The Plugins tab: the row, its CLI badge and skill description, and the
-  // unmet account with the button that fixes it.
+  // unmet account with the button that fixes it. Opening the tab asks Plow for
+  // the accounts: main holds none until asked, so a tab that only read them
+  // told a launch with Google connected that it needed setup.
+  const refreshesBeforePlugins = connectorRefreshes;
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("plugins")`);
   await waitFor(win, `document.querySelectorAll(".plugin-row").length === 1`, "the Plugins tab");
+  await waitForNode(() => connectorRefreshes > refreshesBeforePlugins, "the Plugins tab loading the connected accounts");
   const plugins = await win.webContents.executeJavaScript(`(${() => {
     const rows = [...document.querySelectorAll(".plugin-row")];
     const gog = rows.find((r) => r.querySelector(".plugin-name span")?.textContent === "gog");
