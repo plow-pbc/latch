@@ -73,11 +73,12 @@ have hidden.
 availability — one slot, or finding a time — read the window across every
 shown calendar: \`calendar freebusy --cal <ids> --account <email>\` for the
 busy intervals, and \`calendar events --calendars <ids> --account <email>\`
-when you need the event names too. \`calendar conflicts\` answers a different
-question: it lists commitments that overlap EACH OTHER, so an empty result
-means nothing is double-booked, NOT that the owner is free — a single event
-sitting alone in the window appears in neither, and reading that as free tells
-the owner they are available when they are not.
+when you need the event names too. \`calendar conflicts\` answers a narrower
+question: it pairs commitments that overlap each other on DIFFERENT calendars,
+and skips two that overlap on the SAME one. An empty result therefore proves
+only that no two of the owner's calendars collide — not that the owner is
+free, and not even that nothing is double-booked. Reading it as availability
+tells the owner they are available when they are not.
 
     ["plow-gog", "accounts"]
 

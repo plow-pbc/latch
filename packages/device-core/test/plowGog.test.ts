@@ -717,13 +717,14 @@ describe("the Google Workspace skill", () => {
     }
   });
 
-  // gog's conflicts verb reports commitments that overlap EACH OTHER, so an
-  // owner with one 2pm commitment gets an empty result — read as free, once,
-  // for a real owner.
+  // gog's conflicts verb pairs commitments across calendars and skips
+  // same-calendar pairs, so an owner with one 2pm commitment gets an empty
+  // result — read as free, once, for a real owner.
   it("sends an availability question to a busy-time read, not to the conflict verb", () => {
     expect(GOG_SKILL.body).toContain('**"Am I free at 2pm?" is a busy-time read, never a conflict check.**');
     expect(GOG_SKILL.body).toContain("calendar freebusy --cal <ids> --account <email>");
     expect(GOG_SKILL.body).toContain("calendar events --calendars <ids> --account <email>");
-    expect(GOG_SKILL.body).toContain("NOT that the owner is free");
+    expect(GOG_SKILL.body).toContain("skips two that overlap on the SAME one");
+    expect(GOG_SKILL.body).toContain("not that the owner is\nfree, and not even that nothing is double-booked");
   });
 });
