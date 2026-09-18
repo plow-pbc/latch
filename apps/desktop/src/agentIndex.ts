@@ -10,6 +10,8 @@
 import { REQUEST_TIMEOUT_MS } from "./plowApi.js";
 
 export const AGENT_INDEX_URL = "https://agent-index-server.vercel.app/v1/agents";
+/** Plow builds its provider id from the Index's bare `agent_id`: `life` is `exe:life`. */
+const PLOW_PROVIDER_PREFIX = "exe:";
 
 export interface AgentIndexEntry {
   blurb: string | null;
@@ -18,7 +20,7 @@ export interface AgentIndexEntry {
   successRate: number | null;
 }
 
-/** Keyed on the Index's `agent_id`, which is Plow's provider id. */
+/** Keyed on Plow's provider id, so a `/v1/signup` provider looks itself up. */
 export type AgentIndex = Record<string, AgentIndexEntry>;
 
 export async function fetchAgentIndex(fetchImpl: typeof fetch = fetch): Promise<AgentIndex> {
@@ -37,14 +39,13 @@ export function parseAgentIndex(json: unknown): AgentIndex {
     const row = raw as Record<string, unknown>;
     if (typeof row.agent_id !== "string" || !row.agent_id || !text(row.deployable_at)) continue;
     const builder = row.builder && typeof row.builder === "object" ? (row.builder as Record<string, unknown>).name : null;
-    entries.push([row.agent_id, {
+    entries.push([`${PLOW_PROVIDER_PREFIX}${row.agent_id}`, {
       blurb: text(row.blurb),
       builder: text(builder),
       users: Number.isInteger(row.users) && (row.users as number) >= 0 ? row.users as number : 0,
       successRate: Number.isInteger(row.install_success) ? row.install_success as number : null,
     }]);
   }
-  // fromEntries defines own properties, so an id like "__proto__" stays data.
   return Object.fromEntries(entries);
 }
 
