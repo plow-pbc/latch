@@ -470,26 +470,31 @@ export function conflictRefusal(
 }
 
 /**
- * The busy intervals in one account's `calendar freebusy --json` output, or
- * null when it did not answer readably.
+ * The busy intervals in one account's `calendar freebusy` output, or null
+ * when no calendar in it answered.
  *
- * gog prints `{calendars: {<id>: {busy: [...], errors: [...]}}}`. A calendar
- * gog could not query carries `errors` and no `busy`: that is a HOLE, not a
- * free calendar, so the whole account counts as unchecked rather than clear.
+ * gog prints `{calendars: {<id>: {busy: [...], errors: [...]}}}`, and under
+ * `--results-only` that inner map on its own. A calendar carries `errors`
+ * when Google would not answer free/busy for it at all — the owner's
+ * subscribed holiday calendar does this every time — so one erroring
+ * calendar cannot mean "unchecked", or the gate would refuse every booking
+ * forever. An account is unchecked only when NOTHING answered.
  */
-export function freeBusyIntervals(
-  parsed: unknown,
-): { start: string; end: string }[] | null {
-  const calendars = (parsed as { calendars?: unknown } | null)?.calendars;
-  if (calendars === null || typeof calendars !== "object") return null;
+export function freeBusyIntervals(parsed: unknown): { start: string; end: string }[] | null {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const wrapper = (parsed as { calendars?: unknown }).calendars;
+  const calendars = wrapper !== undefined && wrapper !== null && typeof wrapper === "object" ? wrapper : parsed;
   const intervals: { start: string; end: string }[] = [];
+  let answered = 0;
   for (const value of Object.values(calendars as Record<string, unknown>)) {
     const row = value as { busy?: unknown; errors?: unknown } | null;
-    if (Array.isArray(row?.errors) && row.errors.length > 0) return null;
-    for (const span of Array.isArray(row?.busy) ? row.busy : []) {
+    if (row === null || typeof row !== "object") continue;
+    if (Array.isArray(row.errors) && row.errors.length > 0) continue;
+    answered += 1;
+    for (const span of Array.isArray(row.busy) ? row.busy : []) {
       const { start, end } = (span ?? {}) as { start?: unknown; end?: unknown };
       if (typeof start === "string" && typeof end === "string") intervals.push({ start, end });
     }
   }
-  return intervals;
+  return answered === 0 ? null : intervals;
 }

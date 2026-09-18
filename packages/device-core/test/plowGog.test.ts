@@ -706,17 +706,23 @@ describe("freeBusyIntervals", () => {
     ]);
   });
 
-  it("treats a calendar it could not query as a hole, not as free time", () => {
-    // Clear-looking and wrong: the other calendar answered "not busy", and
-    // reading the pair as free would book over whatever the broken one holds.
-    expect(
-      freeBusyIntervals({
-        calendars: {
-          primary: { busy: [] },
-          "gone@group.calendar.google.com": { errors: [{ reason: "notFound" }] },
-        },
-      }),
-    ).toBeNull();
+  it("reads the bare calendar map --results-only prints, not only the wrapped one", () => {
+    expect(freeBusyIntervals({ primary: { busy: [{ start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" }] } })).toEqual([
+      { start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" },
+    ]);
+  });
+
+  it("keeps going when one calendar will not answer, and gives up when none will", () => {
+    // Google refuses free/busy for a subscribed holiday calendar every time,
+    // and that calendar is one the owner shows: treating it as a hole would
+    // refuse every booking forever. An account is unchecked only when
+    // nothing answered at all.
+    const holiday = { "en.usa#holiday@group.v.calendar.google.com": { errors: [{ reason: "notFound" }] } };
+    expect(freeBusyIntervals({ ...holiday, primary: { busy: [{ start: "a", end: "b" }] } })).toEqual([
+      { start: "a", end: "b" },
+    ]);
+    expect(freeBusyIntervals({ ...holiday, primary: {} })).toEqual([]);
+    expect(freeBusyIntervals(holiday)).toBeNull();
   });
 
   it("answers null for output that carries no calendars at all", () => {
