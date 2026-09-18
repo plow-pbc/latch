@@ -115,6 +115,7 @@ export function parseManifest(raw: string): PluginManifest {
   const name = typedString(m.name, "manifest name") ?? "";
   if (!SLUG.test(name)) fail("manifest name must be lowercase letters, digits and dashes");
   const title = typedString(m.title, "manifest title");
+  if (title !== undefined && !title.trim()) fail("manifest title must not be blank");
   const command = typedString(m.command, "manifest command") ?? "";
   if (!SLUG.test(command)) fail("manifest command must be lowercase letters, digits and dashes");
   const version = typedString(m.version, "manifest version") ?? "";
