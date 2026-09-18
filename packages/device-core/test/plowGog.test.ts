@@ -774,6 +774,11 @@ describe("the Google Workspace skill", () => {
     expect(GOG_SKILL.body).toContain("calendar events --calendars <ids> --account <email>");
     expect(GOG_SKILL.body).toContain("skips two that overlap on the SAME one");
     expect(GOG_SKILL.body).toContain("two commitments on different accounts are never compared");
+    // The page has to say what the gate does: it skips these before asking,
+    // so an agent told to read "every shown calendar" would keep a hole the
+    // gate does not have.
+    expect(GOG_SKILL.body).toContain("Leave out the holiday subscriptions (ids ending\n`@group.v.calendar.google.com`)");
+    expect(GOG_SKILL.body).toContain("shown calendar except those holiday subscriptions");
     expect(GOG_SKILL.body).toContain("not that the owner is free, and not even\nthat nothing is double-booked");
   });
 });

@@ -67,11 +67,14 @@ calendar, a second work calendar, an old address. For availability, list them
 first (\`calendar calendars\` fans out) and read every one the owner shows
 (\`selected: true\`), one account at a time: \`--calendars <ids> --account
 <that account>\`. \`--all\` is not the same: it also reads the calendars they
-have hidden.
+have hidden. Leave out the holiday subscriptions (ids ending
+\`@group.v.calendar.google.com\`): Google answers free/busy for them with an
+error every time, and nobody schedules around them.
 
 **"Am I free at 2pm?" is a busy-time read, never a conflict check.** For
 availability — one slot, or finding a time — read the window across every
-shown calendar: \`calendar freebusy --cal <ids> --account <email>\` for the
+shown calendar except those holiday subscriptions:
+\`calendar freebusy --cal <ids> --account <email>\` for the
 busy intervals, and \`calendar events --calendars <ids> --account <email>\`
 when you need the event names too. \`calendar conflicts\` answers a narrower
 question: it pairs commitments that overlap each other on DIFFERENT calendars,
@@ -132,8 +135,8 @@ naming it — and the override itself is blocked and nothing is
 booked: say so, without redirecting the conversation elsewhere.
 
 Here that check is a \`calendar create\` with timed \`--from\`/\`--to\`. It is
-a free/busy read over every calendar the owner shows, on every connected
-account, and the refusal carries the BUSY TIMES it found per account plus any
+a free/busy read over every calendar the owner shows except the holiday
+subscriptions, on every connected account, and the refusal carries the BUSY TIMES it found per account plus any
 account that could not be checked — no titles, so read the window with
 \`calendar events\` if you want the names. All-day (date-only) events skip the
 check.
