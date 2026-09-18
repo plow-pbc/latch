@@ -2325,6 +2325,13 @@ app.whenReady().then(async () => {
       mainWindow?.webContents.send("connectors:changed", state);
     },
   });
+  // While no account is known, keep asking: a failed refresh, or an account
+  // connected outside this app (Plow hands agents a connect link), must not
+  // leave a plugin that needs one off until the next reconnect. The other
+  // direction needs no poll — a stale account fails loudly at the mint.
+  setInterval(() => {
+    if (connected && connectedAccountIds().length === 0) void connectors?.refresh();
+  }, 60_000);
   await startRelay();
 
   onboarding = new Onboarding({
