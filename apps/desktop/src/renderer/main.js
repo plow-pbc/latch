@@ -1718,8 +1718,12 @@ async function deployAgent(panel, card, redraw) {
   const token = {};
   cloudModal.deployToken = token;
   const current = () => cloudModal?.deployToken === token;
+  for (const button of panel.querySelectorAll("button")) button.disabled = true;
   if (!await window.domo.cloudNewAgentMessages(card.id)) {
-    if (current()) panel.querySelector(".deploy-note").textContent = "Could not open Messages. Refresh and try again.";
+    if (current()) {
+      panel.querySelector(".deploy-note").textContent = "Could not open Messages. Refresh and try again.";
+      for (const button of panel.querySelectorAll("button")) button.disabled = false;
+    }
     return;
   }
   if (!current()) return;
