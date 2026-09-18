@@ -1461,12 +1461,12 @@ app.whenReady().then(async () => {
   // something asks Plow. Google is connected, so the tab asks and settles on
   // Ready with no requirement — not the reconnect prompt the owner saw.
   probeAccountsLoaded = false;
-  const gogRow = `[...document.querySelectorAll(".plugin-row")].find((r) => r.querySelector(".plugin-name span")?.textContent === "gog")`;
+  const gogRow = `[...document.querySelectorAll(".plugin-row")].find((r) => r.querySelector(".plugin-name span")?.textContent === "Gmail and Google Calendar")`;
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("plugins")`);
   await waitFor(win, `(${gogRow})?.textContent.includes("Ready")`, "the Plugins tab to find Google connected");
   const plugins = await win.webContents.executeJavaScript(`(${() => {
     const rows = [...document.querySelectorAll(".plugin-row")];
-    const gog = rows.find((r) => r.querySelector(".plugin-name span")?.textContent === "gog");
+    const gog = rows.find((r) => r.querySelector(".plugin-name span")?.textContent === "Gmail and Google Calendar");
     return {
       names: rows.map((r) => r.querySelector(".plugin-name span")?.textContent),
       cliBadges: rows.every((r) => r.querySelector(".plugin-name .badge")?.textContent.trim() === "CLI"),
@@ -1691,7 +1691,7 @@ app.whenReady().then(async () => {
     capabilities.noBanner &&
     blockLanding.namesASwitch === "settings" &&
     blockLanding.namesNoSwitch === "audit" &&
-    plugins.names.join("|") === "gog" &&
+    plugins.names.join("|") === "Gmail and Google Calendar" &&
     plugins.cliBadges &&
     plugins.describes &&
     plugins.saysReady &&
