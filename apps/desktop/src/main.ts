@@ -1381,28 +1381,27 @@ async function capabilityIcons(view: CapabilitiesView): Promise<Record<string, s
 }
 
 /**
- * Automation consent for every app the tab offers, read passively through
- * the helper and reconciled with the memo: a conclusive answer is written
- * back, so a pair the owner turned off in System Settings shows denied and
- * STAYS denied after the target app quits (macOS declines to say for a quit
- * app). Adopted from the apple-events branch.
+ * Automation consent for every app the tab offers, taken from the inventory's
+ * own sweep (never probed a second time — on a target that does not answer
+ * Apple events each sweep costs the probe timeout) and reconciled with the
+ * memo: a conclusive answer is written back, so a pair the owner turned off in
+ * System Settings shows denied and STAYS denied after the target app quits
+ * (macOS declines to say for a quit app). Adopted from the apple-events branch.
  */
-async function automationRows(): Promise<{ app: (typeof AUTOMATION_APPS)[number]; status: AutomationStatus }[]> {
+function automationRows(inventory: HostInventory | null): { app: (typeof AUTOMATION_APPS)[number]; status: AutomationStatus }[] {
   const settings = loadSettings(home);
   const memo = { ...(settings.automation ?? {}) };
   let changed = false;
-  const rows = await Promise.all(
-    AUTOMATION_APPS.map(async (app) => {
-      const live = device ? await device.hostProbes.automationStatus(app.bundleId) : ("unknown" as const);
-      const r = reconcile(live, memo[app.bundleId]);
-      if (r.changed) {
-        changed = true;
-        if (r.memo === undefined) delete memo[app.bundleId];
-        else memo[app.bundleId] = r.memo as "granted" | "denied" | "not_asked";
-      }
-      return { app, status: r.status };
-    }),
-  );
+  const rows = AUTOMATION_APPS.map((app) => {
+    const live = inventory?.automation.find((a) => a.target === app.name)?.status ?? ("unknown" as const);
+    const r = reconcile(live, memo[app.bundleId]);
+    if (r.changed) {
+      changed = true;
+      if (r.memo === undefined) delete memo[app.bundleId];
+      else memo[app.bundleId] = r.memo as "granted" | "denied" | "not_asked";
+    }
+    return { app, status: r.status };
+  });
   if (changed) saveSettings(home, { ...loadSettings(home), automation: memo });
   return rows;
 }
@@ -1414,7 +1413,7 @@ async function capabilitiesNow(inventory?: HostInventory | null): Promise<Capabi
   const settings = loadSettings(home);
   return capabilitiesView({
     inventory: inv,
-    automation: await automationRows(),
+    automation: automationRows(inv),
     // The log as the live index holds it — not read off disk again.
     events: device ? ensureAuditIndex().events() : [],
     dismissals: settings.capabilityDismissals ?? {},

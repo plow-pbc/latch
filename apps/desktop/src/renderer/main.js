@@ -1890,8 +1890,13 @@ function whenText(iso) {
  * Returns the drawn container and how to refresh it; `display: contents`
  * keeps its cards in Settings' own column.
  */
-async function permissionsPane() {
-  const panel = el("div", { class: "permissions" });
+function permissionsPane() {
+  // The inventory is a probe sweep — seconds on a Mac where a target app is
+  // not answering Apple events — so the node is handed back at once with this
+  // line in it, and the rows replace it when the read lands.
+  const panel = el("div", { class: "permissions" }, [
+    el("p", { class: "faint", text: "Checking this Mac's permissions…" }),
+  ]);
   const openRows = new Set();
   // Which groups are open. Seeded from the model on first sight of each
   // group (a group with blocked requests inside opens itself), then the
@@ -2215,7 +2220,7 @@ async function permissionsPane() {
     icons = c.icons ?? icons;
     draw(c.view);
   };
-  await load();
+  void load();
   return {
     node: panel,
     mounted: {
@@ -2503,13 +2508,11 @@ async function renderSettings() {
     ]);
   };
 
-  // What a status change re-reads: display nodes only, every one of them read
-  // back from main rather than remembered here.
   // The permission inventory and the connected accounts, which used to be a
-  // tab of their own: the machine-configuration view, where it belongs. Drawn
-  // before the pane is assembled so a switch is on screen with everything else.
-  const permissions = await permissionsPane();
-  if (generation !== settingsRenderGeneration || currentTab !== "settings") return;
+  // tab of their own: the machine-configuration view, where it belongs. Not
+  // awaited — selecting a tab never waits on a probe sweep (#446); the rows
+  // fill in when the read lands.
+  const permissions = permissionsPane();
   permissionsMounted = permissions.mounted;
 
   const mounted = {
