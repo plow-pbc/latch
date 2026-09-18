@@ -53,7 +53,8 @@ async function fetchLogo(url: string, fetchImpl: typeof fetch): Promise<string |
   const cached = logos.get(url);
   if (cached) return cached;
   try {
-    const response = await fetchImpl(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    // A redirect would leave the Index's host.
+    const response = await fetchImpl(url, { redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (!response.ok) return null;
     const bytes = Buffer.from(await response.arrayBuffer());
     if (bytes.length > LOGO_MAX_BYTES || !PNG_SIGNATURE.every((byte, i) => bytes[i] === byte)) return null;
