@@ -78,4 +78,8 @@ describe("deployCards", () => {
       { id: "hermes", name: " hermes", initial: "H", blurb: null, byline: "No description yet" },
     ]);
   });
+
+  it.each([["🦊 Fox", "🦊"], ["", "?"]])("takes %j's initial as one whole character", (name, initial) => {
+    expect(deployCards([provider("x", name)], {})[0]?.initial).toBe(initial);
+  });
 });

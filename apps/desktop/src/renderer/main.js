@@ -1674,10 +1674,6 @@ const NEW_AGENT_HIGHLIGHT_MS = 2500; // .cloud-agent-new's animation in styles.c
 
 /** The deploy picker: a card per agent Plow offers, described by the Agent Index. */
 function openDeployModal(trigger, s, redraw) {
-  const panel = openCloudModal(trigger, [], null);
-  if (!panel) return;
-  panel.classList.add("deploy-modal");
-  Object.assign(cloudModal, { kind: "deploy", selected: null, deployToken: null });
   const cards = deployCards(s.cloudProviders ?? [], s.cloudAgentIndex ?? {});
   const deploy = el("button", { class: "btn primary", text: "Deploy" });
   deploy.disabled = true;
@@ -1705,8 +1701,7 @@ function openDeployModal(trigger, s, redraw) {
     });
     return button;
   }));
-  deploy.addEventListener("click", () => void deployAgent(panel, cloudModal.selected, redraw));
-  panel.replaceChildren(
+  const panel = openCloudModal(trigger, [
     el("div", { class: "deploy-head" }, [
       el("div", { class: "group-title", text: "Deploy an agent" }),
       el("span", { class: "faint", text: `${cards.length} agent${cards.length === 1 ? "" : "s"}` }),
@@ -1717,7 +1712,11 @@ function openDeployModal(trigger, s, redraw) {
       cancel,
       deploy,
     ]),
-  );
+  ], grid.firstElementChild);
+  if (!panel) return;
+  panel.classList.add("deploy-modal");
+  Object.assign(cloudModal, { kind: "deploy", selected: null, deployToken: null });
+  deploy.addEventListener("click", () => void deployAgent(panel, cloudModal.selected, redraw));
 }
 
 /** Open Messages with the card's setup text, then wait for the agent it makes.
@@ -1727,7 +1726,7 @@ async function deployAgent(panel, card, redraw) {
   cloudModal.deployToken = token;
   const current = () => cloudModal?.deployToken === token;
   for (const button of panel.querySelectorAll("button")) button.disabled = true;
-  if (!await window.domo.cloudNewAgentMessages(card.id)) {
+  if (!await window.domo.cloudNewAgentMessages(card.id).catch(() => false)) {
     if (current()) {
       panel.querySelector(".deploy-note").textContent = "Could not open Messages. Refresh and try again.";
       for (const button of panel.querySelectorAll("button")) button.disabled = false;

@@ -84,7 +84,7 @@ export function deployCards(providers: CloudAgentProvider[], index: AgentIndex):
     .map(({ provider, entry }) => ({
       id: provider.id,
       name: provider.name,
-      initial: (provider.name.trim()[0] ?? "?").toUpperCase(),
+      initial: ([...provider.name.trim()][0] ?? "?").toUpperCase(),
       blurb: entry?.blurb ?? null,
       byline: entry ? byline(entry) : "No description yet",
     }));
