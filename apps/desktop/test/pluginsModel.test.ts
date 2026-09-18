@@ -9,9 +9,9 @@ import { describe, expect, it } from "vitest";
 import { BROWSER_PLUGIN, parseManifest, type PluginManifest } from "@domo/device-core";
 import { browserPluginRow, BROWSER_RUNTIME, pluginRows, SAFARI_JAVASCRIPT, type PluginsInput } from "../src/pluginsModel.js";
 
-const manifest = (requires: object, name = "wiki"): PluginManifest =>
+const manifest = (requires: object, name = "wiki", title?: string): PluginManifest =>
   parseManifest(JSON.stringify({
-    name, version: "1", command: name,
+    name, title, version: "1", command: name,
     exec: { argv: ["/bin/sh", "cli.sh"] },
     argv: { read: [["index"]], write: [["init"]] },
     requires,
@@ -72,6 +72,14 @@ describe("the shipped plugins", () => {
     const [row] = pluginRows({ plugins: [{ manifest: shipped("gog"), enabled: true }], connectedAccounts: connected });
     expect(row).toMatchObject({ name: "gog", status, unmet });
   });
+
+  it.each([
+    ["gog", "Gmail and Google Calendar"],
+    ["wiki", "Obsidian-style wiki"],
+  ])("titles %s as the owner reads it: %s", (name, title) => {
+    const [row] = pluginRows({ plugins: [{ manifest: shipped(name), enabled: true }], connectedAccounts: [] });
+    expect(row).toMatchObject({ name, title });
+  });
 });
 
 describe("browserPluginRow", () => {
@@ -88,8 +96,11 @@ describe("browserPluginRow", () => {
     expect(row.unmet).toEqual(unmet);
   });
 
-  it("every manifest plugin row is a CLI titled by its name", () => {
-    const [row] = pluginRows({ plugins: [{ manifest: manifest(none, "gog"), enabled: true }], connectedAccounts: [] });
-    expect(row).toMatchObject({ kind: "CLI", title: row!.name });
+  it.each([
+    ["its manifest title", "Mail", "Mail"],
+    ["its name when the manifest has no title", undefined, "gog"],
+  ])("every manifest plugin row is a CLI titled by %s", (_what, title, expected) => {
+    const [row] = pluginRows({ plugins: [{ manifest: manifest(none, "gog", title), enabled: true }], connectedAccounts: [] });
+    expect(row).toMatchObject({ kind: "CLI", title: expected });
   });
 });

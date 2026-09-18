@@ -31,6 +31,7 @@ export interface PluginRequires {
 
 export interface PluginManifest {
   name: string; // ^[a-z][a-z0-9-]{0,31}$
+  title?: string; // what the owner reads on the Plugins tab; absent, the tab shows `name`
   version: string;
   command: string; // same charset as name; argv[0] agents type
   runtime: {
@@ -113,6 +114,7 @@ export function parseManifest(raw: string): PluginManifest {
 
   const name = typedString(m.name, "manifest name") ?? "";
   if (!SLUG.test(name)) fail("manifest name must be lowercase letters, digits and dashes");
+  const title = typedString(m.title, "manifest title");
   const command = typedString(m.command, "manifest command") ?? "";
   if (!SLUG.test(command)) fail("manifest command must be lowercase letters, digits and dashes");
   const version = typedString(m.version, "manifest version") ?? "";
@@ -202,6 +204,7 @@ export function parseManifest(raw: string): PluginManifest {
 
   return {
     name,
+    ...(title === undefined ? {} : { title }),
     version,
     command,
     runtime: { binaries },

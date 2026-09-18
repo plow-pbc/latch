@@ -72,6 +72,7 @@ describe("parseManifest", () => {
     ["an empty daemon argv", withPatch({ daemon: { argv: [], health: "/health" } }), "daemon needs argv and health"],
     ["a non-string name", withPatch({ name: true }), "manifest name must be a string"],
     ["a non-string command", withPatch({ command: true }), "manifest command must be a string"],
+    ["a non-string title", withPatch({ title: 7 }), "manifest title must be a string"],
     ["a binary with a non-string name", withPatch({ runtime: { binaries: [{ name: true, url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }] } }), "binary name must be a string"],
     ["a runtime.binaries that is not an array", withPatch({ runtime: { binaries: "nope" } }), "runtime.binaries must be an array"],
     ["an argv.read that is not an array", withPatch({ argv: { read: "nope", write: [["put"]] } }), "argv.read must be an array"],

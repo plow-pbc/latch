@@ -1,5 +1,6 @@
 {
   "name": "wiki",
+  "title": "Obsidian-style wiki",
   "version": "0.2.0",
   "command": "wiki",
   "runtime": {

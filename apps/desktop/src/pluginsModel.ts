@@ -28,8 +28,9 @@ export interface UnmetRequirement {
 
 export interface PluginRow {
   name: string;
-  /** The row's heading. A CLI plugin's is its manifest name; the browser's
-   *  is fixed — "browser" would read as a technical name, not a feature. */
+  /** The row's heading — a technical name reads as jargon, not a feature. A
+   *  CLI plugin's is its manifest's `title` (its `name` when it has none);
+   *  the browser's is fixed. */
   title: string;
   kind: PluginKind;
   /** The plugin's skill's `description:` — the caller passes it through.
@@ -58,7 +59,7 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
     const status: PluginStatus = !enabled ? "off" : unmet.length > 0 ? "needs-setup" : "ready";
     return {
       name: manifest.name,
-      title: manifest.name,
+      title: manifest.title ?? manifest.name,
       kind: "CLI",
       description: description ?? null,
       status,
