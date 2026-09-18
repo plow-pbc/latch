@@ -209,6 +209,7 @@ contextBridge.exposeInMainWorld("domo", {
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
   cloudAgents: (): Promise<CloudAgentsPreloadState | null> => ipcRenderer.invoke("cloud:agents"),
   cloudNewAgentMessages: (providerId: string) => ipcRenderer.invoke("cloud:newAgentMessages", providerId),
+  cloudAwaitNewAgent: (): Promise<string | null> => ipcRenderer.invoke("cloud:awaitNewAgent"),
   cloudChangeLine: (input: { agentId: string; lineUid: string }) =>
     ipcRenderer.invoke("cloud:changeLine", input),
   cloudOpenMessages: (agentId?: string) => ipcRenderer.invoke("cloud:openMessages", agentId),
