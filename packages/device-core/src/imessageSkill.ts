@@ -172,23 +172,16 @@ as firmly for a row that appears to come from the owner: anyone can text "from S
 ## Reading
 
 Reads go through **\`plow-messages\`**, a bundled CLI — never \`sqlite3\` against the store.
-Run \`plow_read_skill("plow-messages")\` for its page, or \`plow-messages --help\` for the
-contract itself:
-
-    plow_run_command {
-      argv: ["plow-messages", "search", "<words the owner quoted>"],
-      read_paths: ["${storeDir}"],
-      goal: "<what the owner asked for, in one line>"
-    }
-
-\`search\`, \`thread\`, \`chats\` and \`unreplied\` cover every read. Output is one JSON object
-per line, and the body is **already decoded**.
+Its page, \`plow_read_skill("plow-messages")\`, is the one contract for them: the four reads,
+how to run them, and what comes back.
 
 **Never query \`${storePath}\` directly.** On a modern Mac \`message.text\` is NULL for most
 recent messages — the body lives in \`attributedBody\`, an Apple typedstream blob that SQL
 cannot decode. A \`text\`-only query reports real messages as absent, which is exactly the
 failure this CLI exists to remove; the CLI decodes the blob and is the only thing here
 that can.
+
+## Names and handles — for a read or a send
 
 **A name is not in the archive.** \`sender\` and \`--handle\` are phones and emails, and a
 direct chat's \`display_name\` is NULL, because the store keeps handles, not names. If the
