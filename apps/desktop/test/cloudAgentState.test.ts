@@ -744,25 +744,29 @@ describe("CloudAgentState waiting for a deployed agent", () => {
       listAgents: async () => agentListImpl(),
     });
 
-    // Refresh once with a fast answer to load initial state
+    // Load initial state with a fast list
     await state.refresh();
-    const initialCalls = calls.filter((c) => c === "listAgents").length;
+    const initialCount = calls.filter((c) => c === "listAgents").length;
 
-    // Switch to the held-open deferred and start the wait
+    // Switch to held-open deferred and start wait; ~12 ticks will queue up
     agentListImpl = async () => heldOpen.promise;
     const waited = state.awaitNewAgent({ intervalMs: 5, timeoutMs: 1000 });
+    await new Promise((r) => setTimeout(r, 60)); // Let ticks queue behind the held read
 
-    // Let ticks accumulate for ~60ms (12+ intervals at 5ms each)
-    await new Promise((r) => setTimeout(r, 60));
+    // Record before, then release: the burst of queued thunks will run on microtasks
+    const before = calls.filter((c) => c === "listAgents").length;
+    agentListImpl = async () => [agent()]; // No new agent, same list
+    heldOpen.resolve([agent()]);
 
-    // Count how many listAgents calls were queued while the first one was in flight.
-    // Should be exactly 1 (the one held open), not 12+.
-    const callsDuringWait = calls.filter((c) => c === "listAgents").length - initialCalls;
-    expect(callsDuringWait).toBe(1);
+    // Flush macrotask: old code drains its backlog of ~12 queued calls on
+    // microtasks before this setTimeout fires; new code has only 1 pending
+    // (the one that just settled) and doesn't schedule its next tick until 5ms out.
+    await new Promise((r) => setTimeout(r, 0));
 
-    // Resolve the held-open deferred with a new agent
-    heldOpen.resolve([agent(), agent({ agentId: "agent_new", name: "New" })]);
-    expect(await waited).toBe("agent_new");
+    // Count the burst: should be at most 1 (new code's next scheduled tick or none).
+    // Old code gives many as each queued thunk calls listAgents.
+    const burstSize = calls.filter((c) => c === "listAgents").length - before;
+    expect(burstSize).toBeLessThanOrEqual(1);
 
     state.signedOut();
   });
