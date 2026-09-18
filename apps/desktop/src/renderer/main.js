@@ -2513,6 +2513,7 @@ async function renderSettings() {
   // awaited — selecting a tab never waits on a probe sweep (#446); the rows
   // fill in when the read lands.
   const permissions = permissionsPane();
+  if (generation !== settingsRenderGeneration || currentTab !== "settings") return;
   permissionsMounted = permissions.mounted;
 
   const mounted = {
