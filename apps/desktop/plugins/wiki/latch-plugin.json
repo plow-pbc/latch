@@ -1,18 +1,18 @@
 {
   "name": "wiki",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "command": "wiki",
   "runtime": {
     "binaries": [
       {
         "name": "wiki",
         "url": {
-          "arm64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.1.0/wiki_0.1.0_darwin_arm64.tar.gz",
-          "x64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.1.0/wiki_0.1.0_darwin_amd64.tar.gz"
+          "arm64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.0/wiki_0.2.0_darwin_arm64.tar.gz",
+          "x64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.0/wiki_0.2.0_darwin_amd64.tar.gz"
         },
         "sha256": {
-          "arm64": "a195cebff595ae79096dbacda5a431060f01223186ec670b035429526a2ce6d3",
-          "x64": "af8930681cc861ca5b2480bb830b149d5ff39009c2dab3d69ca46b51e17c8ae1"
+          "arm64": "9c2bedac4df8d30c3889e2af519965a0e4c7505b0552fe646207c311b5a24fd5",
+          "x64": "9e06f389b9c74da6d4866e193cbac8aafa23072c19a92fa01f55b4530f1e536a"
         }
       }
     ]

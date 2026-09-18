@@ -1,9 +1,11 @@
 # wiki (Latch plugin)
 
 Stages [`plow-wiki`](https://github.com/plow-pbc/plow-wiki)'s `wiki` CLI for
-an agent driving this Mac through Latch. The wiki itself is a folder of
-Markdown pages at `~/Plow/wiki`, opened in Obsidian by the owner and written
-by agents and humans alike.
+an agent driving this Mac through Latch. The wiki itself is an LLM wiki —
+Karpathy's pattern, as [obsidian-wiki](https://github.com/Ar9av/obsidian-wiki)
+lays it out — kept in an Obsidian vault at `~/Plow/wiki` whose files are an
+[OKF v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
+bundle, written by agents and humans alike.
 
 The plugin ships the way `gog` does: a sha-pinned, self-contained `wiki`
 binary per architecture under `runtime.binaries`, fetched and verified by
