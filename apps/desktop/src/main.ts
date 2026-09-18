@@ -1564,6 +1564,13 @@ const unsandboxedRunner: Runner = async (argv) => {
   }
 };
 
+/** Connector ids with an account connected — what a manifest's
+ *  `requires.accounts` names. One connector today, and it is connected exactly
+ *  when an account is. */
+function connectedAccountIds(): string[] {
+  return (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [];
+}
+
 /** The whole tab, fresh: what is staged, and what each plugin still needs. */
 async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; error: string | null }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
@@ -1573,8 +1580,7 @@ async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; erro
       enabled: !disabled.has(p.manifest.name),
       description: device?.pluginDescription(p.manifest.name) ?? null,
     })),
-    // One connector today, and it is connected exactly when an account is.
-    connectedAccounts: (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [],
+    connectedAccounts: connectedAccountIds(),
   });
   rows.push(browserPluginRow({
     enabled: !disabled.has(BROWSER_PLUGIN),
@@ -2030,6 +2036,9 @@ async function startRelay(): Promise<void> {
       // Transitions only — the client can restate an unchanged status.
       if (isConnected !== connected) {
         telemetry?.track(isConnected ? "relay_connected" : "relay_disconnected");
+        // Main holds no accounts until it asks Plow, and the device gates
+        // plugins on them — so every (re)connect asks, window open or not.
+        if (isConnected) void connectors?.refresh();
       }
       connected = isConnected;
       notifyRenderer("status:changed");
@@ -2302,6 +2311,20 @@ app.whenReady().then(async () => {
   device.audit.events.on("recorded", (entry) => telemetry?.auditEntryRecorded(entry));
   // The version rides the MCP handshake, so it has to be the app's real one.
   mcp = createDomoMcpServer(device, { version: app.getVersion() });
+  // Before the relay starts: its first connect refreshes these, and a plugin
+  // that needs an account is off on the device until one is known.
+  connectors = new Connectors({
+    api: new PlowApi(apiBaseUrl),
+    credential: () => loadSettings(home).relayCredential,
+    openExternal: (url) => shell.openExternal(url),
+    recordAudit: (event, fields) => device?.audit.record(event, fields),
+    onChange: () => {
+      const state = connectors?.state();
+      device?.setConnectedAccounts(connectedAccountIds());
+      onboardingWindow?.webContents.send("connectors:changed", state);
+      mainWindow?.webContents.send("connectors:changed", state);
+    },
+  });
   await startRelay();
 
   onboarding = new Onboarding({
@@ -2315,17 +2338,6 @@ app.whenReady().then(async () => {
     applyAvailabilityDefault: () => {
       keepAwake?.setEnabled(true);
       setLaunchAtLogin(app.isPackaged, loginItems, true);
-    },
-  });
-  connectors = new Connectors({
-    api: new PlowApi(apiBaseUrl),
-    credential: () => loadSettings(home).relayCredential,
-    openExternal: (url) => shell.openExternal(url),
-    recordAudit: (event, fields) => device?.audit.record(event, fields),
-    onChange: () => {
-      const state = connectors?.state();
-      onboardingWindow?.webContents.send("connectors:changed", state);
-      mainWindow?.webContents.send("connectors:changed", state);
     },
   });
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));

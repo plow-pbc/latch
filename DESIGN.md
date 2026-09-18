@@ -753,9 +753,11 @@ inventory, so a new skill cannot make it drift. A skill naming a capability this
 Mac lacks is a guaranteed denial, so its absence is the honest answer instead. Every probe runs once, in
 the `DeviceAgent` constructor — installing WhatsApp, or staging a plugin,
 after launch needs a restart to publish the skill. The one live exception is
-the owner's plugin off switch: `syncPluginSkills` owns that lifecycle,
+whether a plugin is on — the owner's off switch, and a connected account for
+each one its manifest `requires`: `syncPluginSkills` owns that lifecycle,
 publishing each staged plugin's skill while it is on and loading the owner's
-own `device/skills` files last, at launch and on every toggle. A provider carries its skill
+own `device/skills` files last, at launch, on every toggle and on every change
+to the connected accounts. A provider carries its skill
 on its registry row rather than being registered under a literal elsewhere, so
 the provider's name has one spelling and a rename cannot silently unpublish it.
 `whatsapp-history` is also why the registry takes a *built* skill and not only

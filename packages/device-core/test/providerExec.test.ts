@@ -79,7 +79,8 @@ function tmp(): string {
  * digest are placeholders — nothing here downloads anything.
  */
 const GOG_MANIFEST = {
-  name: "gog", version: "test", command: "gog",
+  name: "gog", version: "test", command: "plow-gog",
+  requires: { accounts: ["google"] },
   runtime: {
     binaries: [{
       name: "gog", version: "test",
@@ -103,8 +104,9 @@ function gogPlugin(): StagedPlugin[] {
   return stagedGog('#!/bin/sh\necho "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*"\n');
 }
 
+/** A device with a Google account connected, as a paired Mac with one is. */
 function device(minter: Minter | null, plugins: StagedPlugin[], home: string = tmp()): DeviceAgent {
-  return new DeviceAgent(
+  const d = new DeviceAgent(
     home,
     "Test Mac",
     new HeadlessPolicy({ intent: "allow_once" }),
@@ -113,6 +115,8 @@ function device(minter: Minter | null, plugins: StagedPlugin[], home: string = t
     minter,
     plugins,
   );
+  d.setConnectedAccounts(["google"]);
+  return d;
 }
 
 /**
@@ -1164,32 +1168,47 @@ esac
 });
 
 /**
- * The owner's off switch (`setDisabledPlugins`), which the Plugins tab drives.
+ * A plugin that is off: the owner's switch (`setDisabledPlugins`), which the
+ * Plugins tab drives, or an account its manifest requires that is not
+ * connected (`setConnectedAccounts`).
  *
  * Off is asserted where it has to hold rather than on the setter: the skill is
  * withdrawn from what `plow_list_skills` advertises, and the command is
  * refused at the pre-intent chokepoint with nothing spawned — the same two
  * consequences a plugin that was never staged has.
  */
-describe("a plugin the owner turned off", () => {
+describe("a plugin that is off", () => {
   const GOG_SKILL = providerFor(["plow-gog"])!.skill.name;
   const publishes = (d: DeviceAgent): boolean => d.skills.manifest().some((s) => s.name === GOG_SKILL);
 
-  it("unpublishes the skill and refuses the command, and both come back when it is turned on", async () => {
+  it.each([
+    {
+      when: "the owner turns it off",
+      off: (d: DeviceAgent) => d.setDisabledPlugins(["gog"]),
+      on: (d: DeviceAgent) => d.setDisabledPlugins([]),
+      reason: "plow-gog is turned off on this Mac",
+    },
+    {
+      when: "no account it requires is connected",
+      off: (d: DeviceAgent) => d.setConnectedAccounts([]),
+      on: (d: DeviceAgent) => d.setConnectedAccounts(["google"]),
+      reason: "plow-gog needs a connected google account — the owner connects one in Plow Latch's Plugins tab",
+    },
+  ])("unpublishes the skill and refuses the command when $when, and both come back after", async ({ off, on, reason }) => {
     const d = device(okMinter(), gogPlugin());
     expect(publishes(d)).toBe(true);
 
-    d.setDisabledPlugins(["gog"]);
+    void off(d);
     expect(publishes(d)).toBe(false);
     // Unpublished, but the row that offers to turn it back on is not blank.
     expect(d.pluginDescription("gog")).toBe(providerFor(["plow-gog"])!.skill.description);
     // Refused by name before any card, and again at the executor.
-    expect(d.pluginRefusal(["plow-gog", "gmail", "search", "q"])).toBe("plow-gog is turned off on this Mac");
+    expect(d.pluginRefusal(["plow-gog", "gmail", "search", "q"])).toBe(reason);
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
-    expect(jv(response).get("error").str).toBe("plow-gog is turned off on this Mac");
+    expect(jv(response).get("error").str).toBe(reason);
     expectNeverSpawned(d);
 
-    d.setDisabledPlugins([]);
+    void on(d);
     expect(publishes(d)).toBe(true);
   });
 

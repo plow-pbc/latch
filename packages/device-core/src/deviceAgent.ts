@@ -272,6 +272,8 @@ export class DeviceAgent {
   readonly skills: SkillRegistry;
   /** Staged plugins the owner has turned off — see `setDisabledPlugins`. */
   private disabledPlugins = new Set<string>();
+  /** Account connectors with an account connected — see `setConnectedAccounts`. */
+  private connectedAccounts = new Set<string>();
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
   /** Exposed so the approval UI can resolve credential item titles locally. */
@@ -863,15 +865,30 @@ export class DeviceAgent {
   }
 
   /**
-   * The named plugin, if this Mac has it staged.
+   * The named plugin, if this Mac has it staged and it is on.
    *
    * Per-plugin rather than "is anything staged": the day a second row joins
    * the registry, a Mac with only gog staged would otherwise report the other
    * as present — publishing its skill and minting for it.
    */
   private plugin(name: string): StagedPlugin | null {
-    if (this.disabledPlugins.has(name)) return null;
-    return this.plugins.find((p) => p.manifest.name === name) ?? null;
+    const staged = this.plugins.find((p) => p.manifest.name === name);
+    return staged !== undefined && this.offReason(staged) === null ? staged : null;
+  }
+
+  /**
+   * Why a staged plugin is off right now, or null when it is on: the owner's
+   * switch, or an account its manifest `requires` that is not connected — a
+   * plugin that cannot mint is not advertised to an agent, and its command
+   * never reaches an approval card only to fail at the mint. The one sentence
+   * every gate gives.
+   */
+  private offReason(staged: StagedPlugin): string | null {
+    const { name, command, requires } = staged.manifest;
+    if (this.disabledPlugins.has(name)) return `${command} is turned off on this Mac`;
+    const missing = requires.accounts.find((id) => !this.connectedAccounts.has(id));
+    if (missing === undefined) return null;
+    return `${command} needs a connected ${missing} account — the owner connects one in Plow Latch's Plugins tab`;
   }
 
   /**
@@ -895,6 +912,17 @@ export class DeviceAgent {
     return this.browserSessions.closeOpen("turned_off").catch((error: unknown) => {
       console.error("[browser] closing open sessions after the plugin was turned off:", error);
     });
+  }
+
+  /**
+   * The account connectors the owner has an account connected for, e.g.
+   * "google" — main's view of Plow's answer, pushed on every change. A plugin
+   * that `requires` one is off until it is (`offReason`); the mint still asks
+   * Plow which accounts, per call.
+   */
+  setConnectedAccounts(ids: readonly string[]): void {
+    this.connectedAccounts = new Set(ids);
+    this.syncPluginSkills();
   }
 
   /**
@@ -1004,7 +1032,8 @@ export class DeviceAgent {
       ? (this.plugins.find((p) => p.manifest.name === provider.plugin) ?? null)
       : pluginFor(this.plugins, argv[0] ?? "");
     if (plugin === null) return null;
-    if (this.plugin(plugin.manifest.name) === null) return `${provider?.command ?? plugin.manifest.command} is turned off on this Mac`;
+    const off = this.offReason(plugin);
+    if (off !== null) return off;
     // Off is the one answer shared with a provider's command; the rest of its
     // belt is `providerRefusal`'s, and it takes a cwd (stripped, never run in).
     if (provider !== null) return null;
@@ -1107,9 +1136,8 @@ export class DeviceAgent {
     let runEnv: Record<string, string> | undefined;
     let runSysvSemaphores = false;
     if (plugin !== null) {
-      if (this.plugin(plugin.manifest.name) === null) {
-        return this.execError(intent.intentId, `${plugin.manifest.command} is turned off on this Mac`);
-      }
+      const off = this.offReason(plugin);
+      if (off !== null) return this.execError(intent.intentId, off);
       // The manifest's own belt (`argv.read`/`argv.write`) is checked before
       // anything spawns, the same defense-in-depth shape as `providerRefusal`
       // above — the device is the chokepoint regardless of what a caller
