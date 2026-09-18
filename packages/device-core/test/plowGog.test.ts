@@ -695,4 +695,9 @@ describe("the Google Workspace skill", () => {
       expect(GOG_SKILL.body).toContain(field);
     }
   });
+
+  it("reads a search row as a thread, not with the single-message get", () => {
+    expect(GOG_SKILL.body).toContain("A `gmail search` row is a THREAD, not a message.");
+    expect(GOG_SKILL.body).toContain('["plow-gog","gmail","thread","get","<the row\'s id>"');
+  });
 });

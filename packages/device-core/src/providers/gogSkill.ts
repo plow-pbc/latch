@@ -179,8 +179,9 @@ exactly what you need — the flags exist:
   for calendar — or the merged order degrades to grouped-by-account. A
   fanned-out calendar event list is already compact; select on it only when
   you need a field it leaves out.
-- **Read with \`--sanitize-content\`.** It strips HTML and omits the raw Gmail
-  payload, which is most of a message's bytes.
+- **Triage from the search rows, then read only the thread you need**, with
+  \`--sanitize-content\`: it strips HTML and omits the raw Gmail payload, which
+  is most of a message's bytes.
 - **Summarize, don't replay.** Extract the facts into your reply; never echo
   a raw JSON result back into the conversation.
 
@@ -189,7 +190,7 @@ Useful starting points:
     ["plow-gog","accounts"]
     ["plow-gog","gmail","search","from:someone newer_than:30d","--max","10"]
     ["plow-gog","gmail","thread","get","<the row's id>","--sanitize-content","--account","<the item's account>","--json"]
-    ["plow-gog","gmail","drafts","reply","<messageId>","--body","...","--account","..."]  # draft, for review
+    ["plow-gog","gmail","drafts","reply","<a message id from thread get>","--body","...","--account","..."]  # draft, for review
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--account","..."]
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--attach","/Users/me/Plow/receipt.jpg","--account","..."]
     ["plow-gog","calendar","calendars"]   # every account's calendars; the shown ones carry selected
