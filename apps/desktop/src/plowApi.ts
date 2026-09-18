@@ -184,8 +184,8 @@ export function echoesCredential(text: string, credential: string): boolean {
  * So a credential that came back with more than `relay:call`, or with any chat
  * grant at all, is refused rather than handed over. Nothing revokes it: the
  * throw happens before the id reaches a caller that could. The cost is one
- * unusable credential on the account, which the owner can see and remove under
- * MCP clients; accepting would hand a tool the owner's chats.
+ * credential on the account that nobody holds — its token is dropped here,
+ * never shown or kept; accepting would hand a tool the owner's chats.
  */
 function decodeKeyCreateReceipt(data: unknown, deviceCredential: string): MintedCredential {
   const receipt = data as { id?: unknown; token?: unknown; name?: unknown; scopes?: unknown; chat_uids?: unknown } | null;
