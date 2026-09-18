@@ -68,6 +68,7 @@ export interface DeployCard {
   id: string;
   name: string;
   initial: string;
+  logo: string | null;
   blurb: string | null;
   byline: string;
 }
@@ -85,6 +86,7 @@ export function deployCards(providers: CloudAgentProvider[], index: AgentIndex):
       id: provider.id,
       name: provider.name,
       initial: ([...provider.name.trim()][0] ?? "?").toUpperCase(),
+      logo: entry?.logo ?? null,
       blurb: entry?.blurb ?? null,
       byline: entry ? byline(entry) : "No description yet",
     }));

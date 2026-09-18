@@ -662,7 +662,7 @@ describe("CloudAgentState text-to-start", () => {
 });
 
 describe("CloudAgentState deploy catalog", () => {
-  const LIFE = { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88 };
+  const LIFE = { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88, logo: null };
 
   it.each([
     ["describes agents once the Index answers", (index: Deferred<AgentIndex>) => index.resolve({ "exe:life": LIFE }), { "exe:life": LIFE }],
