@@ -681,11 +681,6 @@ function signOut() {
  * Sign out: retire the credential with Plow, forget it here, and drop the
  * socket. The revoke is best-effort — see `revokeAndSignOut` — so a Mac that
  * cannot reach Plow still signs out locally.
- *
- * Two callers: the Settings button, and the roster's own row for this Mac.
- * Revoking that row as an ordinary key would leave the credential on disk, the
- * socket dialled and the window open, all talking to an account that no longer
- * accepts them.
  */
 async function signOutThisMac(): Promise<void> {
   if (hasPendingAgentSetup() && !(await mayLeaveMain(mainWindow))) return;
@@ -2354,7 +2349,6 @@ app.whenReady().then(async () => {
     api: new PlowApi(apiBaseUrl),
     home,
     isConnected: () => connected,
-    signOutThisMac,
     // The same uid the relay registers this Mac under and the MCP URL is built
     // from. Read through the identity, not out of the URL.
     deviceUid: () => device?.identity.deviceId ?? null,

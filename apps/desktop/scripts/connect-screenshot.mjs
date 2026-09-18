@@ -90,49 +90,20 @@ const NO_NUMBER_AGENT = {
   canMessage: false,
   threads: [],
 };
-const EMPTY_ROSTER = { mcp: [], other: [], revokedHidden: 0 };
-const ROSTER = {
-  mcp: [
-    {
-      id: 301, name: "Claude Code on MacBook Pro", kind: "Agent", deviceLabel: "this Mac",
-      createdAt: "2026-08-12T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString(),
-      chatUids: ["*"], chatAccess: "all",
-      permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
-      isActive: true, isThisMac: false,
-    },
-    {
-      id: 302, name: "Cursor desktop", kind: "Agent", deviceLabel: "mba",
-      createdAt: new Date().toISOString(), lastSeenAt: null,
-      chatUids: [], chatAccess: "none",
-      permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
-      isActive: true, isThisMac: false,
-    },
-  ],
-  other: [
-    {
-      id: 401, name: "Plow Latch on this Mac", kind: "Session", deviceLabel: null,
-      createdAt: "2026-07-28T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 3 * 60_000).toISOString(),
-      chatUids: [], chatAccess: "none",
-      permissions: { canReadAndReply: false, canReachMac: false, canSpendInference: false },
-      isActive: true, isThisMac: true,
-    },
-    {
-      id: 402, name: "Plow website · Safari", kind: "Plow web login", deviceLabel: null,
-      createdAt: "2026-08-24T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 12 * 60_000).toISOString(),
-      chatUids: [], chatAccess: "none",
-      permissions: { canReadAndReply: false, canReachMac: true, canSpendInference: false },
-      isActive: true, isThisMac: false,
-    },
-    {
-      id: 403, name: "Legacy automation token", kind: "Admin — full access", deviceLabel: null,
-      createdAt: "2026-08-20T17:00:00.000Z", lastSeenAt: null,
-      chatUids: ["*"], chatAccess: "all",
-      permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
-      isActive: true, isThisMac: false,
-    },
-  ],
-  revokedHidden: 14,
-};
+const ROSTER = [
+  {
+    id: 301, name: "Claude Code on MacBook Pro", deviceLabel: "this Mac",
+    createdAt: "2026-08-12T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+    chatUids: ["*"], chatAccess: "all",
+    permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+  },
+  {
+    id: 302, name: "Cursor desktop", deviceLabel: "mba",
+    createdAt: new Date().toISOString(), lastSeenAt: null,
+    chatUids: [], chatAccess: "none",
+    permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+  },
+];
 const CLOUD_EMPTY = {
   cloudAgents: [],
   cloudProviders: [
@@ -172,7 +143,7 @@ const RULES = [
   },
 ];
 let cloudFixture = CLOUD_EMPTY;
-let rosterFixture = EMPTY_ROSTER;
+let rosterFixture = [];
 const cloudRemovals = [];
 let connectorsFixture = CONNECTORS_EMPTY;
 
@@ -227,11 +198,7 @@ async function setUp() {
   ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
   ipcMain.handle("roster:remove", async (_e, id) => {
-    rosterFixture = {
-      ...rosterFixture,
-      mcp: rosterFixture.mcp.filter((row) => row.id !== id),
-      other: rosterFixture.other.filter((row) => row.id !== id),
-    };
+    rosterFixture = rosterFixture.filter((row) => row.id !== id);
     return state();
   });
   ipcMain.handle("cloud:remove", async (_e, agentId) => {
@@ -390,7 +357,7 @@ const SCREENS = [
     prepare: async (win) => {
       const stale = await win.webContents.executeJavaScript(`(() => {
         const cloud = [...document.querySelectorAll(".list-section")]
-          .find((section) => section.querySelector("h2")?.textContent.trim() === "Agents");
+          .find((section) => section.querySelector("h2")?.textContent.trim() === "Plow Agents");
         const labels = [...cloud.querySelectorAll("button")].map((button) =>
           button.textContent.trim());
         const rows = [...cloud.querySelectorAll(".cloud-agent-row")];
@@ -414,20 +381,19 @@ const SCREENS = [
       }
     },
     expect: [
-      "Agents", "2 agents", "New agent", "Household helper", "Ready",
+      "Plow Agents", "2 agents", "New agent", "Household helper", "Ready",
       "Willow · +1 415-555-0142", "Created Aug 24", "Trip planner", "Setting up…",
       "+1 628-555-0144", "Created today", "Message",
-      "MCP clients", "Claude Code on MacBook Pro", "Cursor desktop",
+      "Other Agents and Clients", "Claude Code on MacBook Pro", "Cursor desktop",
       // Which Mac each static credential works from — this one, or another by
       // the name Plow gave it.
       "Bound to this Mac", "Bound to mba",
-      "Other sessions", "Plow Latch on this Mac", "This Mac",
-      "Plow website · Safari", "Legacy automation token", "Admin *:*", "14 revoked sessions hidden",
     ],
+    reject: ["Other sessions"],
   },
   {
     name: "cloud-detail",
-    roster: { ...ROSTER, mcp: [], other: [] },
+    roster: [],
     cloud: { ...CLOUD_READY, cloudAgents: [ACTIVE_AGENT] },
     prepare: async (win) => {
       await win.webContents.executeJavaScript(
@@ -602,21 +568,6 @@ const SCREENS = [
     ],
   },
   {
-    name: "agents-final-revoked-count",
-    roster: ROSTER,
-    cloud: {
-      ...CLOUD_READY,
-      cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
-    },
-    prepare: async (win) => {
-      await win.webContents.executeJavaScript(
-        `document.querySelector(".agents-roster").scrollTop =
-          document.querySelector(".agents-roster").scrollHeight`,
-      );
-    },
-    expect: ["Other sessions", "14 revoked sessions hidden"],
-  },
-  {
     name: "cloud-teardown",
     cloud: {
       ...CLOUD_READY,
@@ -655,7 +606,7 @@ const SCREENS = [
       );
       if (hasSetup) throw new Error("removed cloud-agent setup action remains");
     },
-    expect: ["New agent", "No agents.", "No MCP clients.", "No other sessions.", "Connect MCP client"],
+    expect: ["New agent", "No agents.", "No other agents or clients.", "Connect MCP client"],
   },
   {
     name: "oauth",
@@ -824,7 +775,7 @@ app.whenReady().then(async () => {
     // drops any modal left standing by the screen before it.
     load: async (screen) => {
       cloudFixture = screen.cloud ?? CLOUD_EMPTY;
-      rosterFixture = screen.roster ?? EMPTY_ROSTER;
+      rosterFixture = screen.roster ?? [];
       connectorsFixture = screen.connectors ?? CONNECTORS_EMPTY;
       await win.loadFile(path.join(dist, "renderer/index.html"));
       await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane");

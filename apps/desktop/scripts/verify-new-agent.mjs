@@ -76,7 +76,7 @@ app.whenReady().then(async () => {
   await cloudAgents.refresh();
   const state = () => ({
     ...cloudAgents.state(), hasCredential: true, busy: false, message: null,
-    credential: null, agentToken: null, roster: { mcp: [], other: [], revokedHidden: 0 },
+    credential: null, agentToken: null, roster: [],
   });
   // Evaluate the shipping handler, not a duplicate that could hide an IPC bug.
   const source = ts.createSourceFile("main.ts", fs.readFileSync(path.join(desktop, "src/main.ts"), "utf8"), ts.ScriptTarget.Latest, true);

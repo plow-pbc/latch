@@ -92,8 +92,6 @@ let home: string;
 let plow: FakePlow;
 let connected: boolean;
 let changes: number;
-/** How many times the roster asked this Mac to sign out. */
-let signOuts: number;
 /** This Mac's relay device uid, as the identity would report it. */
 let deviceUid: string | null;
 
@@ -103,9 +101,6 @@ function build(): ConnectClient {
     home,
     isConnected: () => connected,
     deviceUid: () => deviceUid,
-    signOutThisMac: async () => {
-      signOuts += 1;
-    },
     onChange: () => {
       changes += 1;
     },
@@ -125,7 +120,6 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-connect-"));
   plow = new FakePlow();
   connected = true;
-  signOuts = 0;
   deviceUid = DEVICE_UID;
   changes = 0;
 });
@@ -397,41 +391,22 @@ const key = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
 
 describe("removing a roster row", () => {
   /**
-   * Every route a row can take, and the two it must never take instead.
-   *
-   * Each is destructive in its own way when it goes to the wrong place: a key
-   * revoke on a cloud agent leaves the VM running and the webhook firing while
-   * the row disappears from the list; a key revoke on this Mac leaves the
-   * credential on disk, the socket dialled and the window open, all talking to
-   * an account that no longer accepts them.
+   * A key revoke on a cloud agent leaves the VM running and the webhook firing
+   * while the row disappears from the list, so only a listed client is ever
+   * revoked from here.
    */
   it.each([
-    [
-      "an agent credential omitted from the session roster",
-      () => key({ id: 7, agent_uid: "agent_7" }),
-      { revoked: [] as number[], signOuts: 0 },
-    ],
-    [
-      "this Mac",
-      () => key({ id: 4, key_prefix: keyPrefixOf(DEVICE_TOKEN) }),
-      { revoked: [] as number[], signOuts: 1 },
-    ],
-    [
-      "an ordinary credential",
-      () => key({ id: 8, agent_uid: null }),
-      { revoked: [8], signOuts: 0 },
-    ],
-  ])("removes %s down its own route and no other", async (_what, row, expected) => {
+    ["an agent credential omitted from the roster", key({ id: 7, agent_uid: "agent_7" }), []],
+    ["an MCP client", key({ id: 8, agent_uid: null }), [8]],
+  ])("revokes %s only if it is listed", async (_what, only, revoked) => {
     signIn();
-    const only = row();
     plow.keys = [only];
     const client = build();
     await client.refreshRoster();
 
     await client.removeRosterRow(only.id);
 
-    expect(plow.revoked).toEqual(expected.revoked);
-    expect(signOuts).toBe(expected.signOuts);
+    expect(plow.revoked).toEqual(revoked);
   });
 
   /**
@@ -466,8 +441,7 @@ describe("removing a roster row", () => {
     // The newer read said the account is empty, and it stays empty — with no
     // banner from the overtaken one either, which would report a failure that
     // has already been superseded by a good answer.
-    expect(client.state().roster.mcp).toEqual([]);
-    expect(client.state().roster.other).toEqual([]);
+    expect(client.state().roster).toEqual([]);
     expect(client.state().rosterError).toBeNull();
   });
 
@@ -483,7 +457,7 @@ describe("removing a roster row", () => {
 
     // The mint IS a new roster row. Without a re-read the credential the user
     // just made is absent from the list it belongs in.
-    expect(client.state().roster.mcp.map((row) => row.id)).toEqual([5]);
+    expect(client.state().roster.map((row) => row.id)).toEqual([5]);
   });
 
   /** The banner says why a removal failed, the rows say what
@@ -505,11 +479,11 @@ describe("removing a roster row", () => {
     plow.revokeApiKey = revoke;
 
     expect(state.actionError).toBe("Plow returned 500.");
-    expect(state.roster.mcp.map((row) => row.id)).toEqual(held);
+    expect(state.roster.map((row) => row.id)).toEqual(held);
   });
 
   it("reads this Mac's device uid at refresh, not at construction", async () => {
-    // Which labels come out of which device rows belongs to `sectionRoster`.
+    // Which labels come out of which device rows belongs to `mcpClientRoster`.
     // What this owns is WHEN the uid is read: the client is built before the
     // identity exists, so a uid captured then would be the empty one for the
     // life of the process and this Mac's own row would read as somewhere else.
@@ -518,9 +492,9 @@ describe("removing a roster row", () => {
     const client = build();
 
     deviceUid = null;
-    expect((await client.refreshRoster()).roster.mcp[0].deviceLabel).toBe("mbp");
+    expect((await client.refreshRoster()).roster[0].deviceLabel).toBe("mbp");
 
     deviceUid = DEVICE_UID;
-    expect((await client.refreshRoster()).roster.mcp[0].deviceLabel).toBe("this Mac");
+    expect((await client.refreshRoster()).roster[0].deviceLabel).toBe("this Mac");
   });
 });

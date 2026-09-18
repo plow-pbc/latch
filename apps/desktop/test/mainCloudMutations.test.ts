@@ -81,12 +81,12 @@ it("connect:create refreshes the roster, so the new credential is listed and rev
     connectClient: {
       createCredential: async () => { called.push("createCredential"); },
       refreshRoster: async () => { called.push("refreshRoster"); },
-      state: () => ({ roster: { mcp: [{ id: 41 }], other: [], revokedHidden: 0 } }),
+      state: () => ({ roster: [{ id: 41 }] }),
     },
   });
 
   const result = await handler({}, "Claude Code");
   // In that order, or the re-read misses the credential it is there for.
   expect(called).toEqual(["createCredential", "refreshRoster"]);
-  expect(result.roster).toEqual({ mcp: [{ id: 41 }], other: [], revokedHidden: 0 });
+  expect(result.roster).toEqual([{ id: 41 }]);
 });

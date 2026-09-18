@@ -1,104 +1,61 @@
 /**
- * The classification decides which removal call a row gets, and prod returns a
- * null `agent_uid` while no assistants are live — so the branch that
- * matters is the one everyday testing never enters.
+ * Which credentials the screen lists as MCP clients, and what it says about
+ * each. prod returns a null `agent_uid` while no assistants are live — so the
+ * branch that matters is the one everyday testing never enters.
  */
 import { describe, expect, it } from "vitest";
-import { sectionRoster } from "../src/rosterSections.js";
+import { mcpClientRoster } from "../src/rosterSections.js";
 import type { KeyInfo } from "../src/plowApi.js";
 import { keyInfo, keyPrefixOf } from "./keyInfo.js";
 
-/** A device credential of the shape plow issues. */
-const DEVICE_CREDENTIAL = "plow_sk_abc123_and_the_rest_of_it";
-
 /**
- * What plow publishes as `key_prefix`: `token[5:13]`, the eight characters
- * AFTER the `plow_` scheme — the scheme itself is not in it.
- *
- * Fixtures go through here rather than spelling a prefix out. A hand-written
- * one had the scheme on the front, which made `startsWith` matching look
- * correct in tests while it could never match in production.
+ * Fixtures go through `keyPrefixOf` rather than spelling a prefix out: plow
+ * publishes `token[5:13]`, and a hand-written prefix with the scheme on the
+ * front once made a matcher look correct in tests that could never match in
+ * production.
  */
 const key = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
   keyInfo({ key_prefix: keyPrefixOf("plow_sk_other_credential_entirely"), ...overrides });
 
-/** Every placed row, whichever section it landed in. */
-const allRows = (sections: ReturnType<typeof sectionRoster>) => [
-  ...sections.mcp,
-  ...sections.other,
-];
-
-describe("which section a credential belongs in", () => {
-  it("excludes all agent credentials from independently revocable sessions", () => {
-    const sections = sectionRoster([key({ id: 1, agent_uid: "local" }), key({ id: 2, agent_uid: "cloud" })]);
-    expect(allRows(sections)).toEqual([]);
+describe("which credentials are listed", () => {
+  it.each([
+    ["an MCP client", {}, true],
+    ["a local agent's credential", { agent_uid: "local" }, false],
+    ["a cloud agent's credential", { agent_uid: "cloud" }, false],
+    ["a revoked client", { is_active: false }, false],
+    ["a web login", { scopes: ["relay:*"] }, false],
+    ["a full-access session", { scopes: ["*:*"] }, false],
+    ["an old device credential", { scopes: ["relay:device"] }, false],
+    ["a credential with no relay reach", { scopes: ["vault:read"] }, false],
+    ["a credential with no scopes", { scopes: [] }, false],
+  ])("%s: %s", (_shape, overrides, listed) => {
+    expect(mcpClientRoster([key({ id: 1, ...overrides })]).map((row) => row.id)).toEqual(listed ? [1] : []);
   });
 
-  it("separates MCP clients from other sessions by scope", () => {
-    const sections = sectionRoster([
-      key({ id: 1, scopes: ["relay:call"] }),
-      key({ id: 2, scopes: ["relay:*"] }),
-      key({ id: 3, scopes: ["*:*"] }),
-    ]);
+  it("never hands the renderer a prefix or a scope", () => {
+    const rows = mcpClientRoster([key({ scopes: ["relay:call", "*:*", "vault:read"] })]);
 
-    expect(sections.mcp.map(({ id, kind }) => ({ id, kind }))).toEqual([
-      { id: 1, kind: "Agent" },
-    ]);
-    expect(sections.other.map(({ id, kind }) => ({ id, kind }))).toEqual([
-      { id: 2, kind: "Plow web login" },
-      { id: 3, kind: "Admin — full access" },
-    ]);
-  });
-
-  it("counts revoked credentials rather than listing them", () => {
-    const sections = sectionRoster([
-      key({ id: 1 }),
-      key({ id: 2, is_active: false }),
-      key({ id: 3, is_active: false, agent_uid: "agent_3" }),
-    ]);
-
-    expect(sections.revokedHidden).toBe(1);
-    expect([...sections.mcp, ...sections.other].map((r) => r.id)).toEqual([1]);
-  });
-
-  it("places every non-agent session, whatever its scopes", () => {
-    const keys = [
-      key({ id: 1, agent_uid: "agent_1" }),
-      key({ id: 2, scopes: ["relay:call"] }),
-      key({ id: 3, scopes: ["relay:*"] }),
-      key({ id: 4, scopes: ["vault:read"] }),
-      key({ id: 5, scopes: [] }),
-    ];
-    const sections = sectionRoster(keys);
-
-    const placed = [...sections.mcp, ...sections.other].map((row) => row.id);
-    expect(placed.sort()).toEqual([2, 3, 4, 5]);
-    expect(new Set(placed).size).toBe(placed.length);
-    expect(sections.other.filter((row) => [4, 5].includes(row.id)).map((row) => row.kind)).toEqual([
-      "Session",
-      "Session",
-    ]);
-    expect(JSON.stringify(sections)).not.toMatch(
-      /key_prefix|plow_sk_abc123|scopes|relay:call|tokens_used/,
-    );
+    // The projection is the boundary: a screen that cannot see the grammar
+    // cannot get the grammar wrong, and cannot show it either.
+    expect(JSON.stringify(rows)).not.toMatch(/key_prefix|scopes|relay:call|\*:\*|vault:read|tokens_used/);
   });
 });
 
 describe("what a credential may actually do", () => {
+  // Every listed client holds `relay:call`; what varies is what rides with it.
   it.each([
-    ["the exact grant", ["chats:use", "relay:call", "llm:chat"], [true, true, true]],
-    ["nothing at all", [], [false, false, false]],
-    ["chats only", ["chats:use"], [true, false, false]],
-    ["relay only", ["relay:call"], [false, true, false]],
-    ["inference only", ["llm:chat"], [false, false, true]],
+    ["the exact grant", ["chats:use", "llm:chat"], [true, true, true]],
+    ["relay only", [], [false, true, false]],
+    ["chats too", ["chats:use"], [true, true, false]],
+    ["inference too", ["llm:chat"], [false, true, true]],
     // plow's matcher recognises resource and global wildcards, so this must
     // too — reading only exact grants would understate a wildcard token.
-    ["a resource wildcard", ["relay:*"], [false, true, false]],
+    ["a resource wildcard", ["chats:*"], [true, true, false]],
     ["the global wildcard", ["*:*"], [true, true, true]],
     // A neighbouring scope is not this one.
-    ["an unrelated scope", ["vault:read", "chats:write"], [false, false, false]],
-  ])("reads %s", (_shape, scopes, expected) => {
-    const [row] = allRows(sectionRoster([key({ scopes })]));
+    ["an unrelated scope", ["vault:read", "chats:write"], [false, true, false]],
+  ])("reads %s", (_shape, extra, expected) => {
+    const [row] = mcpClientRoster([key({ scopes: ["relay:call", ...extra] })]);
 
     expect([
       row.permissions.canReadAndReply,
@@ -107,16 +64,6 @@ describe("what a credential may actually do", () => {
     ]).toEqual(expected);
   });
 
-  it("never hands the renderer the scopes themselves", () => {
-    const sections = sectionRoster([key({ scopes: ["*:*", "vault:read"] })]);
-
-    // The projection is the boundary: a screen that cannot see the grammar
-    // cannot get the grammar wrong, and cannot show it either.
-    const marshalled = JSON.stringify(sections);
-    expect(marshalled).not.toContain("*:*");
-    expect(marshalled).not.toContain("vault:read");
-    expect(marshalled).not.toContain("scopes");
-  });
 });
 
 describe("which chats a credential is scoped to", () => {
@@ -128,83 +75,11 @@ describe("which chats a credential is scoped to", () => {
     ["one chat", ["cht_1"], "listed"],
     ["several", ["cht_1", "cht_2"], "listed"],
   ])("calls %s %s", (_shape, chat_uids, expected) => {
-    const [row] = allRows(sectionRoster([key({ chat_uids })]));
+    const [row] = mcpClientRoster([key({ chat_uids })]);
 
     expect(row.chatAccess).toBe(expected);
     // The uids still travel, so the screen can say how many and which.
     expect(row.chatUids).toEqual(chat_uids);
-  });
-});
-
-describe("this Mac's own credential", () => {
-  it("is marked, so the screen can say what revoking it does", () => {
-    const sections = sectionRoster(
-      [
-        key({ id: 1, key_prefix: keyPrefixOf(DEVICE_CREDENTIAL) }),
-        key({ id: 2, key_prefix: keyPrefixOf("plow_sk_zzz999_someone_elses") }),
-      ],
-      { deviceCredential: DEVICE_CREDENTIAL },
-    );
-
-    // Searched across sections: this Mac's row is a Session, so it sits with
-    // the other sessions rather than among the MCP clients.
-    const rows = [...sections.mcp, ...sections.other];
-    expect(rows.find((row) => row.id === 1)?.isThisMac).toBe(true);
-    expect(rows.find((row) => row.id === 2)?.isThisMac).toBe(false);
-  });
-
-  it("is a Session, not an Admin credential, whatever its scopes read", () => {
-    // This Mac holds the login session now — `*:*`, which is exactly the shape
-    // `rosterKind` calls "Admin — full access". The screen must still identify
-    // the credential it is running on as its own session.
-    const sections = sectionRoster(
-      [
-        key({ id: 1, scopes: ["*:*"], key_prefix: keyPrefixOf(DEVICE_CREDENTIAL) }),
-        key({ id: 2, scopes: ["*:*"], key_prefix: keyPrefixOf("plow_sk_zzz999_someone_elses") }),
-      ],
-      { deviceCredential: DEVICE_CREDENTIAL },
-    );
-
-    const rows = [...sections.mcp, ...sections.other];
-    expect(rows.find((row) => row.id === 1)).toMatchObject({ kind: "Session", isThisMac: true });
-    // Another account credential with the same scopes is still full access.
-    expect(rows.find((row) => row.id === 2)).toMatchObject({ kind: "Admin — full access" });
-  });
-
-  it("marks nothing when two rows would both match", () => {
-    const prefix = keyPrefixOf(DEVICE_CREDENTIAL);
-    const sections = sectionRoster([key({ id: 1, key_prefix: prefix }), key({ id: 2, key_prefix: prefix })], {
-      deviceCredential: DEVICE_CREDENTIAL,
-    });
-
-    // Two matches means the match identifies nothing. Warning about revoking a
-    // credential that is not this Mac's is worse than not warning.
-    expect(sections.mcp.every((row) => !row.isThisMac)).toBe(true);
-  });
-
-  /**
-   * The shapes a prefix is not.
-   *
-   * Kept even though plow's contract is fixed, because the first two are what
-   * produced the bug: a hand-written prefix WITH the scheme on it matched
-   * `startsWith` in a fixture and could never match in production. Dropping
-   * these because the server will not send them is the assumption that cost
-   * this a release.
-   */
-  it.each([
-    ["absent", null],
-    ["the whole token", "plow_sk_abc123_and_the_rest_of_it"],
-    ["the scheme included", "plow_sk_"],
-    ["too short", "sk_abc"],
-    ["too long", "sk_abc123456"],
-  ])("marks nothing when the prefix is %s", (_shape, key_prefix) => {
-    const sections = sectionRoster([key({ id: 1, key_prefix })], {
-      deviceCredential: DEVICE_CREDENTIAL,
-    });
-
-    // Anything but the eight characters plow publishes is not a prefix from
-    // plow, and guessing at a partial match would warn about the wrong row.
-    expect(sections.mcp[0].isThisMac).toBe(false);
   });
 });
 
@@ -227,10 +102,7 @@ describe("which Mac a credential is bound to", () => {
     // Both arrive together for a device-bound credential; the nameable one wins.
     ["a device despite an alias", { uid: "dev_other", name: "mba" }, "u_account", "mba"],
   ])("labels a credential bound to %s", (_shape, device, relay_resource_uid, expected) => {
-    const [row] = allRows(sectionRoster(
-      [key({ scopes: ["relay:call"], device, relay_resource_uid })],
-      { deviceUid: OUR_DEVICE },
-    ));
+    const [row] = mcpClientRoster([key({ device, relay_resource_uid })], { deviceUid: OUR_DEVICE });
 
     expect(row.deviceLabel).toBe(expected);
   });
@@ -239,13 +111,13 @@ describe("which Mac a credential is bound to", () => {
     // Startup order: the roster can be read before the device identity exists.
     // Every row would otherwise compare against "" and be labelled by name —
     // including this Mac's own, which would read as somewhere else.
-    const [row] = allRows(sectionRoster([key({ device: { uid: OUR_DEVICE, name: "mbp" } })]));
+    const [row] = mcpClientRoster([key({ device: { uid: OUR_DEVICE, name: "mbp" } })]);
 
     expect(row.deviceLabel).toBe("mbp");
   });
 
   it("never hands the renderer a device or resource uid", () => {
-    const sections = sectionRoster([
+    const rows = mcpClientRoster([
       key({ id: 1, device: { uid: OUR_DEVICE, name: "mbp" } }),
       key({ id: 2, device: { uid: "dev_other_secret", name: "mba" } }),
       // A resource uid is no more renderable than a device uid: it identifies
@@ -253,17 +125,17 @@ describe("which Mac a credential is bound to", () => {
       key({ id: 3, device: null, relay_resource_uid: "u_account_secret" }),
     ], { deviceUid: OUR_DEVICE });
 
-    expect(JSON.stringify(sections))
+    expect(JSON.stringify(rows))
       .not.toMatch(/dev_this_mac|dev_other_secret|u_account_secret/);
   });
 });
 
 describe("ordering", () => {
   it("normalizes Plow's offsetless timestamps as UTC before exposing a row", () => {
-    const [row] = allRows(sectionRoster([key({
+    const [row] = mcpClientRoster([key({
       created_at: "2026-08-30T21:59:02.464862",
       last_seen_at: "2026-08-30T21:59:02.464862",
-    })]));
+    })]);
 
     expect(row).toMatchObject({
       createdAt: "2026-08-30T21:59:02.464Z",
@@ -272,7 +144,7 @@ describe("ordering", () => {
   });
 
   it("puts the most recently used first and the never-used last", () => {
-    const sections = sectionRoster([
+    const rows = mcpClientRoster([
       key({ id: 1, last_seen_at: "2026-08-20T10:00:00Z" }),
       key({ id: 2, last_seen_at: null, created_at: "2026-08-24T10:00:00Z" }),
       key({ id: 3, last_seen_at: "2026-08-25T10:00:00Z" }),
@@ -282,6 +154,6 @@ describe("ordering", () => {
     // Never-used is not "oldest": it is unknown, and sorting it among real
     // timestamps would rank a client made this morning above one used a
     // minute ago.
-    expect(sections.mcp.map((row) => row.id)).toEqual([3, 1, 4, 2]);
+    expect(rows.map((row) => row.id)).toEqual([3, 1, 4, 2]);
   });
 });

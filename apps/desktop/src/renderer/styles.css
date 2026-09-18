@@ -851,11 +851,6 @@ pre.script {
 }
 .status-setting .cloud-spinner { margin: 0; }
 .status-removing { color: var(--muted); }
-.signout-warning { color: var(--amber-fg); }
-.revoked-summary {
-  min-height: 26px; color: var(--muted); font-size: 11.5px;
-  padding: 4px 10px; border-top: 1px solid var(--border);
-}
 .entity-empty { padding: 16px 10px; text-align: left; }
 .roster-notices { margin-bottom: 10px; }
 .roster-notices .cloud-callout + .cloud-callout { margin-top: 8px; }
@@ -956,8 +951,6 @@ pre.script {
   color: var(--muted); text-decoration: underline; cursor: pointer;
 }
 .linkbtn:hover { color: var(--fg); }
-
-.roster-confirm-loud { border-color: var(--red-bd); }
 
 /* ---------- Static-credential modal ----------
    Plain DOM over the pane, which is `inert` while this is up. The panel reuses

@@ -278,7 +278,7 @@ process hands it and owns no copy of its own.
   credential that came back wider than `relay:call` with no chats is refused
   rather than shown — after it is on screen it has been pasted into somebody's
   client. Nothing revokes the refused one; it sits on the account as an unusable
-  credential the owner can see and remove under MCP clients.
+  credential the owner can see and remove under Other Agents and Clients.
 - **The login session IS the credential this Mac keeps.** Latch is the owner's
   manager app, not an agent: it holds the socket, lists chats and Plow's
   numbers, mints agents, buys inference and mints connector tokens. It used to

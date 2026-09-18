@@ -161,23 +161,16 @@ const cloudAgent = {
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
 };
-const rosterProbe = {
-  mcp: [{
-    id: 202,
-    name: "Claude Code",
-    kind: "Agent",
-    createdAt: "2026-08-23T18:00:00.000Z",
-    lastSeenAt: "2026-08-25T17:50:00.000Z",
-    chatUids: ["*"],
-    chatAccess: "all",
-    permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
-    deviceLabel: "this Mac",
-    isActive: true,
-    isThisMac: false,
-  }],
-  other: [],
-  revokedHidden: 0,
-};
+const rosterProbe = [{
+  id: 202,
+  name: "Claude Code",
+  createdAt: "2026-08-23T18:00:00.000Z",
+  lastSeenAt: "2026-08-25T17:50:00.000Z",
+  chatUids: ["*"],
+  chatAccess: "all",
+  permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+  deviceLabel: "this Mac",
+}];
 let cloudProbe = {
   cloudAgents: [cloudAgent],
   cloudProviders: [
@@ -713,7 +706,7 @@ app.whenReady().then(async () => {
 
   const cloudRoster = await win.webContents.executeJavaScript(`(${() => {
     const group = [...document.querySelectorAll("#view .panel.agents .list-section")]
-      .find((item) => item.querySelector("h2")?.textContent.trim() === "Agents");
+      .find((item) => item.querySelector("h2")?.textContent.trim() === "Plow Agents");
     const row = group?.querySelector(".cloud-agent-row");
     return {
       noCredentialIdentity: !group?.textContent.includes("session") &&
@@ -736,7 +729,7 @@ app.whenReady().then(async () => {
   // is main-process only and must not be anywhere on the screen.
   const mcpRoster = await win.webContents.executeJavaScript(`(${() => {
     const group = [...document.querySelectorAll("#view .panel.agents .list-section")]
-      .find((item) => item.querySelector("h2")?.textContent.trim() === "MCP clients");
+      .find((item) => item.querySelector("h2")?.textContent.trim() === "Other Agents and Clients");
     const context = group?.querySelector(".entity-row .entity-context")?.textContent ?? "";
     return {
       namesBoundDevice: context.includes("Bound to this Mac"),

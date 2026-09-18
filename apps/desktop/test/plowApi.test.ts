@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   API_BASE_URL_ENV,
+  isDeviceCredential,
   PRODUCTION_API_BASE_URL,
   PlowApi,
   REQUEST_TIMEOUT_MS,
@@ -862,6 +863,26 @@ describe("revoking this Mac's own credential", () => {
     await expect(api.revokeDeviceCredential("plow_sk_do_not_leak_me")).rejects.toBeInstanceOf(
       PlowApiError,
     );
+  });
+});
+
+describe("isDeviceCredential", () => {
+  const credential = "plow_sk_abc123_and_the_rest_of_it";
+
+  /**
+   * The shapes a prefix is not. The first two are what produced the bug: a
+   * hand-written prefix WITH the scheme on it matched `startsWith` in a fixture
+   * and could never match in production.
+   */
+  it.each([
+    ["plow's published prefix", credential.slice(5, 13), true],
+    ["absent", null, false],
+    ["the whole token", credential, false],
+    ["the scheme included", "plow_sk_", false],
+    ["too short", "sk_abc", false],
+    ["too long", "sk_abc123456", false],
+  ])("%s", (_shape, prefix, expected) => {
+    expect(isDeviceCredential(prefix, credential)).toBe(expected);
   });
 });
 

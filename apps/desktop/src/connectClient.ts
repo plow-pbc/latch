@@ -19,7 +19,7 @@
  * by launching a window is one nobody tests.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
-import { EMPTY_ROSTER, RosterSections, sectionRoster } from "./rosterSections.js";
+import { mcpClientRoster, RosterRow } from "./rosterSections.js";
 import { loadSettings, Settings } from "./settings.js";
 
 export interface ClientCredential {
@@ -49,13 +49,8 @@ export interface ConnectClientState {
   message: string;
   /** The shown-once credential, present only between minting and dismissal. */
   credential: ClientCredential | null;
-  /**
-   * What can reach this account, in the three sections the screen shows.
-   *
-   * Sectioned here rather than in the renderer because the section decides the
-   * removal call — see `rosterSections.ts`.
-   */
-  roster: RosterSections;
+  /** The account's MCP clients — see `rosterSections.ts`. */
+  roster: RosterRow[];
   /** Why the roster is empty, if it is empty because the read failed. Never a
    * credential, like every message here. */
   rosterError: string | null;
@@ -74,15 +69,6 @@ export interface ConnectClientDeps {
   api: PlowApi;
   home: string;
   isConnected: () => boolean;
-  /**
-   * Sign this Mac out, through the one path that owns that.
-   *
-   * Revoking this Mac's own key only makes the credential invalid on the
-   * server. The stored credential, the relay socket and the window gate all
-   * stay live, so the app keeps running as though signed in while every call
-   * it makes 401s — and the roster promises immediate sign-out.
-   */
-  signOutThisMac: () => Promise<void>;
   /**
    * This Mac's relay device uid, or null before the device identity exists.
    *
@@ -116,7 +102,7 @@ export class ConnectClient {
   private generation = 0;
   /** The last roster read that landed. Survives a failed read: a stale list is
    * more use than an empty one, and `rosterError` says it is stale. */
-  private roster: RosterSections = EMPTY_ROSTER;
+  private roster: RosterRow[] = [];
   private rosterError: string | null = null;
   private actionError: string | null = null;
   /**
@@ -160,7 +146,7 @@ export class ConnectClient {
     if (!credential) {
       // Not signed in: no authority to ask with, and an empty roster is the
       // honest answer rather than an error nobody can act on.
-      this.roster = EMPTY_ROSTER;
+      this.roster = [];
       this.rosterError = null;
       return this.publish();
     }
@@ -173,10 +159,7 @@ export class ConnectClient {
       // never undo a newer answer — least of all by restoring a session the
       // newer one saw revoked.
       if (generation !== this.generation || read !== this.rosterReads) return this.state();
-      this.roster = sectionRoster(keys, {
-        deviceCredential: credential,
-        deviceUid: this.deps.deviceUid(),
-      });
+      this.roster = mcpClientRoster(keys, { deviceUid: this.deps.deviceUid() });
       this.rosterError = null;
     } catch (error) {
       if (generation !== this.generation || read !== this.rosterReads) return this.state();
@@ -187,20 +170,16 @@ export class ConnectClient {
     return this.publish();
   }
 
-  /** Revoke a session, then re-read the roster even if its response was lost. */
+  /** Revoke a client, then re-read the roster even if its response was lost. */
   async removeRosterRow(id: number): Promise<ConnectClientState> {
     this.actionError = null;
-    const row = [...this.roster.mcp, ...this.roster.other].find(
-      (candidate) => candidate.id === id,
-    );
-    if (!row) return this.failAction("That row is no longer on this screen.");
+    if (!this.roster.some((row) => row.id === id)) return this.failAction("That row is no longer on this screen.");
     const credential = this.settings().relayCredential.trim();
     if (!credential) return this.failAction("This Mac isn't signed in yet.");
 
     const generation = this.generation;
     try {
-      if (row.isThisMac) await this.deps.signOutThisMac();
-      else await this.deps.api.revokeApiKey(credential, id);
+      await this.deps.api.revokeApiKey(credential, id);
     } catch (error) {
       if (generation === this.generation) this.failAction(messageOf(error));
     }
@@ -303,7 +282,7 @@ export class ConnectClient {
    */
   signedOut(): ConnectClientState {
     this.generation += 1;
-    this.roster = EMPTY_ROSTER;
+    this.roster = [];
     this.rosterError = null;
     this.actionError = null;
     // Nothing in flight belongs to the next account either.

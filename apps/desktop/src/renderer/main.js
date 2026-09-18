@@ -1094,7 +1094,7 @@ function syncStaticModal(s, redraw) {
         el("div", { class: "field" }, [el("label", { text: "Name this connection" }), staticModal.nameInput]),
         el("p", {
           class: "faint conn-note",
-          text: "The token is shown once. Revoke it from MCP clients on this pane.",
+          text: "The token is shown once. Revoke it from Other Agents and Clients on this pane.",
         }),
         note,
         el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), createBtn]),
@@ -1417,8 +1417,8 @@ function cloudChatsErrorBanner(message, needsReactivation) {
   ]);
 }
 
-function rosterName(row, fallback) {
-  return row?.name?.trim() || fallback;
+function rosterName(row) {
+  return row?.name?.trim() || "Unnamed MCP client";
 }
 
 function rosterDate(value) {
@@ -1477,31 +1477,13 @@ function entityMark(name, client = false) {
   return el("span", { class: `entity-mark${client ? " client" : ""}`, text });
 }
 
-function rosterBadge(row) {
-  if (row.isThisMac) return badge("blue", "This Mac");
-  if (row.kind === "Plow web login") return badge("zinc", "Web login");
-  if (row.kind === "Admin — full access") return badge("amber", "Admin *:*");
-  if (row.kind === "Session") return badge("zinc", "Session");
-  return null;
-}
-
 function closeRosterConfirm(shell) {
   if (shell) closeModal(shell);
 }
 
 function openRosterConfirm(row, trigger, redraw) {
-  const name = rosterName(row, "Unnamed session");
-  const destructive = "Revoke";
-  let title = `Revoke ${name}?`;
-  let copy = "Any client or session using this credential will stop working.";
-  if (row.isThisMac) {
-    title = "Sign this Mac out?";
-    copy = "Revoking this credential immediately signs this Mac out and stops agents from reaching it.";
-  } else if (row.kind === "Plow web login") {
-    copy = "Revoking this session signs you out of the Plow website.";
-  }
   const cancel = el("button", { class: "btn", text: "Cancel" });
-  const confirm = el("button", { class: "btn danger", text: destructive });
+  const confirm = el("button", { class: "btn danger", text: "Revoke" });
   const note = el("p", { class: "faint modal-note", text: "" });
   let shell = null;
   const dismiss = () => closeRosterConfirm(shell);
@@ -1518,22 +1500,20 @@ function openRosterConfirm(row, trigger, redraw) {
     }
   });
   shell = openModal(trigger, {
-    className: row.isThisMac ? "roster-confirm roster-confirm-loud" : "roster-confirm",
+    className: "roster-confirm",
     focus: cancel,
     onDismiss: dismiss,
     children: [
-      el("div", { class: "group-title", text: title }),
-      el("p", { class: row.isThisMac ? "warn conn-note" : "conn-note", text: copy }),
+      el("div", { class: "group-title", text: `Revoke ${rosterName(row)}?` }),
+      el("p", { class: "conn-note", text: "Any client using this credential will stop working." }),
       note,
       el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), confirm]),
     ],
   });
 }
 
-function rosterActions(row, section, redraw) {
-  const fallback =
-    section === "mcp" ? "Unnamed MCP client" : "Unnamed session";
-  const name = rosterName(row, fallback);
+function rosterActions(row, redraw) {
+  const name = rosterName(row);
   const more = el("button", {
     class: "btn more",
     text: "⋯",
@@ -1624,11 +1604,10 @@ function cloudEntityRow(agent, state, redraw) {
   return row;
 }
 
-function sessionEntityRow(row, section, redraw) {
-  const fallback = section === "mcp" ? "Unnamed MCP client" : "Unnamed session";
-  const name = rosterName(row, fallback);
+function clientEntityRow(row, redraw) {
+  const name = rosterName(row);
   const context = [
-    section === "mcp" ? "MCP client" : row.kind,
+    "MCP client",
     // Which Mac this credential works from, when it is bound to one. The main
     // process hands down a label and never the device uid, and it goes in as
     // text — a device name is a string somebody else chose.
@@ -1636,25 +1615,18 @@ function sessionEntityRow(row, section, redraw) {
     row.createdAt ? `Created ${rosterDate(row.createdAt) ?? "date unknown"}` : "Created date unknown",
     row.lastSeenAt ? `Last used ${rosterAgo(row.lastSeenAt) ?? "date unknown"}` : "Never used",
   ].filter(Boolean).join(" · ");
-  const permissions = rosterPermissionCopy(row);
-  if (row.kind === "Plow web login") permissions.push("Revoking signs you out of the Plow website");
-  if (row.isThisMac) permissions.push("Revoking signs this Mac out");
   return el("div", { class: "entity-row" }, [
     entityMark(name, true),
     el("div", { class: "entity-main" }, [
       el("div", { class: "entity-top" }, [
         el("span", { class: "entity-name", text: name }),
-        rosterBadge(row),
       ]),
       el("div", { class: "entity-context", text: context }),
-      el("div", { class: "entity-perms" }, permissions.map((text) =>
-        el("span", {
-          class: text.startsWith("Revoking") ? "signout-warning" : "",
-          text,
-        }),
+      el("div", { class: "entity-perms" }, rosterPermissionCopy(row).map((text) =>
+        el("span", { text }),
       )),
     ]),
-    el("div", { class: "entity-actions" }, rosterActions(row, section, redraw)),
+    el("div", { class: "entity-actions" }, rosterActions(row, redraw)),
   ]);
 }
 
@@ -1796,7 +1768,7 @@ function cloudSection(s, redraw) {
   if (refreshError) notices.push(refreshError);
   if (s.cloudActionError) notices.push(cloudErrorBanner(s.cloudActionError, "That change did not finish"));
   return el("section", { class: "list-section" }, [
-    sectionHeader("Agents", rows.length, "agent", add),
+    sectionHeader("Plow Agents", rows.length, "agent", add),
     ...(providerView.mode === "blocked" ? [cloudErrorBanner(providerView.message, providerView.heading)] : []),
     ...notices,
     el("div", { class: "entity-list compact-list" }, rows.length
@@ -1805,35 +1777,22 @@ function cloudSection(s, redraw) {
   ]);
 }
 
-function sessionSection(title, rows, section, s, redraw) {
-  const action = section === "mcp"
-    ? (() => {
-        const add = el("button", { class: "btn small", text: "Connect MCP client" });
-        add.addEventListener("click", () => openMcpModal(add, s, redraw));
-        return add;
-      })()
-    : null;
-  const unit = section === "mcp" ? "client" : "active session";
-  const children = rows.map((row) => sessionEntityRow(row, section, redraw));
-  if (section === "other" && s.roster.revokedHidden > 0) {
-    const count = s.roster.revokedHidden;
-    children.push(el("div", {
-      class: "revoked-summary",
-      text: `${count} revoked session${count === 1 ? "" : "s"} hidden`,
-    }));
-  }
+function clientSection(s, redraw) {
+  const add = el("button", { class: "btn small", text: "Connect MCP client" });
+  add.addEventListener("click", () => openMcpModal(add, s, redraw));
+  const rows = (s.roster ?? []).map((row) => clientEntityRow(row, redraw));
   return el("section", { class: "list-section" }, [
-    sectionHeader(title, rows.length, unit, action),
-    el("div", { class: "entity-list compact-list" }, children.length
-      ? children
-      : [el("div", { class: "empty entity-empty", text: `No ${title.toLowerCase()}.` })]),
+    sectionHeader("Other Agents and Clients", rows.length, "client", add),
+    el("div", { class: "entity-list compact-list" }, rows.length
+      ? rows
+      : [el("div", { class: "empty entity-empty", text: "No other agents or clients." })]),
   ]);
 }
 
 function rosterNotice(s) {
   if (!s.rosterError && !s.actionError) return null;
   return el("div", { class: "roster-notices" }, [
-    s.rosterError ? cloudErrorBanner(s.rosterError, "Sessions could not be refreshed") : null,
+    s.rosterError ? cloudErrorBanner(s.rosterError, "Clients could not be refreshed") : null,
     s.actionError ? cloudErrorBanner(s.actionError, "Plow could not confirm that change") : null,
   ]);
 }
@@ -1850,8 +1809,7 @@ async function renderAgents() {
     panel.replaceChildren(...[
       rosterNotice(s),
       cloudSection(s, refreshConnect),
-      sessionSection("MCP clients", s.roster?.mcp ?? [], "mcp", s, refreshConnect),
-      sessionSection("Other sessions", s.roster?.other ?? [], "other", s, refreshConnect),
+      clientSection(s, refreshConnect),
     ].filter(Boolean));
     syncCloudModal(s, refreshConnect);
     syncMcpModal(s, refreshConnect);
