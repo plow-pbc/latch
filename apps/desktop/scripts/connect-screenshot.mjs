@@ -95,13 +95,13 @@ const ROSTER = [
     id: 301, name: "Claude Code on MacBook Pro", deviceLabel: "this Mac",
     createdAt: "2026-08-12T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString(),
     chatUids: ["*"], chatAccess: "all",
-    permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+    permissions: { canReadAndReply: true, canSpendInference: true },
   },
   {
     id: 302, name: "Cursor desktop", deviceLabel: "mba",
     createdAt: new Date().toISOString(), lastSeenAt: null,
     chatUids: [], chatAccess: "none",
-    permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+    permissions: { canReadAndReply: true, canSpendInference: true },
   },
 ];
 const CLOUD_EMPTY = {

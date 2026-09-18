@@ -44,22 +44,21 @@ describe("which credentials are listed", () => {
 describe("what a credential may actually do", () => {
   // Every listed client holds `relay:call`; what varies is what rides with it.
   it.each([
-    ["the exact grant", ["chats:use", "llm:chat"], [true, true, true]],
-    ["relay only", [], [false, true, false]],
-    ["chats too", ["chats:use"], [true, true, false]],
-    ["inference too", ["llm:chat"], [false, true, true]],
+    ["the exact grant", ["chats:use", "llm:chat"], [true, true]],
+    ["relay only", [], [false, false]],
+    ["chats too", ["chats:use"], [true, false]],
+    ["inference too", ["llm:chat"], [false, true]],
     // plow's matcher recognises resource and global wildcards, so this must
     // too — reading only exact grants would understate a wildcard token.
-    ["a resource wildcard", ["chats:*"], [true, true, false]],
-    ["the global wildcard", ["*:*"], [true, true, true]],
+    ["a resource wildcard", ["chats:*"], [true, false]],
+    ["the global wildcard", ["*:*"], [true, true]],
     // A neighbouring scope is not this one.
-    ["an unrelated scope", ["vault:read", "chats:write"], [false, true, false]],
+    ["an unrelated scope", ["vault:read", "chats:write"], [false, false]],
   ])("reads %s", (_shape, extra, expected) => {
     const [row] = mcpClientRoster([key({ scopes: ["relay:call", ...extra] })]);
 
     expect([
       row.permissions.canReadAndReply,
-      row.permissions.canReachMac,
       row.permissions.canSpendInference,
     ]).toEqual(expected);
   });

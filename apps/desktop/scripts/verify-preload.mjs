@@ -168,7 +168,7 @@ const rosterProbe = [{
   lastSeenAt: "2026-08-25T17:50:00.000Z",
   chatUids: ["*"],
   chatAccess: "all",
-  permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+  permissions: { canReadAndReply: true, canSpendInference: true },
   deviceLabel: "this Mac",
 }];
 let cloudProbe = {

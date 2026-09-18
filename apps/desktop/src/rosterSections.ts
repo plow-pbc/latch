@@ -2,12 +2,10 @@
 import { parseApiTimestamp, type KeyDevice, type KeyInfo } from "./plowApi.js";
 
 /**
- * What a credential may actually do, as three plain booleans.
+ * What a client may do beyond reaching this Mac, which every listed one can.
  *
- * Derived here from its real scopes, because the row used to state all three
- * as literals — so an agent created over SMS straight from the API, which
- * carries no relay credential, still read "Will reach this Mac". A permission
- * line that does not read the permissions is a claim, not a description.
+ * Derived here from its real scopes: a permission line that does not read the
+ * permissions is a claim, not a description.
  *
  * Booleans and never the scopes themselves: the renderer has no business
  * knowing plow's scope grammar, and a projection cannot leak what it does not
@@ -16,8 +14,6 @@ import { parseApiTimestamp, type KeyDevice, type KeyInfo } from "./plowApi.js";
 export interface RosterPermissions {
   /** `chats:use` — reads and replies in the chats it is scoped to. */
   canReadAndReply: boolean;
-  /** `relay:call` — may ask to run things on this Mac. */
-  canReachMac: boolean;
   /** `llm:chat` — may spend inference on the account. */
   canSpendInference: boolean;
 }
@@ -105,7 +101,6 @@ function scopeCovers(granted: readonly string[], required: string): boolean {
 function rosterPermissions(scopes: readonly string[]): RosterPermissions {
   return {
     canReadAndReply: scopeCovers(scopes, "chats:use"),
-    canReachMac: scopeCovers(scopes, "relay:call"),
     canSpendInference: scopeCovers(scopes, "llm:chat"),
   };
 }

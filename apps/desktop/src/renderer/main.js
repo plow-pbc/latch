@@ -1453,20 +1453,13 @@ function rosterChatGrant(chatUids, chatAccess) {
 }
 
 function rosterPermissionCopy(row) {
-  const permissions = [];
-  if (row?.permissions?.canReadAndReply === true) {
-    permissions.push(
-      `Reads and replies in ${rosterChatGrant(row.chatUids, row.chatAccess)}`,
-    );
-  }
-  if (row?.permissions?.canReachMac === true) {
-    permissions.push("Can reach this Mac");
-  }
-  if (row?.permissions?.canSpendInference === true) permissions.push("Can spend inference");
-  if (!permissions.length) {
-    permissions.push(row ? "No agent permissions granted." : "No granted permissions known.");
-  }
-  return permissions;
+  return [
+    row.permissions.canReadAndReply
+      ? `Reads and replies in ${rosterChatGrant(row.chatUids, row.chatAccess)}`
+      : null,
+    "Can reach this Mac",
+    row.permissions.canSpendInference ? "Can spend inference" : null,
+  ].filter(Boolean);
 }
 
 function entityMark(name, client = false) {
@@ -1780,7 +1773,7 @@ function cloudSection(s, redraw) {
 function clientSection(s, redraw) {
   const add = el("button", { class: "btn small", text: "Connect MCP client" });
   add.addEventListener("click", () => openMcpModal(add, s, redraw));
-  const rows = (s.roster ?? []).map((row) => clientEntityRow(row, redraw));
+  const rows = s.roster.map((row) => clientEntityRow(row, redraw));
   return el("section", { class: "list-section" }, [
     sectionHeader("Other Agents and Clients", rows.length, "client", add),
     el("div", { class: "entity-list compact-list" }, rows.length
