@@ -451,15 +451,59 @@ function compactEvent(item: Record<string, unknown>): Record<string, unknown> {
  * wants names.
  */
 export function conflictRefusal(
-  probed: readonly { account: string; conflicts: number }[],
+  probed: readonly { account: string; busy: readonly { start: string; end: string }[] }[],
   degraded: readonly { account: string; reason: string }[],
+  couldNotCheck: readonly string[] = [],
 ): string | null {
-  const busy = probed.filter((p) => p.conflicts > 0);
+  const busy = probed.filter((p) => p.busy.length > 0);
   if (busy.length === 0 && degraded.length === 0) return null;
   const parts = [
-    ...busy.map((p) => `${p.account}: ${p.conflicts} event(s) overlap this window`),
+    ...busy.map((p) => `${p.account}: busy ${p.busy.map((b) => `${b.start}/${b.end}`).join(", ")}`),
     ...degraded.map((d) => `${d.account}: could not check (${d.reason})`),
+    // Not a reason to refuse on its own, but whoever decides the override has
+    // to know the check had a gap in it.
+    ...(couldNotCheck.length > 0 ? [`could not check: ${couldNotCheck.join(", ")}`] : []),
   ];
   const head = busy.length > 0 ? "the slot is busy" : "the conflict check did not cover every account";
-  return `${head} — ${parts.join("; ")}. Follow the Google Workspace skill's conflict rule before re-sending the same command with --confirm-conflict; this refusal carries counts only.`;
+  return `${head} — ${parts.join("; ")}. Follow the Google Workspace skill's conflict rule before re-sending the same command with --confirm-conflict; this refusal carries busy times only.`;
+}
+
+/** The ids of the calendars the owner shows, in `calendar calendars --json
+ * --results-only` output. Those are the ones their commitments sit on. */
+export function shownCalendars(parsed: unknown): string[] {
+  return (Array.isArray(parsed) ? parsed : [])
+    .filter((c) => (c as { selected?: unknown }).selected === true)
+    .map((c) => String((c as { id?: unknown }).id ?? ""))
+    .filter((id) => id !== "");
+}
+
+/**
+ * One account's `calendar freebusy --json --results-only` answer: the busy
+ * spans of every calendar that answered, and the ids of any that did not
+ * (Google answers per calendar, so the rest stays valid). Null when the
+ * output is not a calendar map at all.
+ */
+export function freeBusyAnswer(
+  parsed: unknown,
+): { busy: { start: string; end: string }[]; errored: string[] } | null {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const busy: { start: string; end: string }[] = [];
+  const errored: string[] = [];
+  // Nothing answered is not an empty diary: an account whose every calendar
+  // errored has told us nothing about the window, so it counts as unchecked.
+  let answered = 0;
+  for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+    const row = value as { busy?: unknown; errors?: unknown } | null;
+    if (row === null || typeof row !== "object") continue;
+    if (Array.isArray(row.errors) && row.errors.length > 0) {
+      errored.push(id);
+      continue;
+    }
+    answered += 1;
+    for (const span of Array.isArray(row.busy) ? row.busy : []) {
+      const { start, end } = (span ?? {}) as { start?: unknown; end?: unknown };
+      if (typeof start === "string" && typeof end === "string") busy.push({ start, end });
+    }
+  }
+  return answered === 0 ? null : { busy, errored };
 }

@@ -693,13 +693,29 @@ describe("plow-gog through the exec path", () => {
     return stagedGog(`#!/bin/sh
 [ -n "$GOG_ACCESS_TOKEN" ] && echo "Note: Using direct access token (expires in ~1 hour; no auto-refresh)" >&2
 case "$*" in
-  *"calendar conflicts"*)
+  *"calendar freebusy"*)
+    # The argv is part of the contract: the shown calendars (never the hidden
+    # one) and the create's own window. Anything else answers as a probe that
+    # read nothing, so a gate that stopped passing them fails these tests
+    # instead of passing with the wrong question.
+    case "$*" in
+      *"--cal primary,family@group.calendar.google.com --from 2026-08-28T10:00:00Z --to 2026-08-28T11:00:00Z"*) ;;
+      *) echo '{"argv-mismatch":{"errors":[{"reason":"theGateAskedTheWrongQuestion"}]}}'; exit 0 ;;
+    esac
     case "$GOG_ACCESS_TOKEN" in
-      tok-a) echo '[{"summary":"Standup"}]' ;;
+      tok-a) echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]}}' ;;
       tok-cbad) exit 9 ;;
-      *) echo '[]' ;;
+      tok-cbusyerr) echo '{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
+      tok-cerr) echo '{"primary":{"busy":[]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
+      tok-callerr) echo '{"primary":{"errors":[{"reason":"notFound"}]},"family@group.calendar.google.com":{"errors":[{"reason":"rateLimitExceeded"}]}}' ;;
+      *) echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"busy":[]}}' ;;
     esac ;;
-  *"calendar calendars"*) echo '[{"id":"primary","summary":"Calendar"}]' ;;
+  *"calendar conflicts"*) echo '[]' ;;
+  *"calendar calendars"*)
+    case "$GOG_ACCESS_TOKEN" in
+      tok-cbad) exit 9 ;;
+      *) echo '[{"id":"primary","summary":"Calendar","selected":true},{"id":"family@group.calendar.google.com","summary":"Family","selected":true},{"id":"hidden","summary":"Hidden","selected":false}]' ;;
+    esac ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
   *"calendar events"*) echo '[{"summary":"argv: '"$*"'","start":"2026-01-01T00:00:00Z"}]' ;;
   *"gmail search"*)
@@ -740,8 +756,12 @@ esac
       expect(response).toMatchObject({
         status: "completed",
         items: [
-          { id: "primary", summary: "Calendar", account: "a@example.com" },
-          { id: "primary", summary: "Calendar", account: "b@example.com" },
+          { id: "primary", account: "a@example.com" },
+          { id: "family@group.calendar.google.com", account: "a@example.com" },
+          { id: "hidden", account: "a@example.com" },
+          { id: "primary", account: "b@example.com" },
+          { id: "family@group.calendar.google.com", account: "b@example.com" },
+          { id: "hidden", account: "b@example.com" },
         ],
         degraded: [],
       });
@@ -751,7 +771,7 @@ esac
       const d = device(accountsMinter(AB), plowGogPlugin());
       const response = await run(d, ["plow-gog", "calendar", "calendars", "--json", "--results-only", "--account", "b@example.com"]);
       expect(jv(response).get("status").str).toBe("completed");
-      expect(String(jv(response).get("output").str)).toContain('[{"id":"primary","summary":"Calendar"}]');
+      expect(String(jv(response).get("output").str)).toContain('"id":"primary","summary":"Calendar","selected":true');
     });
 
     itSpawns("tags an accountless calendar list when only one account is connected", async () => {
@@ -759,7 +779,11 @@ esac
       const response = await run(d, ["plow-gog", "calendar", "calendars", "--json", "--results-only"]);
       expect(response).toMatchObject({
         status: "completed",
-        items: [{ id: "primary", summary: "Calendar", account: "a@example.com" }],
+        items: [
+          { id: "primary", account: "a@example.com" },
+          { id: "family@group.calendar.google.com", account: "a@example.com" },
+          { id: "hidden", account: "a@example.com" },
+        ],
         degraded: [],
       });
     });
@@ -1050,7 +1074,7 @@ esac
       why: "a busy slot",
       accounts: () => AB,
       extra: ["--account", "a@example.com"],
-      expected: "1 event(s) overlap",
+      expected: "busy 2026-08-28T10:15:00Z/2026-08-28T10:45:00Z",
     },
     {
       // The hole this chunk closes: the owner is busy on a calendar the
@@ -1058,7 +1082,23 @@ esac
       why: "a conflict on a connected account the event is not booked on",
       accounts: () => AB,
       extra: ["--account", "b@example.com"],
-      expected: "a@example.com: 1 event(s) overlap",
+      expected: "a@example.com: busy 2026-08-28T10:15:00Z/2026-08-28T10:45:00Z",
+    },
+    {
+      // A calendar Google would not read is a gap in the answer, not a free
+      // calendar: the busy time the others reported still refuses.
+      why: "a busy calendar beside one the read could not query",
+      accounts: () => [{ account: "a@example.com", token: "tok-cbusyerr", isDefault: true }],
+      extra: [],
+      expected: "could not check: gone",
+    },
+    {
+      // A different path from one errored calendar beside a good one: nothing
+      // in this account answered, so the window is unknown, not free.
+      why: "an account whose every calendar errored",
+      accounts: () => [{ account: "a@example.com", token: "tok-callerr", isDefault: true }],
+      extra: [],
+      expected: "a@example.com: could not check",
     },
     {
       why: "a probe that cannot answer",
@@ -1089,9 +1129,12 @@ esac
     // Who may confirm, and what may be named, is the served skill's rule, not this string's.
     expect(error).toContain("Follow the Google Workspace skill's conflict rule");
     const body = JSON.stringify(response);
-    // The records themselves stay on the Mac: the owner approved a CREATE,
-    // and event summaries riding its refusal would be an unapproved read.
-    expect(body).not.toContain("Standup");
+    // The records themselves stay on the Mac: the owner approved a CREATE, so
+    // the refusal carries times and never which calendar they came from — the
+    // fixture's busy span sits on "family@…", whose id must not travel. (A
+    // calendar that could not be READ is named on purpose; that is a gap in
+    // the answer, not a commitment.)
+    if (!expected.includes("could not check")) expect(body).not.toContain("family@group.calendar.google.com");
     // The create itself never ran: its output would have been the response.
     expect(body).not.toContain("evt-1");
     // And the audit says so: a refusal is an error row, never the zero-exit
@@ -1108,6 +1151,19 @@ esac
       "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
     ]);
     expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
+  });
+
+  itSpawns("books when the busy times are clear, naming a calendar Google would not read", async () => {
+    // The booking is not held hostage to one unreadable calendar — the owner
+    // would never get an event booked again — but the gap is in the result
+    // rather than swallowed.
+    const d = device(accountsMinter([{ account: "a@example.com", token: "tok-cerr", isDefault: true }]), plowGogPlugin());
+    const response = await run(d, [
+      "plow-gog", "calendar", "create", "primary", "--summary", "X",
+      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
+    ]);
+    expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
+    expect(response).toMatchObject({ could_not_check: ["gone"] });
   });
 
   itSpawns("books anyway with --confirm-conflict", async () => {

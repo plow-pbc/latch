@@ -691,6 +691,11 @@ describe("the Google Workspace skill", () => {
     expect(GOG_SKILL.body).toContain("Take every day name you write from `startDayOfWeek`");
     expect(GOG_SKILL.body).toContain("To get the raw events,\npass `--select` or `--fields`");
     expect(GOG_SKILL.body).toContain("never work\nit out from the date yourself, and never from memory");
+    // An agent answered "am I free at 2pm" from the conflict verb, which
+    // pairs commitments across calendars: a lone one made it empty, and the
+    // owner was told a slot was free with a commitment in it.
+    expect(GOG_SKILL.body).toContain('**"Am I free at 2pm?" is a busy-time read.**');
+    expect(GOG_SKILL.body).toContain("proves nothing\nabout whether the owner is free");
     for (const field of ["startDayOfWeek", "startLocal", "endLocal", "truncated: {omitted, after}"]) {
       expect(GOG_SKILL.body).toContain(field);
     }
