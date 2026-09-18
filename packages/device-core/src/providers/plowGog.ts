@@ -489,6 +489,9 @@ export function freeBusyAnswer(
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const busy: { start: string; end: string }[] = [];
   const errored: string[] = [];
+  // Nothing answered is not an empty diary: an account whose every calendar
+  // errored has told us nothing about the window, so it counts as unchecked.
+  let answered = 0;
   for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
     const row = value as { busy?: unknown; errors?: unknown } | null;
     if (row === null || typeof row !== "object") continue;
@@ -496,10 +499,11 @@ export function freeBusyAnswer(
       errored.push(id);
       continue;
     }
+    answered += 1;
     for (const span of Array.isArray(row.busy) ? row.busy : []) {
       const { start, end } = (span ?? {}) as { start?: unknown; end?: unknown };
       if (typeof start === "string" && typeof end === "string") busy.push({ start, end });
     }
   }
-  return { busy, errored };
+  return answered === 0 ? null : { busy, errored };
 }

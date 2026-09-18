@@ -690,18 +690,27 @@ describe("plow-gog through the exec path", () => {
 [ -n "$GOG_ACCESS_TOKEN" ] && echo "Note: Using direct access token (expires in ~1 hour; no auto-refresh)" >&2
 case "$*" in
   *"calendar freebusy"*)
+    # The argv is part of the contract: the shown calendars (never the hidden
+    # one) and the create's own window. Anything else answers as a probe that
+    # read nothing, so a gate that stopped passing them fails these tests
+    # instead of passing with the wrong question.
+    case "$*" in
+      *"--cal primary,family@group.calendar.google.com --from 2026-08-28T10:00:00Z --to 2026-08-28T11:00:00Z"*) ;;
+      *) echo '{"argv-mismatch":{"errors":[{"reason":"theGateAskedTheWrongQuestion"}]}}'; exit 0 ;;
+    esac
     case "$GOG_ACCESS_TOKEN" in
-      tok-a) echo '{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"luca":{"busy":[]}}' ;;
+      tok-a) echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]}}' ;;
       tok-cbad) exit 9 ;;
       tok-cbusyerr) echo '{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
       tok-cerr) echo '{"primary":{"busy":[]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
-      *) echo '{"primary":{"busy":[]},"luca":{"busy":[]}}' ;;
+      tok-callerr) echo '{"primary":{"errors":[{"reason":"notFound"}]},"family@group.calendar.google.com":{"errors":[{"reason":"rateLimitExceeded"}]}}' ;;
+      *) echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"busy":[]}}' ;;
     esac ;;
   *"calendar conflicts"*) echo '[]' ;;
   *"calendar calendars"*)
     case "$GOG_ACCESS_TOKEN" in
       tok-cbad) exit 9 ;;
-      *) echo '[{"id":"primary","summary":"Calendar","selected":true},{"id":"luca","summary":"Luca","selected":true},{"id":"hidden","summary":"Hidden","selected":false}]' ;;
+      *) echo '[{"id":"primary","summary":"Calendar","selected":true},{"id":"family@group.calendar.google.com","summary":"Family","selected":true},{"id":"hidden","summary":"Hidden","selected":false}]' ;;
     esac ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
   *"calendar events"*) echo '[{"summary":"argv: '"$*"'","start":"2026-01-01T00:00:00Z"}]' ;;
@@ -744,10 +753,10 @@ esac
         status: "completed",
         items: [
           { id: "primary", account: "a@example.com" },
-          { id: "luca", account: "a@example.com" },
+          { id: "family@group.calendar.google.com", account: "a@example.com" },
           { id: "hidden", account: "a@example.com" },
           { id: "primary", account: "b@example.com" },
-          { id: "luca", account: "b@example.com" },
+          { id: "family@group.calendar.google.com", account: "b@example.com" },
           { id: "hidden", account: "b@example.com" },
         ],
         degraded: [],
@@ -768,7 +777,7 @@ esac
         status: "completed",
         items: [
           { id: "primary", account: "a@example.com" },
-          { id: "luca", account: "a@example.com" },
+          { id: "family@group.calendar.google.com", account: "a@example.com" },
           { id: "hidden", account: "a@example.com" },
         ],
         degraded: [],
@@ -1080,6 +1089,14 @@ esac
       expected: "could not check: gone",
     },
     {
+      // A different path from one errored calendar beside a good one: nothing
+      // in this account answered, so the window is unknown, not free.
+      why: "an account whose every calendar errored",
+      accounts: () => [{ account: "a@example.com", token: "tok-callerr", isDefault: true }],
+      extra: [],
+      expected: "a@example.com: could not check",
+    },
+    {
       why: "a probe that cannot answer",
       accounts: () => [{ account: "a@example.com", token: "tok-cbad", isDefault: true }],
       extra: [],
@@ -1108,9 +1125,12 @@ esac
     // Who may confirm, and what may be named, is the served skill's rule, not this string's.
     expect(error).toContain("Follow the Google Workspace skill's conflict rule");
     const body = JSON.stringify(response);
-    // The records themselves stay on the Mac: the owner approved a CREATE,
-    // and event summaries riding its refusal would be an unapproved read.
-    expect(body).not.toContain("Standup");
+    // The records themselves stay on the Mac: the owner approved a CREATE, so
+    // the refusal carries times and never which calendar they came from — the
+    // fixture's busy span sits on "family@…", whose id must not travel. (A
+    // calendar that could not be READ is named on purpose; that is a gap in
+    // the answer, not a commitment.)
+    if (!expected.includes("could not check")) expect(body).not.toContain("family@group.calendar.google.com");
     // The create itself never ran: its output would have been the response.
     expect(body).not.toContain("evt-1");
     // And the audit says so: a refusal is an error row, never the zero-exit
