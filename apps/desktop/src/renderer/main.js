@@ -1725,13 +1725,13 @@ function openDeployModal(trigger, s, redraw) {
 async function deployAgent(panel, card, redraw) {
   const modal = cloudModal;
   for (const button of panel.querySelectorAll("button")) button.disabled = true;
-  const opened = await window.domo.cloudNewAgentMessages(card.id).catch(() => null);
+  const opened = await window.domo.cloudNewAgentMessages(card.id).catch(() => false);
   if (cloudModal !== modal) return;
   if (!opened) {
-    // false: main had no setup text to send, because a failed refresh dropped
-    // Plow's catalog (its API mid-deploy, say). null: Messages refused the link.
+    // Main had no setup text to send: a failed refresh dropped Plow's catalog
+    // (its API mid-deploy, say). An sms: link itself always opens on macOS.
     const note = panel.querySelector(".deploy-note");
-    note.textContent = opened === null ? "Could not open Messages." : "Plow isn't answering right now. Try again in a minute.";
+    note.textContent = "Plow isn't answering right now. Try again in a minute.";
     note.classList.add("error");
     for (const button of panel.querySelectorAll("button")) button.disabled = false;
     return;
