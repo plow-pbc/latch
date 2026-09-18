@@ -1,19 +1,19 @@
 {
   "name": "messages",
   "title": "iMessage history",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0",
   "command": "plow-messages",
   "runtime": {
     "binaries": [
       {
         "name": "plow-messages",
         "url": {
-          "arm64": "https://github.com/plow-pbc/plow-messages/releases/download/v0.1.0-rc.2/plow-messages_0.1.0-rc.2_darwin_arm64.tar.gz",
-          "x64": "https://github.com/plow-pbc/plow-messages/releases/download/v0.1.0-rc.2/plow-messages_0.1.0-rc.2_darwin_amd64.tar.gz"
+          "arm64": "https://github.com/plow-pbc/plow-messages/releases/download/v0.1.0/plow-messages_0.1.0_darwin_arm64.tar.gz",
+          "x64": "https://github.com/plow-pbc/plow-messages/releases/download/v0.1.0/plow-messages_0.1.0_darwin_amd64.tar.gz"
         },
         "sha256": {
-          "arm64": "1e0ee74a10d139203ab53385b9abc4b1cfcc05e3e76a5d378ea4a8765f22a667",
-          "x64": "2dc75125a3b1fe64213fef44864f4e73e5020869e6c2c6147a66405a6491e47b"
+          "arm64": "edc4d60ed4bb30b4509a6f3699b08af76a0bf678ddaabdbf62e3fda903524f2a",
+          "x64": "29a3986a8d9803820748c2a7aa1ae007f8548753ff342cef0385d379b7e89f09"
         }
       }
     ]
