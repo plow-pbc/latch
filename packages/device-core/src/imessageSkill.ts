@@ -303,11 +303,13 @@ trusting the top row.
 
 ## Approval semantics
 
-An unattended read gets an always-allow rule only when the argv is byte-identical every
-time it runs — which is exactly why the read recipes above use a relative time window
-(\`strftime('%s','now') - 129600\`) baked into the SQL rather than a computed cutoff pasted
-in as a literal, and why the store path in \`read_paths\` is fixed rather than templated. A
-send never qualifies for that treatment (see Sending, above) — a script is never a rule.`,
+An unattended \`plow-messages\` read gets an always-allow rule keyed on its subcommand, not
+its full argv: the rule collapses to \`plow-messages search\` (or \`thread\`/\`chats\`/
+\`unreplied\`), so approving one search for always covers every later search, whatever
+words you pass it next time. The rest of the capability set still has to match, which is
+why \`read_paths\` above names the store directory as a fixed path rather than one templated
+per call. A send never qualifies for that treatment (see Sending, above) — a script is
+never a rule.`,
   };
 }
 

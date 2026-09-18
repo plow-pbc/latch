@@ -236,7 +236,7 @@ describe("the built-in imessage skill", () => {
     ["the success criterion for a send", /success criterion is .?is_sent = 1.? and .?error = 0.?/i],
     ["is_delivered not being part of that criterion", /is_delivered.? is not part of it/i],
     ["what a non-zero error means", /error = 22.?\s+is the\s+common one/i],
-    ["byte-identical argv for unattended reads", /byte-identical/i],
+    ["a read's always-allow rule keyed on the subcommand, not the full argv", /keyed on its subcommand, not\s+its full argv/i],
   ])("publishes %s", (_what, pattern) => {
     expect(imessageSkillFor("/Users/testowner").body).toMatch(pattern);
   });
