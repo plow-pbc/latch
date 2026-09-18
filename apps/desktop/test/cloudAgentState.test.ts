@@ -744,30 +744,21 @@ describe("CloudAgentState waiting for a deployed agent", () => {
       listAgents: async () => agentListImpl(),
     });
 
-    // Load initial state with a fast list
     await state.refresh();
-    const initialCount = calls.filter((c) => c === "listAgents").length;
-
-    // Switch to held-open deferred and start wait; ~12 ticks will queue up
     agentListImpl = async () => heldOpen.promise;
     const waited = state.awaitNewAgent({ intervalMs: 5, timeoutMs: 1000 });
-    await new Promise((r) => setTimeout(r, 60)); // Let ticks queue behind the held read
+    await new Promise((r) => setTimeout(r, 60));
 
-    // Record before, then release: the burst of queued thunks will run on microtasks
+    // Measure post-release burst: old code queues ~12 ticks behind the held read.
     const before = calls.filter((c) => c === "listAgents").length;
-    agentListImpl = async () => [agent()]; // No new agent, same list
+    agentListImpl = async () => [agent()];
     heldOpen.resolve([agent()]);
+    await new Promise((r) => setTimeout(r, 0)); // Flush macrotask; queued thunks drain before it.
 
-    // Flush macrotask: old code drains its backlog of ~12 queued calls on
-    // microtasks before this setTimeout fires; new code has only 1 pending
-    // (the one that just settled) and doesn't schedule its next tick until 5ms out.
-    await new Promise((r) => setTimeout(r, 0));
-
-    // Count the burst: should be at most 1 (new code's next scheduled tick or none).
-    // Old code gives many as each queued thunk calls listAgents.
     const burstSize = calls.filter((c) => c === "listAgents").length - before;
     expect(burstSize).toBeLessThanOrEqual(1);
 
     state.signedOut();
+    expect(await waited).toBeNull();
   });
 });
