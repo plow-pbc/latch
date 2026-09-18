@@ -343,6 +343,49 @@ describe("connector account lifecycle", () => {
   });
 });
 
+/**
+ * The background poll main runs while no account is known: it finds an
+ * account connected outside the app without ever being the owner's action.
+ */
+describe("a background poll", () => {
+  it("picks up an account connected elsewhere without a busy flicker or wiping the owner's note", async () => {
+    const plow = new FakePlow();
+    let published = 0;
+    const { connectors } = build(plow, { onChange: () => void published++ });
+    await connectors.connect(); // times out and leaves CONNECTOR_TIMEOUT_NOTE
+    published = 0;
+    plow.listAnswers = [overview([account("ada@example.com", { isDefault: true })])];
+
+    await connectors.poll();
+    await connectors.poll();
+
+    expect(connectors.state()).toEqual({
+      busy: false,
+      message: CONNECTOR_TIMEOUT_NOTE,
+      noteKind: "neutral",
+      google: { accounts: [account("ada@example.com", { isDefault: true })], connecting: false },
+    });
+    // Once for the new account; the unchanged second answer says nothing.
+    expect(published).toBe(1);
+  });
+
+  it("never drops the owner's click, and a poll that lands after it does not overwrite what it loaded", async () => {
+    const slowPoll = deferred<ConnectorsOverview>();
+    const plow = new FakePlow();
+    plow.pollGate = async (_signal, call) =>
+      call === 1 ? slowPoll.promise : overview([account("ada@example.com")]);
+    const { connectors } = build(plow);
+
+    const polling = connectors.poll();
+    const refreshed = await connectors.refresh();
+    slowPoll.resolve(overview());
+    await polling;
+
+    expect(refreshed.google.accounts).toEqual([account("ada@example.com")]);
+    expect(connectors.state().google.accounts).toEqual([account("ada@example.com")]);
+  });
+});
+
 describe("connect URL privacy", () => {
   it("keeps the fake connect URL out of every audit, log, and published state output", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-connectors-"));

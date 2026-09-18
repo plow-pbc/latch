@@ -77,6 +77,31 @@ export class Connectors {
     });
   }
 
+  /**
+   * A background re-read of the accounts, for when no window asked. Unlike
+   * `refresh` it never goes through `run`: no busy state and no notice, so it
+   * cannot drop the owner's click or wipe a message they are reading. A result
+   * that lands after an action started or a sign-out is dropped — that one
+   * loads for itself — and a failure is silent, as the next poll asks again.
+   * Publishes only a list that changed.
+   */
+  async poll(): Promise<void> {
+    const credential = this.deps.credential().trim();
+    if (this.busy || !credential) return;
+    const generation = this.generation;
+    let overview: ConnectorsOverview;
+    try {
+      overview = await this.deps.api.listConnectors(credential, AbortSignal.timeout(CONNECTOR_TIMEOUT_MS));
+    } catch {
+      return;
+    }
+    if (generation !== this.generation) return;
+    const accounts = overview.google.accounts.map((account) => ({ ...account }));
+    if (JSON.stringify(accounts) === JSON.stringify(this.accounts)) return;
+    this.accounts = accounts;
+    this.publish();
+  }
+
   async connect(): Promise<ConnectorsState> {
     return this.run(true, async (credential, action) => {
       const before = await this.load(credential, action);
@@ -176,6 +201,9 @@ export class Connectors {
       return this.publish();
     }
 
+    // A new generation per action, not only per sign-out: a `poll` that was
+    // in flight when this started must not land over what this loads.
+    this.generation += 1;
     const action = {
       generation: this.generation,
       controller: new AbortController(),

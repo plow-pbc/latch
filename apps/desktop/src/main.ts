@@ -2038,7 +2038,7 @@ async function startRelay(): Promise<void> {
         telemetry?.track(isConnected ? "relay_connected" : "relay_disconnected");
         // Main holds no accounts until it asks Plow, and the device gates
         // plugins on them — so every (re)connect asks, window open or not.
-        if (isConnected) void connectors?.refresh();
+        if (isConnected) void connectors?.poll();
       }
       connected = isConnected;
       notifyRenderer("status:changed");
@@ -2330,7 +2330,7 @@ app.whenReady().then(async () => {
   // leave a plugin that needs one off until the next reconnect. The other
   // direction needs no poll — a stale account fails loudly at the mint.
   setInterval(() => {
-    if (connected && connectedAccountIds().length === 0) void connectors?.refresh();
+    if (connected && connectedAccountIds().length === 0) void connectors?.poll();
   }, 60_000);
   await startRelay();
 
