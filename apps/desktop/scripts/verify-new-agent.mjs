@@ -66,6 +66,7 @@ app.whenReady().then(async () => {
       label: "Ash", recipients: { line: "+15557654321", members: ["+15550000001"] }, people: [],
     }] },
     lines: { list: async () => [{ uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15557654321" }] },
+    agentIndex: async () => ({ "exe:life": { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88 } }),
   });
   await cloudAgents.refresh();
   const state = () => ({
@@ -76,7 +77,7 @@ app.whenReady().then(async () => {
   const source = ts.createSourceFile("main.ts", fs.readFileSync(path.join(desktop, "src/main.ts"), "utf8"), ts.ScriptTarget.Latest, true);
   const nodes = source.statements.filter((n) =>
     (ts.isFunctionDeclaration(n) && n.name?.text === "openSmsUrl") ||
-    (ts.isExpressionStatement(n) && ['ipcMain.handle("cloud:newAgentMessages"', 'ipcMain.handle("cloud:changeLine"'].some((prefix) => n.getText(source).startsWith(prefix))));
+    (ts.isExpressionStatement(n) && ['ipcMain.handle("cloud:newAgentMessages"', 'ipcMain.handle("cloud:awaitNewAgent"', 'ipcMain.handle("cloud:changeLine"'].some((prefix) => n.getText(source).startsWith(prefix))));
   vm.runInNewContext(ts.transpileModule(nodes.map((n) => n.getText(source)).join("\n"), {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText, { ipcMain, cloudAgents, agentsTabState: state, shell: { openExternal: async (url) => { opened.push(url); console.log(`shell.openExternal: ${url}`); } } });
@@ -104,36 +105,45 @@ app.whenReady().then(async () => {
     await win.loadFile(path.join(dist, "renderer/index.html"));
     await delay(800);
     const newAgent = '[...document.querySelectorAll("button")].find(b => b.textContent === "New agent")';
+    const card = (name) => `[...document.querySelectorAll(".deploy-card")].find(c => c.querySelector(".deploy-card-name").textContent === ${JSON.stringify(name)})`;
+    const deployButton = '[...document.querySelectorAll(".deploy-modal button")].find(b => b.textContent.startsWith("Deploy"))';
     await mouseClick(win, newAgent);
-    fs.writeFileSync(path.join(out, "single-provider.png"), (await win.webContents.capturePage()).toPNG());
+    assert.equal(await win.webContents.executeJavaScript(`${deployButton}.disabled`), true);
+    assert.equal(await win.webContents.executeJavaScript(`${card("Life")}.textContent.includes("by Sam · 16 people · 88% set up")`), true);
+    await mouseClick(win, card("Life"));
+    fs.writeFileSync(path.join(out, "deploy-picker.png"), (await win.webContents.capturePage()).toPNG());
+    await mouseClick(win, deployButton);
     assert.equal(opened.at(-1), "sms:+15551234567?&body=Start%20Life%20%26%20caf%C3%A9%3F");
-    assert.equal(await win.webContents.executeJavaScript('!!document.querySelector(".cloud-modal")'), false);
-    console.log("PASS: single-provider New agent opens the encoded first phrase without a modal");
+    assert.equal(await win.webContents.executeJavaScript('!!document.querySelector(".deploy-wait")'), true);
+    fs.writeFileSync(path.join(out, "deploy-waiting.png"), (await win.webContents.capturePage()).toPNG());
+    console.log("PASS: New agent opens the deploy modal; Deploy opens the encoded phrase and waits");
+
+    agentRows = [{ uid: "agent_new", name: "Life", provider: "exe:life", status: "provisioning",
+      line: { uid: "lin_willow", display_name: "Willow", provider_key: "+15551111111" } }];
+    await delay(6000);
+    assert.equal(await win.webContents.executeJavaScript('!!document.querySelector(".deploy-modal")'), false);
+    assert.equal(await win.webContents.executeJavaScript('!!document.querySelector("[data-cloud-agent-id=agent_new].cloud-agent-new")'), true);
+    fs.writeFileSync(path.join(out, "deploy-arrived.png"), (await win.webContents.capturePage()).toPNG());
+    console.log("PASS: the wait finds the new agent, closes the modal and highlights its row");
 
     providers = [...providers, { id: "exe:hermes", name: "Hermes", phrases: ["Start Hermes"] }];
     await cloudAgents.refresh();
     win.webContents.send("connect:changed");
     await delay(250);
-    // Tab from the selected dropdown and use keyboard input to choose the next provider.
     await mouseClick(win, newAgent);
-    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab", modifiers: ["shift"] });
-    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab", modifiers: ["shift"] });
-    await delay(100);
-    console.log("keyboard focus", await win.webContents.executeJavaScript("document.activeElement.outerHTML"));
-    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "H" });
-    win.webContents.sendInputEvent({ type: "char", keyCode: "H" });
-    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "H" });
-    await delay(200);
-    console.log("Shift-Tab, keyDown/char/keyUp H: choose Hermes");
-    assert.equal(await win.webContents.executeJavaScript('document.querySelector("select").value'), "exe:hermes");
-    win.webContents.send("connect:changed");
-    await delay(200);
-    assert.equal(await win.webContents.executeJavaScript('document.querySelector("select").value'), "exe:hermes");
-    await mouseClick(win, newAgent);
+    assert.deepEqual(await win.webContents.executeJavaScript('[...document.querySelectorAll(".deploy-card-name")].map(n => n.textContent)'), ["Life", "Hermes"]);
+    assert.equal(await win.webContents.executeJavaScript(`${card("Hermes")}.textContent.includes("No description yet")`), true);
+    await win.webContents.executeJavaScript(`${card("Hermes")}.focus()`);
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
+    win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+    await delay(150);
+    assert.equal(await win.webContents.executeJavaScript(`${deployButton}.textContent`), "Deploy Hermes");
+    await mouseClick(win, deployButton);
     assert.equal(opened.at(-1), "sms:+15551234567?&body=Start%20Hermes");
-    fs.writeFileSync(path.join(out, "multiple-providers.png"), (await win.webContents.capturePage()).toPNG());
+    await mouseClick(win, '[...document.querySelectorAll(".deploy-modal button")].find(b => b.textContent === "Close")');
     assert(requests.every((request) => request.startsWith("GET ")));
-    console.log("PASS: provider selection opens its phrase; no API mutations", JSON.stringify(requests));
+    console.log("PASS: keyboard selection deploys Hermes; no API mutations", JSON.stringify(requests));
 
     agentRows = [{ uid: "agent_1", name: "Life", provider: "exe:life", status: "running",
       line: { uid: "lin_willow", display_name: "Willow", provider_key: "+15551111111" } }];
