@@ -76,7 +76,8 @@ Ed25519 signing in CryptoKit was *randomized*, so signatures are checked by
 cross-*verification* (a fixture signature must verify under its public key)
 rather than byte-equality; the *signed bytes* (canonical JSON) are asserted
 identical. `sbpl.json` embeds a `home`, and `sandbox.test.ts` generates each
-case for that home, so its byte-parity cases run on every machine.
+case for that home, so its byte-parity cases run on every machine — `tmp-paths`
+on macOS only, since it freezes /tmp resolving to /private/tmp.
 `pathutil.json` is the quiet one: `golden.test.ts` skips its relative-path cases
 whenever `process.cwd()` differs from the generating cwd, and its `/private`
 cases off darwin, with no marker in the test name — so off the generating

@@ -167,7 +167,8 @@ Four further items in the same area, all yours:
 
 It used to embed the generating machine's `$HOME` and skip everywhere else, which let it drift
 unnoticed. `sandbox.test.ts` now generates each case for the fixture's own `home`, so the
-byte-parity assertions run on every machine and in CI.
+byte-parity assertions run on every machine and in CI — `tmp-paths` on macOS only, since it freezes
+`/tmp` resolving to `/private/tmp`.
 
 ### 4.2 A residual symlink-swap window between decision and open
 
