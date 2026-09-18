@@ -50,7 +50,11 @@ for (const { name, manifest, skill } of PLUGINS) {
   });
 }
 
-describe("messages allowlist", () => {
+describe("messages plugin", () => {
+  it("carries the owner-authority rule itself — its page is loadable without the imessage skill", () => {
+    expect(PLUGINS.find((p) => p.name === "messages")?.skill).toMatch(/carries the owner's authority in this\s+conversation/);
+  });
+
   it("refuses --store: the CLI accepts it only ahead of the subcommand, and the allowlist requires the agent's tail to start with one", () => {
     const messages = PLUGINS.find((p) => p.name === "messages");
     expect(messages).toBeDefined();
