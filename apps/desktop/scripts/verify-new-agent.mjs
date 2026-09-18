@@ -43,6 +43,7 @@ app.whenReady().then(async () => {
   saveSettings(home, { ...loadSettings(home), relayCredential: "fixture_device_credential" });
   let providers = [{ id: "exe:life", name: "Life", phrases: ["Start Life & café?", "alias"] }];
   let agentRows = [];
+  let signupDown = false; // Plow's API mid-deploy: the catalog refresh 503s
   const requests = [], opened = [];
   const api = new PlowApi("https://fixture.invalid", async (url, init) => {
     requests.push(`${init.method} ${new URL(url).pathname}`);
@@ -54,6 +55,7 @@ app.whenReady().then(async () => {
     if (init.method !== "GET") throw new Error("Unexpected mutation");
     if (new URL(url).pathname === "/v1/signup") {
       assert.equal(new Headers(init.headers).has("authorization"), false);
+      if (signupDown) return new Response("", { status: 503 });
     }
     const body = new URL(url).pathname === "/v1/signup"
       ? { managed_phone: "+15551234567", providers } : agentRows;
@@ -115,6 +117,20 @@ app.whenReady().then(async () => {
     assert.equal(await win.webContents.executeJavaScript(`${card("Life")}.textContent.includes("by Sam · 16 people · 88% set up")`), true);
     await mouseClick(win, card("Life"));
     fs.writeFileSync(path.join(out, "deploy-picker.png"), (await win.webContents.capturePage()).toPNG());
+
+    // Plow goes down while the modal is open: a refresh drops the catalog, so
+    // Deploy has no setup text. It must say so, visibly, and open nothing.
+    signupDown = true;
+    await cloudAgents.refresh();
+    const openedBefore = opened.length;
+    await mouseClick(win, deployButton);
+    assert.equal(opened.length, openedBefore);
+    assert.deepEqual(await win.webContents.executeJavaScript('(n => [n.textContent, n.classList.contains("error")])(document.querySelector(".deploy-note"))'),
+      ["Plow isn't answering right now. Try again in a minute.", true]);
+    fs.writeFileSync(path.join(out, "deploy-plow-down.png"), (await win.webContents.capturePage()).toPNG());
+    console.log("PASS: with Plow's catalog down, Deploy says so in error style and opens nothing");
+    signupDown = false;
+    await cloudAgents.refresh();
     await mouseClick(win, deployButton);
     assert.equal(opened.at(-1), "sms:+15551234567?&body=Start%20Life%20%26%20caf%C3%A9%3F");
     assert.equal(await win.webContents.executeJavaScript('!!document.querySelector(".deploy-wait")'), true);

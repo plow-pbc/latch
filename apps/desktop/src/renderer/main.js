@@ -1725,10 +1725,14 @@ function openDeployModal(trigger, s, redraw) {
 async function deployAgent(panel, card, redraw) {
   const modal = cloudModal;
   for (const button of panel.querySelectorAll("button")) button.disabled = true;
-  const opened = await window.domo.cloudNewAgentMessages(card.id).catch(() => false);
+  const opened = await window.domo.cloudNewAgentMessages(card.id).catch(() => null);
   if (cloudModal !== modal) return;
   if (!opened) {
-    panel.querySelector(".deploy-note").textContent = "Could not open Messages. Refresh and try again.";
+    // false: main had no setup text to send, because a failed refresh dropped
+    // Plow's catalog (its API mid-deploy, say). null: Messages refused the link.
+    const note = panel.querySelector(".deploy-note");
+    note.textContent = opened === null ? "Could not open Messages." : "Plow isn't answering right now. Try again in a minute.";
+    note.classList.add("error");
     for (const button of panel.querySelectorAll("button")) button.disabled = false;
     return;
   }
