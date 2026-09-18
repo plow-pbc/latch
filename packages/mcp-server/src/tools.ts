@@ -428,7 +428,9 @@ export const TOOLS: ToolSpec[] = [
         network: {
           type: "boolean",
           description:
-            "Whether the command needs network access (default false). Ignored for a " +
+            "Whether the command needs network access (default false). Printing needs it: " +
+            "`lp` and `lpstat` reach CUPS over a socket, and without it every printer looks absent. " +
+            "Ignored for a " +
             "provider command: those reach their service by definition, so " +
             "network is granted whether you omit this or set it false, and the approver " +
             "sees it either way. The exception is asking for help — `--help` or `-h` as " +
