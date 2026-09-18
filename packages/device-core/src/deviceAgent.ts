@@ -14,6 +14,7 @@
 import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
 import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
+import { missingPluginAccounts } from "./plugins/manifest.js";
 import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
 import { resolveEnv } from "./plugins/env.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
@@ -886,7 +887,7 @@ export class DeviceAgent {
   private offReason(staged: StagedPlugin): string | null {
     const { name, command, requires } = staged.manifest;
     if (this.disabledPlugins.has(name)) return `${command} is turned off on this Mac`;
-    const missing = requires.accounts.find((id) => !this.connectedAccounts.has(id));
+    const [missing] = missingPluginAccounts(requires, this.connectedAccounts);
     if (missing === undefined) return null;
     return `${command} needs a connected ${missing} account — the owner connects one in Plow Latch's Plugins tab`;
   }

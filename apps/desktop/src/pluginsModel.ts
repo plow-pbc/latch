@@ -5,7 +5,7 @@
  * the tab is a list of what is stopping the agent, not an inventory (that is
  * Settings' Permissions section).
  */
-import { BROWSER_PLUGIN, type PluginManifest } from "@domo/device-core";
+import { BROWSER_PLUGIN, missingPluginAccounts, type PluginManifest } from "@domo/device-core";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
@@ -51,8 +51,7 @@ export interface PluginsInput {
 export function pluginRows(input: PluginsInput): PluginRow[] {
   const accounts = new Set(input.connectedAccounts);
   return input.plugins.map(({ manifest, enabled, description }) => {
-    const unmet: UnmetRequirement[] = manifest.requires.accounts
-      .filter((id) => !accounts.has(id))
+    const unmet: UnmetRequirement[] = missingPluginAccounts(manifest.requires, accounts)
       .map((id) => ({ id, title: "Account", detail: id, action: "Connect Google" }));
     // Off wins: a disabled plugin's unmet requirements are not the owner's
     // problem until they turn it back on.
