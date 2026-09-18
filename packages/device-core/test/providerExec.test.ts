@@ -689,13 +689,23 @@ describe("plow-gog through the exec path", () => {
     return stagedGog(`#!/bin/sh
 [ -n "$GOG_ACCESS_TOKEN" ] && echo "Note: Using direct access token (expires in ~1 hour; no auto-refresh)" >&2
 case "$*" in
+  *"calendar freebusy"*)
+    case "$GOG_ACCESS_TOKEN" in
+      tok-a) echo '{"calendars":{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"luca@group.calendar.google.com":{"busy":[]}}}' ;;
+      tok-cbad) exit 9 ;;
+      tok-cerr) echo '{"calendars":{"primary":{"errors":[{"reason":"notFound"}]}}}' ;;
+      *) echo '{"calendars":{"primary":{"busy":[]}}}' ;;
+    esac ;;
   *"calendar conflicts"*)
     case "$GOG_ACCESS_TOKEN" in
       tok-a) echo '[{"summary":"Standup"}]' ;;
-      tok-cbad) exit 9 ;;
       *) echo '[]' ;;
     esac ;;
-  *"calendar calendars"*) echo '[{"id":"primary","summary":"Calendar"}]' ;;
+  *"calendar calendars"*)
+    case "$GOG_ACCESS_TOKEN" in
+      tok-cbad) exit 9 ;;
+      *) echo '[{"id":"primary","summary":"Calendar","selected":true},{"id":"luca@group.calendar.google.com","summary":"Luca","selected":true},{"id":"hidden@group.calendar.google.com","summary":"Hidden","selected":false}]' ;;
+    esac ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
   *"calendar events"*) echo '[{"summary":"argv: '"$*"'","start":"2026-01-01T00:00:00Z"}]' ;;
   *"gmail search"*)
@@ -736,8 +746,12 @@ esac
       expect(response).toMatchObject({
         status: "completed",
         items: [
-          { id: "primary", summary: "Calendar", account: "a@example.com" },
-          { id: "primary", summary: "Calendar", account: "b@example.com" },
+          { id: "primary", summary: "Calendar", selected: true, account: "a@example.com" },
+          { id: "luca@group.calendar.google.com", summary: "Luca", selected: true, account: "a@example.com" },
+          { id: "hidden@group.calendar.google.com", summary: "Hidden", selected: false, account: "a@example.com" },
+          { id: "primary", summary: "Calendar", selected: true, account: "b@example.com" },
+          { id: "luca@group.calendar.google.com", summary: "Luca", selected: true, account: "b@example.com" },
+          { id: "hidden@group.calendar.google.com", summary: "Hidden", selected: false, account: "b@example.com" },
         ],
         degraded: [],
       });
@@ -747,7 +761,7 @@ esac
       const d = device(accountsMinter(AB), plowGogPlugin());
       const response = await run(d, ["plow-gog", "calendar", "calendars", "--json", "--results-only", "--account", "b@example.com"]);
       expect(jv(response).get("status").str).toBe("completed");
-      expect(String(jv(response).get("output").str)).toContain('[{"id":"primary","summary":"Calendar"}]');
+      expect(String(jv(response).get("output").str)).toContain('"id":"primary","summary":"Calendar","selected":true');
     });
 
     itSpawns("tags an accountless calendar list when only one account is connected", async () => {
@@ -755,7 +769,11 @@ esac
       const response = await run(d, ["plow-gog", "calendar", "calendars", "--json", "--results-only"]);
       expect(response).toMatchObject({
         status: "completed",
-        items: [{ id: "primary", summary: "Calendar", account: "a@example.com" }],
+        items: [
+          { id: "primary", summary: "Calendar", account: "a@example.com" },
+          { id: "luca@group.calendar.google.com", account: "a@example.com" },
+          { id: "hidden@group.calendar.google.com", account: "a@example.com" },
+        ],
         degraded: [],
       });
     });
@@ -1046,7 +1064,7 @@ esac
       why: "a busy slot",
       accounts: () => AB,
       extra: ["--account", "a@example.com"],
-      expected: "1 event(s) overlap",
+      expected: "busy 2026-08-28T10:15:00Z-2026-08-28T10:45:00Z",
     },
     {
       // The hole this chunk closes: the owner is busy on a calendar the
@@ -1054,13 +1072,21 @@ esac
       why: "a conflict on a connected account the event is not booked on",
       accounts: () => AB,
       extra: ["--account", "b@example.com"],
-      expected: "a@example.com: 1 event(s) overlap",
+      expected: "a@example.com: busy 2026-08-28T10:15:00Z-2026-08-28T10:45:00Z",
     },
     {
       why: "a probe that cannot answer",
       accounts: () => [{ account: "a@example.com", token: "tok-cbad", isDefault: true }],
       extra: [],
       expected: "could not check",
+    },
+    {
+      // One calendar gog could not query is a HOLE in the account's answer,
+      // not a free calendar: the free/busy result carries errors and no busy.
+      why: "a calendar the free/busy read could not query",
+      accounts: () => [{ account: "a@example.com", token: "tok-cerr", isDefault: true }],
+      extra: [],
+      expected: "a@example.com: could not check",
     },
     {
       // A check with a hole in it must not read as clear: the account the

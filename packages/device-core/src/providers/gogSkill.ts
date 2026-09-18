@@ -75,10 +75,12 @@ shown calendar: \`calendar freebusy --cal <ids> --account <email>\` for the
 busy intervals, and \`calendar events --calendars <ids> --account <email>\`
 when you need the event names too. \`calendar conflicts\` answers a narrower
 question: it pairs commitments that overlap each other on DIFFERENT calendars,
-and skips two that overlap on the SAME one. An empty result therefore proves
-only that no two of the owner's calendars collide — not that the owner is
-free, and not even that nothing is double-booked. Reading it as availability
-tells the owner they are available when they are not.
+and skips two that overlap on the SAME one. Each account is also checked on
+its own, so two commitments on different accounts are never compared. An
+empty result therefore proves only that no account came back with a
+cross-calendar pair of its own — not that the owner is free, and not even
+that nothing is double-booked. Reading it as availability tells the owner
+they are available when they are not.
 
     ["plow-gog", "accounts"]
 
@@ -129,10 +131,12 @@ authority, call the overlap "an existing commitment" rather than
 naming it — and the override itself is blocked and nothing is
 booked: say so, without redirecting the conversation elsewhere.
 
-Here that check is a \`calendar create\` with timed \`--from\`/\`--to\`, and the
-refusal carries the overlap COUNT per account plus any account that could not
-be checked — no titles, so use \`calendar conflicts\` if you want the names.
-All-day (date-only) events skip the check.
+Here that check is a \`calendar create\` with timed \`--from\`/\`--to\`. It is
+a free/busy read over every calendar the owner shows, on every connected
+account, and the refusal carries the BUSY TIMES it found per account plus any
+account that could not be checked — no titles, so read the window with
+\`calendar events\` if you want the names. All-day (date-only) events skip the
+check.
 
 \`--account\` and \`--confirm-conflict\` are plow-gog's own arguments and never
 reach Google; everything else is the CLI's ordinary grammar.

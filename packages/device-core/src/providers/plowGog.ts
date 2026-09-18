@@ -424,7 +424,7 @@ function compactEvent(item: Record<string, unknown>): Record<string, unknown> {
   // Which calendar an event sits on, when gog says: a read that covers
   // several of them is how a commitment on a shared calendar is told from one
   // on the owner's own.
-  const calendarId = item.CalendarID ?? item.calendarId;
+  const calendarId = item.CalendarID;
   if (typeof calendarId === "string") event.calendarId = calendarId;
   if (isAllDay(item)) event.allDay = true;
   const attendees = Array.isArray(item.attendees) ? (item.attendees as unknown[]) : [];
@@ -451,20 +451,45 @@ function compactEvent(item: Record<string, unknown>): Record<string, unknown> {
  * not be checked is named as `degraded` rather than passed over — a check
  * with a hole in it must not read as clear.
  *
- * COUNTS ONLY, per account. Approving a create does not approve a read, so
+ * BUSY INTERVALS, per account. Approving a create does not approve a read, so
  * event titles stay on the Mac; the agent has `calendar conflicts` if it
- * wants names.
+ * wants names. The interval says enough to ask the owner about the overlap.
  */
 export function conflictRefusal(
-  probed: readonly { account: string; conflicts: number }[],
+  probed: readonly { account: string; busy: readonly { start: string; end: string }[] }[],
   degraded: readonly { account: string; reason: string }[],
 ): string | null {
-  const busy = probed.filter((p) => p.conflicts > 0);
+  const busy = probed.filter((p) => p.busy.length > 0);
   if (busy.length === 0 && degraded.length === 0) return null;
   const parts = [
-    ...busy.map((p) => `${p.account}: ${p.conflicts} event(s) overlap this window`),
+    ...busy.map((p) => `${p.account}: busy ${p.busy.map((b) => `${b.start}-${b.end}`).join(", ")}`),
     ...degraded.map((d) => `${d.account}: could not check (${d.reason})`),
   ];
   const head = busy.length > 0 ? "the slot is busy" : "the conflict check did not cover every account";
-  return `${head} — ${parts.join("; ")}. Follow the Google Workspace skill's conflict rule before re-sending the same command with --confirm-conflict; this refusal carries counts only.`;
+  return `${head} — ${parts.join("; ")}. Follow the Google Workspace skill's conflict rule before re-sending the same command with --confirm-conflict; this refusal carries busy times only.`;
+}
+
+/**
+ * The busy intervals in one account's `calendar freebusy --json` output, or
+ * null when it did not answer readably.
+ *
+ * gog prints `{calendars: {<id>: {busy: [...], errors: [...]}}}`. A calendar
+ * gog could not query carries `errors` and no `busy`: that is a HOLE, not a
+ * free calendar, so the whole account counts as unchecked rather than clear.
+ */
+export function freeBusyIntervals(
+  parsed: unknown,
+): { start: string; end: string }[] | null {
+  const calendars = (parsed as { calendars?: unknown } | null)?.calendars;
+  if (calendars === null || typeof calendars !== "object") return null;
+  const intervals: { start: string; end: string }[] = [];
+  for (const value of Object.values(calendars as Record<string, unknown>)) {
+    const row = value as { busy?: unknown; errors?: unknown } | null;
+    if (Array.isArray(row?.errors) && row.errors.length > 0) return null;
+    for (const span of Array.isArray(row?.busy) ? row.busy : []) {
+      const { start, end } = (span ?? {}) as { start?: unknown; end?: unknown };
+      if (typeof start === "string" && typeof end === "string") intervals.push({ start, end });
+    }
+  }
+  return intervals;
 }

@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import { GOG_SKILL } from "../src/providers/gogSkill.js";
 import {
   compactCalendarEvents,
+  conflictRefusal,
+  freeBusyIntervals,
   gogExitReason,
   mergeFanout,
   planPlowGog,
@@ -588,6 +590,7 @@ describe("compactCalendarEvents", () => {
       end: { dateTime: local, timeZone: "America/Sao_Paulo" },
       attendees: Array.from({ length: 8 }, (_, n) => ({ email: `person${n}@example.com`, responseStatus: "accepted" })),
       conferenceData: { entryPoints: [{ uri: `https://meet.google.com/${"abc-".repeat(20)}` }] },
+      CalendarID: `cal-${i % ACCOUNTS.length}@group.calendar.google.com`,
       startDayOfWeek: DAYS[i % 5],
       startLocal: local,
       endDayOfWeek: DAYS[i % 5],
@@ -615,31 +618,11 @@ describe("compactCalendarEvents", () => {
       startDayOfWeek: "Monday",
       startLocal: "2026-09-14T08:00:00-07:00",
       endLocal: "2026-09-14T08:00:00-07:00",
+      calendarId: "cal-0@group.calendar.google.com",
       attendees: 8,
       id: "evt-0",
       account: "a@example.com",
     });
-  });
-
-  it("says which calendar an event sits on when the read covered several", () => {
-    // gog spells it CalendarID, and only fills it when more than one calendar
-    // was read — a commitment on a shared calendar reads no differently from
-    // one on the owner's own without it.
-    const { items } = compactCalendarEvents([
-      {
-        summary: "Freddy — early pickup",
-        start: { dateTime: "2026-09-18T14:00:00-07:00" },
-        startDayOfWeek: "Friday",
-        startLocal: "2026-09-18T14:00:00-07:00",
-        endLocal: "2026-09-18T14:30:00-07:00",
-        CalendarID: "luca@group.calendar.google.com",
-        id: "evt-1",
-        account: "a@example.com",
-      },
-      { summary: "solo", start: { dateTime: "2026-09-18T16:00:00-07:00" }, startLocal: "2026-09-18T16:00:00-07:00", account: "a@example.com" },
-    ]);
-    expect(items[0]!.calendarId).toBe("luca@group.calendar.google.com");
-    expect(items[1]).not.toHaveProperty("calendarId");
   });
 
   it("keeps an all-day date as its own day, and marks the ways an event leaves the owner free", () => {
@@ -707,6 +690,63 @@ describe("compactCalendarEvents", () => {
   });
 });
 
+describe("freeBusyIntervals", () => {
+  it("collects the busy spans of every calendar in one account's answer", () => {
+    expect(
+      freeBusyIntervals({
+        calendars: {
+          primary: { busy: [{ start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" }] },
+          "luca@group.calendar.google.com": { busy: [{ start: "2026-09-18T21:00:00Z", end: "2026-09-18T21:30:00Z" }] },
+          "team@group.calendar.google.com": {},
+        },
+      }),
+    ).toEqual([
+      { start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" },
+      { start: "2026-09-18T21:00:00Z", end: "2026-09-18T21:30:00Z" },
+    ]);
+  });
+
+  it("treats a calendar it could not query as a hole, not as free time", () => {
+    // Clear-looking and wrong: the other calendar answered "not busy", and
+    // reading the pair as free would book over whatever the broken one holds.
+    expect(
+      freeBusyIntervals({
+        calendars: {
+          primary: { busy: [] },
+          "gone@group.calendar.google.com": { errors: [{ reason: "notFound" }] },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("answers null for output that carries no calendars at all", () => {
+    expect(freeBusyIntervals({})).toBeNull();
+    expect(freeBusyIntervals([])).toBeNull();
+  });
+});
+
+describe("conflictRefusal", () => {
+  it("names the busy times per account, and never an event title", () => {
+    const refusal = conflictRefusal(
+      [
+        { account: "a@example.com", busy: [{ start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" }] },
+        { account: "b@example.com", busy: [] },
+      ],
+      [],
+    );
+    expect(refusal).toContain("the slot is busy");
+    expect(refusal).toContain("a@example.com: busy 2026-09-18T22:30:00Z-2026-09-18T23:00:00Z");
+    expect(refusal).not.toContain("b@example.com");
+    expect(refusal).toContain("--confirm-conflict");
+  });
+
+  it("clears a create only when every account answered with no busy time", () => {
+    expect(conflictRefusal([{ account: "a@example.com", busy: [] }], [])).toBeNull();
+    expect(conflictRefusal([{ account: "a@example.com", busy: [] }], [{ account: "b@example.com", reason: "needs_reauth" }]))
+      .toContain("did not cover every account");
+  });
+});
+
 describe("the Google Workspace skill", () => {
   it("says day names come from startDayOfWeek, and names the compact fields", () => {
     expect(GOG_SKILL.body).toContain("Take every day name you write from `startDayOfWeek`");
@@ -725,6 +765,7 @@ describe("the Google Workspace skill", () => {
     expect(GOG_SKILL.body).toContain("calendar freebusy --cal <ids> --account <email>");
     expect(GOG_SKILL.body).toContain("calendar events --calendars <ids> --account <email>");
     expect(GOG_SKILL.body).toContain("skips two that overlap on the SAME one");
-    expect(GOG_SKILL.body).toContain("not that the owner is\nfree, and not even that nothing is double-booked");
+    expect(GOG_SKILL.body).toContain("two commitments on different accounts are never compared");
+    expect(GOG_SKILL.body).toContain("not that the owner is free, and not even\nthat nothing is double-booked");
   });
 });

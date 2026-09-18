@@ -20,6 +20,7 @@ import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js
 import {
   compactCalendarEvents,
   conflictRefusal,
+  freeBusyIntervals,
   gogExitReason,
   mergeFanout,
   planPlowGog,
@@ -1642,28 +1643,66 @@ export class DeviceAgent {
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     if (plan.conflictCheck !== null && !plan.confirmConflict) {
       const { from, to } = plan.conflictCheck;
-      // The SAME fan-out the read path gets: the owner is busy if ANY of
-      // their connected calendars is, whichever account the event lands on.
-      const probes = await runAcrossAccounts(minted.accounts, [
-        "calendar", "conflicts", "--from", from, "--to", to, "--json", "--results-only",
+      // The SAME reach the read path gets: the owner is busy if ANY of their
+      // calendars is, whichever account the event lands on. A busy-time read,
+      // not `calendar conflicts` — that verb pairs events across DIFFERENT
+      // calendars and skips two on the same one, so a lone commitment left it
+      // empty and the gate booked straight over it.
+      //
+      // Per account: the calendars the owner shows, then free/busy over
+      // exactly those. `--all` would add the ones they have hidden, which are
+      // not commitments they schedule around.
+      const shown = await runAcrossAccounts(minted.accounts, [
+        "calendar", "calendars", "--json", "--results-only",
       ]);
-      const probed: { account: string; conflicts: number }[] = [];
+      const probed: { account: string; busy: { start: string; end: string }[] }[] = [];
       // An account the mint could not reach was never checked either, so it
       // rides the refusal beside the ones whose probe failed.
       const unchecked: { account: string; reason: string }[] = minted.degraded.map((d) => ({
         account: d.account,
         reason: d.reason,
       }));
-      for (const { a, result } of probes) {
-        let conflicts: unknown = null;
+      const probes: { a: (typeof minted.accounts)[number]; result: ExecResult }[] = [];
+      for (const { a, result } of shown) {
+        let ids: string[] = [];
         if (result.exitCode === 0) {
           try {
-            conflicts = JSON.parse(this.executor.stdout(result.handle).toString("utf8"));
+            const parsed: unknown = JSON.parse(this.executor.stdout(result.handle).toString("utf8"));
+            ids = (Array.isArray(parsed) ? parsed : [])
+              .filter((c) => (c as { selected?: unknown }).selected === true)
+              .map((c) => String((c as { id?: unknown }).id ?? ""))
+              .filter((id) => id !== "");
+          } catch {
+            /* handled below: an unreadable listing is an unchecked account */
+          }
+        }
+        if (ids.length === 0) {
+          unchecked.push({
+            account: a.account,
+            reason: result.exitCode === 0 ? "the check did not answer readably" : gogExitReason(result.exitCode),
+          });
+          continue;
+        }
+        probes.push({
+          a,
+          result: await settled(
+            await runGog(
+              ["calendar", "freebusy", "--cal", ids.join(","), "--from", from, "--to", to, "--json", "--results-only"],
+              a.token,
+            ),
+          ),
+        });
+      }
+      for (const { a, result } of probes) {
+        let busy: { start: string; end: string }[] | null = null;
+        if (result.exitCode === 0) {
+          try {
+            busy = freeBusyIntervals(JSON.parse(this.executor.stdout(result.handle).toString("utf8")));
           } catch {
             /* handled below: an unreadable probe is an unchecked account */
           }
         }
-        if (Array.isArray(conflicts)) probed.push({ account: a.account, conflicts: conflicts.length });
+        if (busy !== null) probed.push({ account: a.account, busy });
         else
           unchecked.push({
             account: a.account,
