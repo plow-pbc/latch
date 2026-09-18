@@ -51,7 +51,7 @@ for (const { name, manifest, skill } of PLUGINS) {
 }
 
 describe("messages allowlist", () => {
-  it("refuses --store before the subcommand — it is a global accepted only ahead of an argv[0] latch itself inserts", () => {
+  it("refuses --store: the CLI accepts it only ahead of the subcommand, and the allowlist requires the agent's tail to start with one", () => {
     const messages = PLUGINS.find((p) => p.name === "messages");
     expect(messages).toBeDefined();
     expect(classifyArgv(messages!.manifest, ["plow-messages", "--store", "/x", "chats"]).kind).toBe("refused");
