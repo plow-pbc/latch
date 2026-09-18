@@ -1077,7 +1077,7 @@ esac
       why: "a busy calendar beside one the read could not query",
       accounts: () => [{ account: "a@example.com", token: "tok-cbusyerr", isDefault: true }],
       extra: [],
-      expected: "a@example.com: busy 2026-08-28T10:15:00Z/2026-08-28T10:45:00Z",
+      expected: "could not check: gone",
     },
     {
       why: "a probe that cannot answer",

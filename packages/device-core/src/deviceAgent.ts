@@ -1698,7 +1698,7 @@ export class DeviceAgent {
       }
       // Fail loud, with the override in hand: silently booking past a broken
       // or partial check would make the gate's absence invisible.
-      const refusal = conflictRefusal(probed, unchecked);
+      const refusal = conflictRefusal(probed, unchecked, couldNotCheck);
       // A refusal records exec_error, never a zero-exit exec_end: the
       // approved create did NOT happen, and the desktop renders an exit-0
       // exec_end green (viewModel.ts) — a refusal wearing a success badge.

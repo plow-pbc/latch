@@ -453,12 +453,16 @@ function compactEvent(item: Record<string, unknown>): Record<string, unknown> {
 export function conflictRefusal(
   probed: readonly { account: string; busy: readonly { start: string; end: string }[] }[],
   degraded: readonly { account: string; reason: string }[],
+  couldNotCheck: readonly string[] = [],
 ): string | null {
   const busy = probed.filter((p) => p.busy.length > 0);
   if (busy.length === 0 && degraded.length === 0) return null;
   const parts = [
     ...busy.map((p) => `${p.account}: busy ${p.busy.map((b) => `${b.start}/${b.end}`).join(", ")}`),
     ...degraded.map((d) => `${d.account}: could not check (${d.reason})`),
+    // Not a reason to refuse on its own, but whoever decides the override has
+    // to know the check had a gap in it.
+    ...(couldNotCheck.length > 0 ? [`could not check: ${couldNotCheck.join(", ")}`] : []),
   ];
   const head = busy.length > 0 ? "the slot is busy" : "the conflict check did not cover every account";
   return `${head} — ${parts.join("; ")}. Follow the Google Workspace skill's conflict rule before re-sending the same command with --confirm-conflict; this refusal carries busy times only.`;
