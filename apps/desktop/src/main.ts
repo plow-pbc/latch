@@ -2325,12 +2325,12 @@ app.whenReady().then(async () => {
       mainWindow?.webContents.send("connectors:changed", state);
     },
   });
-  // While no account is known, keep asking: a failed refresh, or an account
-  // connected outside this app (Plow hands agents a connect link), must not
-  // leave a plugin that needs one off until the next reconnect. The other
-  // direction needs no poll — a stale account fails loudly at the mint.
+  // Keep asking while connected: an account connected or disconnected outside
+  // this app (Plow hands agents a connect link), or a refresh that failed, must
+  // not leave a plugin that needs one in the wrong state until the next
+  // reconnect. The poll is quiet and publishes only a changed list.
   setInterval(() => {
-    if (connected && connectedAccountIds().length === 0) void connectors?.poll();
+    if (connected) void connectors?.poll();
   }, 60_000);
   await startRelay();
 
