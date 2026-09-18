@@ -800,14 +800,14 @@ app.whenReady().then(async () => {
 
   fs.rmSync(home, { recursive: true, force: true });
   rosterFixture = ROSTER;
-  const id = ROSTER.mcp[0].id;
+  const id = ROSTER[0].id;
   const renameExposed = await win.webContents.executeJavaScript(`
     typeof window.domo.rosterRename !== "undefined" ||
     [...document.querySelectorAll(".more-menu button")].some((node) => node.textContent === "Rename")
   `);
   if (renameExposed) throw new Error("unsupported session rename remains exposed");
   const removed = await win.webContents.executeJavaScript(`window.domo.rosterRemove(${id})`);
-  if (removed.roster.mcp.some((row) => row.id === id)) throw new Error("roster remove retained the MCP session");
+  if (removed.roster.some((row) => row.id === id)) throw new Error("roster remove retained the MCP client");
   console.log("ROSTER-EDIT: unsupported rename absent; remove passed");
   app.exit(failures + extra.length === 0 ? 0 : 1);
 });
