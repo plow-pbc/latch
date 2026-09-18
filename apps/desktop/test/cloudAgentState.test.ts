@@ -11,6 +11,7 @@ import {
   CloudLinesClient,
 } from "../src/cloudAgentState.js";
 import { CloudAgentResource } from "../src/cloudAgents.js";
+import type { AgentIndex } from "../src/agentIndex.js";
 import {
   CloudAgentProvider,
   PlowApi,
@@ -90,6 +91,7 @@ function build(options: {
   listProviders?: () => Promise<CloudAgentProvider[]>;
   remove?: (agentId: string) => Promise<void>;
   onChange?: () => void;
+  agentIndex?: () => Promise<AgentIndex>;
 } = {}) {
   const calls: string[] = [];
   const agents: CloudAgentsApi = {
@@ -141,6 +143,7 @@ function build(options: {
       },
     },
     onChange: options.onChange,
+    agentIndex: options.agentIndex,
   });
   return { state, calls, home, agents };
 }
@@ -655,5 +658,83 @@ describe("CloudAgentState text-to-start", () => {
     running.resolve(agent());
     await vi.waitFor(() => expect(state.state().cloudAgents[0].status).toBe("running"));
     expect(calls.filter((call) => call === "poll:agent_1")).toHaveLength(1);
+  });
+});
+
+describe("CloudAgentState deploy catalog", () => {
+  const LIFE = { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88 };
+
+  it.each([
+    ["describes agents from the Index", async () => ({ life: LIFE }), { life: LIFE }],
+    ["keeps the provider list when the Index fails", async () => { throw new Error("offline"); }, {}],
+  ] as const)("%s", async (_case, agentIndex, expected) => {
+    const { state } = build({ agentIndex });
+    await state.refresh();
+    expect(state.state().cloudAgentIndex).toEqual(expected);
+    expect(state.state().cloudProviders).toHaveLength(1);
+    expect(state.state().cloudProvidersError).toBeNull();
+  });
+});
+
+describe("CloudAgentState waiting for a deployed agent", () => {
+  const FAST = { intervalMs: 5, timeoutMs: 200 };
+
+  function withArrival() {
+    let listed = [agent()];
+    const built = build({
+      listAgents: async () => listed,
+      // The real poll (`cloudAgents.ts`) only resolves once an agent reaches a
+      // terminal status; `build()`'s default double does not honor that, so a
+      // "provisioning" row left provisioning forever would make
+      // `pollToTerminal`'s post-poll `refresh()` restart the same poll on
+      // every pass — an infinite loop with nothing to do with this describe's
+      // subject. Settling it to "running" here, and writing that back into
+      // `listed` so the next `list()` agrees, keeps the fixture inside that
+      // contract without touching production code.
+      pollAgent: async (receipt, transition) => {
+        const settled = { ...receipt, status: "running" as const };
+        listed = listed.map((row) => (row.agentId === settled.agentId ? settled : row));
+        await transition?.(settled);
+        return settled;
+      },
+    });
+    const arrive = () => { listed = [agent(), agent({ agentId: "agent_new", name: "New", status: "provisioning" })]; };
+    return { ...built, arrive };
+  }
+
+  it("resolves with the agent that appears after the wait began", async () => {
+    const { state, arrive } = withArrival();
+    await state.refresh();
+    const waited = state.awaitNewAgent(FAST);
+    arrive();
+    expect(await waited).toBe("agent_new");
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toContain("agent_new");
+  });
+
+  it("resolves null when nothing appears before the timeout", async () => {
+    const { state } = withArrival();
+    await state.refresh();
+    expect(await state.awaitNewAgent({ intervalMs: 5, timeoutMs: 30 })).toBeNull();
+  });
+
+  it("looks right away when the window regains focus", async () => {
+    const { state, arrive } = withArrival();
+    await state.refresh();
+    const waited = state.awaitNewAgent({ intervalMs: 60_000, timeoutMs: 120_000 });
+    arrive();
+    state.checkForNewAgent();
+    expect(await waited).toBe("agent_new");
+  });
+
+  it.each([
+    ["a sign-out", (state: CloudAgentState) => state.signedOut()],
+    ["a newer wait", (state: CloudAgentState) => { void state.awaitNewAgent({ intervalMs: 60_000, timeoutMs: 120_000 }); }],
+  ])("gives up with null on %s", async (_case, interrupt) => {
+    const { state } = withArrival();
+    await state.refresh();
+    const waited = state.awaitNewAgent({ intervalMs: 60_000, timeoutMs: 120_000 });
+    interrupt(state);
+    expect(await waited).toBeNull();
+    state.signedOut(); // ends the newer wait, so no timer outlives the test
   });
 });
