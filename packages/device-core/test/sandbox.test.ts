@@ -1,7 +1,7 @@
 /**
  * Sandbox conformance:
- *   - SBPL byte-parity against fixtures/sbpl.json (machine-dependent: the
- *     fixture embeds $HOME, so it only asserts when generated on this machine).
+ *   - SBPL byte-parity against fixtures/sbpl.json, generated for the
+ *     fixture's own home so it asserts on every machine.
  *   - Real sandboxed execution: write-outside-scope blocked, network deny
  *     blocks a fetch that succeeds when allowed — mirroring the Swift
  *     DeviceCoreTests sandbox assertions (DESIGN.md §10).
@@ -27,16 +27,15 @@ function tempDir(): string {
 }
 
 describe("SBPL profile", () => {
-  const machineMatches = sbpl.home === os.homedir();
   for (const c of sbpl.cases) {
-    it(`${c.name}${machineMatches ? "" : " (skipped: fixture from another machine)"}`, () => {
-      if (!machineMatches) return;
+    it(c.name, () => {
       const profile = SandboxProfile.generate({
         readPaths: c.readPaths,
         writePaths: c.writePaths,
         network: c.network,
         appleEvents: c.appleEvents ?? false,
         scratch: c.scratch,
+        home: sbpl.home,
       });
       expect(profile).toBe(c.profile);
     });

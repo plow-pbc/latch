@@ -73,6 +73,9 @@ export const SandboxProfile = {
           '(literal "/")',
           '(literal "/private")',
           '(literal "/private/var")',
+          // CUPS' socket. `lp` reads it before connecting when launchd has
+          // idled cupsd out; denied, the first print after a quiet spell fails.
+          '(literal "/private/var/run/cupsd")',
           '(literal "/private/tmp")',
           '(literal "/tmp")',
           '(literal "/var")',

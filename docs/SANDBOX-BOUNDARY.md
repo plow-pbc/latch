@@ -163,16 +163,11 @@ and what the kernel then allows, is entirely your layer.
 
 Four further items in the same area, all yours:
 
-### 4.1 `fixtures/sbpl.json` is inert on every machine but the generator's
+### 4.1 `fixtures/sbpl.json` — resolved
 
-The fixture embeds the generating machine's `$HOME`, so its byte-parity assertions
-**skip** everywhere else. `packages/device-core/test/sandbox.test.ts:31` renders this as
-`"(skipped: fixture from another machine)"` and the test still reports green.
-
-The consequence is that the golden vector which would catch an unintended change to profile
-generation does not run in CI, does not run on any developer machine other than the original, and
-announces itself as a pass. The sandbox suite is weaker than a green run suggests. The live
-execution assertions in that file (write-outside-scope blocked, network deny) do run.
+It used to embed the generating machine's `$HOME` and skip everywhere else, which let it drift
+unnoticed. `sandbox.test.ts` now generates each case for the fixture's own `home`, so the
+byte-parity assertions run on every machine and in CI.
 
 ### 4.2 A residual symlink-swap window between decision and open
 

@@ -71,13 +71,12 @@ channel, and the enrollment challenge). `intent.json` was **re-frozen** without
 an authenticated agent's call, so there is no agent-held signing key. The device
 signature over a Grant is untouched.
 
-**Assertion strength:** most vectors are asserted byte-for-byte. Three are not.
+**Assertion strength:** most vectors are asserted byte-for-byte. Two are not.
 Ed25519 signing in CryptoKit was *randomized*, so signatures are checked by
 cross-*verification* (a fixture signature must verify under its public key)
 rather than byte-equality; the *signed bytes* (canonical JSON) are asserted
-identical. `sbpl.json` embeds `$HOME`, so its byte-parity cases run only on the
-machine that generated it — `sandbox.test.ts` names them "(skipped: fixture from
-another machine)" elsewhere, which is the three skips in every run of the suite.
+identical. `sbpl.json` embeds a `home`, and `sandbox.test.ts` generates each
+case for that home, so its byte-parity cases run on every machine.
 `pathutil.json` is the quiet one: `golden.test.ts` skips its relative-path cases
 whenever `process.cwd()` differs from the generating cwd, and its `/private`
 cases off darwin, with no marker in the test name — so off the generating
