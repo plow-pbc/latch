@@ -689,13 +689,20 @@ describe("plow-gog through the exec path", () => {
     return stagedGog(`#!/bin/sh
 [ -n "$GOG_ACCESS_TOKEN" ] && echo "Note: Using direct access token (expires in ~1 hour; no auto-refresh)" >&2
 case "$*" in
-  *"calendar conflicts"*)
+  *"calendar freebusy"*)
     case "$GOG_ACCESS_TOKEN" in
-      tok-a) echo '[{"summary":"Standup"}]' ;;
+      tok-a) echo '{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"luca":{"busy":[]}}' ;;
       tok-cbad) exit 9 ;;
-      *) echo '[]' ;;
+      tok-cbusyerr) echo '{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
+      tok-cerr) echo '{"primary":{"busy":[]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
+      *) echo '{"primary":{"busy":[]},"luca":{"busy":[]}}' ;;
     esac ;;
-  *"calendar calendars"*) echo '[{"id":"primary","summary":"Calendar"}]' ;;
+  *"calendar conflicts"*) echo '[]' ;;
+  *"calendar calendars"*)
+    case "$GOG_ACCESS_TOKEN" in
+      tok-cbad) exit 9 ;;
+      *) echo '[{"id":"primary","summary":"Calendar","selected":true},{"id":"luca","summary":"Luca","selected":true},{"id":"hidden","summary":"Hidden","selected":false}]' ;;
+    esac ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
   *"calendar events"*) echo '[{"summary":"argv: '"$*"'","start":"2026-01-01T00:00:00Z"}]' ;;
   *"gmail search"*)
@@ -736,8 +743,12 @@ esac
       expect(response).toMatchObject({
         status: "completed",
         items: [
-          { id: "primary", summary: "Calendar", account: "a@example.com" },
-          { id: "primary", summary: "Calendar", account: "b@example.com" },
+          { id: "primary", account: "a@example.com" },
+          { id: "luca", account: "a@example.com" },
+          { id: "hidden", account: "a@example.com" },
+          { id: "primary", account: "b@example.com" },
+          { id: "luca", account: "b@example.com" },
+          { id: "hidden", account: "b@example.com" },
         ],
         degraded: [],
       });
@@ -747,7 +758,7 @@ esac
       const d = device(accountsMinter(AB), plowGogPlugin());
       const response = await run(d, ["plow-gog", "calendar", "calendars", "--json", "--results-only", "--account", "b@example.com"]);
       expect(jv(response).get("status").str).toBe("completed");
-      expect(String(jv(response).get("output").str)).toContain('[{"id":"primary","summary":"Calendar"}]');
+      expect(String(jv(response).get("output").str)).toContain('"id":"primary","summary":"Calendar","selected":true');
     });
 
     itSpawns("tags an accountless calendar list when only one account is connected", async () => {
@@ -755,7 +766,11 @@ esac
       const response = await run(d, ["plow-gog", "calendar", "calendars", "--json", "--results-only"]);
       expect(response).toMatchObject({
         status: "completed",
-        items: [{ id: "primary", summary: "Calendar", account: "a@example.com" }],
+        items: [
+          { id: "primary", account: "a@example.com" },
+          { id: "luca", account: "a@example.com" },
+          { id: "hidden", account: "a@example.com" },
+        ],
         degraded: [],
       });
     });
@@ -1046,7 +1061,7 @@ esac
       why: "a busy slot",
       accounts: () => AB,
       extra: ["--account", "a@example.com"],
-      expected: "1 event(s) overlap",
+      expected: "busy 2026-08-28T10:15:00Z/2026-08-28T10:45:00Z",
     },
     {
       // The hole this chunk closes: the owner is busy on a calendar the
@@ -1054,7 +1069,15 @@ esac
       why: "a conflict on a connected account the event is not booked on",
       accounts: () => AB,
       extra: ["--account", "b@example.com"],
-      expected: "a@example.com: 1 event(s) overlap",
+      expected: "a@example.com: busy 2026-08-28T10:15:00Z/2026-08-28T10:45:00Z",
+    },
+    {
+      // A calendar Google would not read is a gap in the answer, not a free
+      // calendar: the busy time the others reported still refuses.
+      why: "a busy calendar beside one the read could not query",
+      accounts: () => [{ account: "a@example.com", token: "tok-cbusyerr", isDefault: true }],
+      extra: [],
+      expected: "a@example.com: busy 2026-08-28T10:15:00Z/2026-08-28T10:45:00Z",
     },
     {
       why: "a probe that cannot answer",
@@ -1104,6 +1127,19 @@ esac
       "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
     ]);
     expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
+  });
+
+  itSpawns("books when the busy times are clear, naming a calendar Google would not read", async () => {
+    // The booking is not held hostage to one unreadable calendar — the owner
+    // would never get an event booked again — but the gap is in the result
+    // rather than swallowed.
+    const d = device(accountsMinter([{ account: "a@example.com", token: "tok-cerr", isDefault: true }]), plowGogPlugin());
+    const response = await run(d, [
+      "plow-gog", "calendar", "create", "primary", "--summary", "X",
+      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
+    ]);
+    expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
+    expect(response).toMatchObject({ could_not_check: ["gone"] });
   });
 
   itSpawns("books anyway with --confirm-conflict", async () => {

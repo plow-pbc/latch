@@ -20,6 +20,8 @@ import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js
 import {
   compactCalendarEvents,
   conflictRefusal,
+  freeBusyAnswer,
+  shownCalendars,
   gogExitReason,
   mergeFanout,
   planPlowGog,
@@ -1254,6 +1256,15 @@ export class DeviceAgent {
    * or is sitting silent is investigated (`diagnoseRun`), now for a run that
    * has already ended and again at exit for one that has not.
    */
+  /** A finished child's stdout as JSON, or null when it did not parse. */
+  private readJson(handle: string): unknown {
+    try {
+      return JSON.parse(this.executor.stdout(handle).toString("utf8"));
+    } catch {
+      return null;
+    }
+  }
+
   private async finishRun(
     intentId: string,
     result: ExecResult,
@@ -1642,33 +1653,48 @@ export class DeviceAgent {
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     if (plan.conflictCheck !== null && !plan.confirmConflict) {
       const { from, to } = plan.conflictCheck;
-      // The SAME fan-out the read path gets: the owner is busy if ANY of
-      // their connected calendars is, whichever account the event lands on.
-      const probes = await runAcrossAccounts(minted.accounts, [
-        "calendar", "conflicts", "--from", from, "--to", to, "--json", "--results-only",
+      // The owner is busy if ANY of their calendars is, whichever account the
+      // event lands on. A busy-time read, not `calendar conflicts`: that verb
+      // pairs commitments on DIFFERENT calendars, so a lone one left it empty
+      // and the gate booked straight over it.
+      const listed = await runAcrossAccounts(minted.accounts, [
+        "calendar", "calendars", "--json", "--results-only",
       ]);
-      const probed: { account: string; conflicts: number }[] = [];
+      const probed: { account: string; busy: { start: string; end: string }[] }[] = [];
       // An account the mint could not reach was never checked either, so it
       // rides the refusal beside the ones whose probe failed.
       const unchecked: { account: string; reason: string }[] = minted.degraded.map((d) => ({
         account: d.account,
         reason: d.reason,
       }));
-      for (const { a, result } of probes) {
-        let conflicts: unknown = null;
-        if (result.exitCode === 0) {
-          try {
-            conflicts = JSON.parse(this.executor.stdout(result.handle).toString("utf8"));
-          } catch {
-            /* handled below: an unreadable probe is an unchecked account */
-          }
-        }
-        if (Array.isArray(conflicts)) probed.push({ account: a.account, conflicts: conflicts.length });
-        else
+      // Calendars Google would not read are named in the create's result, not
+      // refused on: one of them would otherwise block every booking.
+      const couldNotCheck: string[] = [];
+      for (const { a, result } of listed) {
+        const ids = result.exitCode === 0 ? shownCalendars(this.readJson(result.handle)) : [];
+        if (ids.length === 0) {
           unchecked.push({
             account: a.account,
             reason: result.exitCode === 0 ? "the check did not answer readably" : gogExitReason(result.exitCode),
           });
+          continue;
+        }
+        const probe = await settled(
+          await runGog(
+            ["calendar", "freebusy", "--cal", ids.join(","), "--from", from, "--to", to, "--json", "--results-only"],
+            a.token,
+          ),
+        );
+        const answer = probe.exitCode === 0 ? freeBusyAnswer(this.readJson(probe.handle)) : null;
+        if (answer === null) {
+          unchecked.push({
+            account: a.account,
+            reason: probe.exitCode === 0 ? "the check did not answer readably" : gogExitReason(probe.exitCode),
+          });
+          continue;
+        }
+        probed.push({ account: a.account, busy: answer.busy });
+        couldNotCheck.push(...answer.errored);
       }
       // Fail loud, with the override in hand: silently booking past a broken
       // or partial check would make the gate's absence invisible.
@@ -1678,6 +1704,10 @@ export class DeviceAgent {
       // exec_end green (viewModel.ts) — a refusal wearing a success badge.
       // The create child's own outcome gets the one exec_end, in finishRun.
       if (refusal !== null) return this.execError(intent.intentId, refusal);
+      const created = await this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
+      return couldNotCheck.length > 0 && created !== null && typeof created === "object" && !Array.isArray(created)
+        ? { ...created, could_not_check: couldNotCheck }
+        : created;
     }
     return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
   }
