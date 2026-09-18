@@ -470,31 +470,41 @@ export function conflictRefusal(
 }
 
 /**
- * The busy intervals in one account's `calendar freebusy` output, or null
- * when no calendar in it answered.
+ * Whether a calendar the owner shows can hold commitments they schedule
+ * around — which is what the create gate asks about.
  *
- * gog prints `{calendars: {<id>: {busy: [...], errors: [...]}}}`, and under
- * `--results-only` that inner map on its own. A calendar carries `errors`
- * when Google would not answer free/busy for it at all — the owner's
- * subscribed holiday calendar does this every time — so one erroring
- * calendar cannot mean "unchecked", or the gate would refuse every booking
- * forever. An account is unchecked only when NOTHING answered.
+ * Google's public holiday calendars are subscriptions, not the owner's
+ * diary: nobody books around "Labor Day", and Google refuses free/busy for
+ * them anyway (`errors: [{reason: "notFound"}]`, every time). Excluding them
+ * before the query is what lets an error from any calendar that IS asked
+ * count as a hole, rather than being shrugged off.
+ */
+export function bookableCalendar(id: string): boolean {
+  return !id.endsWith("@group.v.calendar.google.com");
+}
+
+/**
+ * The busy intervals in one account's `calendar freebusy --results-only`
+ * output, or null when any calendar in it failed to answer.
+ *
+ * gog prints the calendar map bare under `--results-only`: `{<id>: {busy:
+ * [...]} | {errors: [...]}}`. A calendar that carries `errors` was NOT
+ * checked, and a create must not proceed on a partial answer — so one
+ * failure makes the whole account unchecked, and the refusal says so.
  */
 export function freeBusyIntervals(parsed: unknown): { start: string; end: string }[] | null {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const wrapper = (parsed as { calendars?: unknown }).calendars;
-  const calendars = wrapper !== undefined && wrapper !== null && typeof wrapper === "object" ? wrapper : parsed;
   const intervals: { start: string; end: string }[] = [];
-  let answered = 0;
-  for (const value of Object.values(calendars as Record<string, unknown>)) {
+  const rows = Object.values(parsed as Record<string, unknown>);
+  if (rows.length === 0) return null;
+  for (const value of rows) {
     const row = value as { busy?: unknown; errors?: unknown } | null;
-    if (row === null || typeof row !== "object") continue;
-    if (Array.isArray(row.errors) && row.errors.length > 0) continue;
-    answered += 1;
+    if (row === null || typeof row !== "object") return null;
+    if (Array.isArray(row.errors) && row.errors.length > 0) return null;
     for (const span of Array.isArray(row.busy) ? row.busy : []) {
       const { start, end } = (span ?? {}) as { start?: unknown; end?: unknown };
       if (typeof start === "string" && typeof end === "string") intervals.push({ start, end });
     }
   }
-  return answered === 0 ? null : intervals;
+  return intervals;
 }

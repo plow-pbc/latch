@@ -19,6 +19,7 @@ import { resolveEnv } from "./plugins/env.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import {
   compactCalendarEvents,
+  bookableCalendar,
   conflictRefusal,
   freeBusyIntervals,
   gogExitReason,
@@ -1671,7 +1672,7 @@ export class DeviceAgent {
             ids = (Array.isArray(parsed) ? parsed : [])
               .filter((c) => (c as { selected?: unknown }).selected === true)
               .map((c) => String((c as { id?: unknown }).id ?? ""))
-              .filter((id) => id !== "");
+              .filter((id) => id !== "" && bookableCalendar(id));
           } catch {
             /* handled below: an unreadable listing is an unchecked account */
           }

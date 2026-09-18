@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { GOG_SKILL } from "../src/providers/gogSkill.js";
 import {
+  bookableCalendar,
   compactCalendarEvents,
   conflictRefusal,
   freeBusyIntervals,
@@ -691,43 +692,44 @@ describe("compactCalendarEvents", () => {
 });
 
 describe("freeBusyIntervals", () => {
-  it("collects the busy spans of every calendar in one account's answer", () => {
-    expect(
-      freeBusyIntervals({
-        calendars: {
-          primary: { busy: [{ start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" }] },
-          "luca@group.calendar.google.com": { busy: [{ start: "2026-09-18T21:00:00Z", end: "2026-09-18T21:30:00Z" }] },
-          "team@group.calendar.google.com": {},
-        },
-      }),
-    ).toEqual([
-      { start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" },
-      { start: "2026-09-18T21:00:00Z", end: "2026-09-18T21:30:00Z" },
-    ]);
-  });
+  const BUSY = { start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" };
+  const OTHER = { start: "2026-09-18T21:00:00Z", end: "2026-09-18T21:30:00Z" };
+  const ERRORED = { errors: [{ reason: "notFound" }] };
 
-  it("reads the bare calendar map --results-only prints, not only the wrapped one", () => {
-    expect(freeBusyIntervals({ primary: { busy: [{ start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" }] } })).toEqual([
-      { start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" },
-    ]);
+  it.each<{ why: string; output: unknown; expected: { start: string; end: string }[] | null }>([
+    {
+      why: "collects every calendar's busy spans",
+      output: { primary: { busy: [BUSY] }, "luca@group.calendar.google.com": { busy: [OTHER] }, team: {} },
+      expected: [BUSY, OTHER],
+    },
+    {
+      why: "answers clear when every calendar answered with nothing",
+      output: { primary: { busy: [] }, team: {} },
+      expected: [],
+    },
+    {
+      // A create must not proceed on a partial answer: the calendar that
+      // failed is exactly where the commitment might be.
+      why: "counts an account unchecked when ANY calendar failed to answer",
+      output: { primary: { busy: [] }, "gone@group.calendar.google.com": ERRORED },
+      expected: null,
+    },
+    { why: "counts an account unchecked when every calendar failed", output: { gone: ERRORED }, expected: null },
+    { why: "rejects output with no calendars in it", output: {}, expected: null },
+    { why: "rejects output that is not a calendar map at all", output: [], expected: null },
+  ])("$why", ({ output, expected }) => {
+    expect(freeBusyIntervals(output)).toEqual(expected);
   });
+});
 
-  it("keeps going when one calendar will not answer, and gives up when none will", () => {
-    // Google refuses free/busy for a subscribed holiday calendar every time,
-    // and that calendar is one the owner shows: treating it as a hole would
-    // refuse every booking forever. An account is unchecked only when
-    // nothing answered at all.
-    const holiday = { "en.usa#holiday@group.v.calendar.google.com": { errors: [{ reason: "notFound" }] } };
-    expect(freeBusyIntervals({ ...holiday, primary: { busy: [{ start: "a", end: "b" }] } })).toEqual([
-      { start: "a", end: "b" },
-    ]);
-    expect(freeBusyIntervals({ ...holiday, primary: {} })).toEqual([]);
-    expect(freeBusyIntervals(holiday)).toBeNull();
-  });
-
-  it("answers null for output that carries no calendars at all", () => {
-    expect(freeBusyIntervals({})).toBeNull();
-    expect(freeBusyIntervals([])).toBeNull();
+describe("bookableCalendar", () => {
+  it("leaves out the holiday subscriptions nobody schedules around", () => {
+    // Google refuses free/busy for these every time, and they hold no
+    // commitment of the owner's — asking about them would make every
+    // account unchecked and refuse every booking.
+    expect(bookableCalendar("en.usa#holiday@group.v.calendar.google.com")).toBe(false);
+    expect(bookableCalendar("plucas@plow.co")).toBe(true);
+    expect(bookableCalendar("luca@group.calendar.google.com")).toBe(true);
   });
 });
 

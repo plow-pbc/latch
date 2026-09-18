@@ -691,10 +691,10 @@ describe("plow-gog through the exec path", () => {
 case "$*" in
   *"calendar freebusy"*)
     case "$GOG_ACCESS_TOKEN" in
-      tok-a) echo '{"calendars":{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"luca@group.calendar.google.com":{"busy":[]}}}' ;;
+      tok-a) echo '{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"luca@group.calendar.google.com":{"busy":[]}}' ;;
       tok-cbad) exit 9 ;;
-      tok-cerr) echo '{"calendars":{"primary":{"errors":[{"reason":"notFound"}]}}}' ;;
-      *) echo '{"calendars":{"primary":{"busy":[]}}}' ;;
+      tok-cerr) echo '{"primary":{"busy":[]},"luca@group.calendar.google.com":{"errors":[{"reason":"notFound"}]}}' ;;
+      *) echo '{"primary":{"busy":[]},"luca@group.calendar.google.com":{"busy":[]}}' ;;
     esac ;;
   *"calendar conflicts"*)
     case "$GOG_ACCESS_TOKEN" in
@@ -1082,7 +1082,7 @@ esac
     },
     {
       // One calendar gog could not query is a HOLE in the account's answer,
-      // not a free calendar: the free/busy result carries errors and no busy.
+      // not a free calendar — even when every other calendar came back clear.
       why: "a calendar the free/busy read could not query",
       accounts: () => [{ account: "a@example.com", token: "tok-cerr", isDefault: true }],
       extra: [],
