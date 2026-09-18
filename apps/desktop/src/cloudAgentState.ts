@@ -173,9 +173,8 @@ export interface CloudAgentStateDeps {
   onChange?: () => void;
 }
 
-/** One pending `awaitNewAgent`. Named so `finish`'s return type isn't
- * inferred from a self-referencing object literal (TS7022/TS7023). */
-type NewAgentWait = { check(): Promise<void>; finish(id: string | null): void };
+/** One pending `awaitNewAgent`: the roster it started from, and its answer. */
+type NewAgentWait = { known: Set<string>; finish(id: string | null): void };
 
 export class CloudAgentState {
   /** Keyed on the agent uid, which is stable for the agent's whole life. */
@@ -268,16 +267,17 @@ export class CloudAgentState {
    * All four run together and none can fail the others — a provider-list
    * failure does not hide the roster, a chat list that 403s still leaves the
    * roster on screen, and a line failure still leaves chats identified by
-   * number.
+   * number. The Agent Index is read beside them and never awaited: a
+   * third-party read does not hold up the roster.
    */
   async refresh(): Promise<void> {
     const credential = this.credential();
     if (!credential) return;
     const generation = this.generation;
     const read = ++this.viewReads;
+    void this.refreshAgentIndex(generation, read);
     let view = Promise.all([
       this.refreshProviders(generation, read),
-      this.refreshAgentIndex(generation, read),
       this.refreshChats(credential, generation, read),
       this.refreshLines(credential, generation, read),
     ]).then(() => {});
@@ -320,8 +320,9 @@ export class CloudAgentState {
     }
   }
 
-  /** Describe the catalog from the Agent Index. It never fails the provider
-   * list: without it the cards show names only, which needs no banner. */
+  /** Describe the catalog from the Agent Index, publishing when it lands. It
+   * never fails the provider list: without it the cards show names only, which
+   * needs no banner. */
   private async refreshAgentIndex(generation: number, read: number): Promise<void> {
     if (!this.deps.agentIndex) return;
     let index: AgentIndex = {};
@@ -332,6 +333,7 @@ export class CloudAgentState {
     }
     if (generation !== this.generation || read !== this.viewReads) return;
     this.agentIndex = index;
+    this.publish();
   }
 
   /** Ask Plow which line names identify the chats in the account. */
@@ -365,48 +367,34 @@ export class CloudAgentState {
 
   /**
    * Wait for an agent that was not on the roster when the wait began: the one
-   * the owner's setup text just created. Re-reads the agent list every
-   * `intervalMs` (and on `checkForNewAgent`) until one appears, `timeoutMs`
-   * passes, a newer wait starts, or this Mac signs out; the last three answer
-   * null.
+   * the owner's setup text just created. Any publish that sees it ends the
+   * wait — this one's re-read every `intervalMs`, the renderer's refresh when
+   * the owner comes back from Messages, a poll finishing. Answers null when
+   * `timeoutMs` passes, a newer wait starts, or this Mac signs out.
    */
   awaitNewAgent({ intervalMs = 5_000, timeoutMs = 120_000 }: { intervalMs?: number; timeoutMs?: number } = {}): Promise<string | null> {
     this.newAgentWait?.finish(null);
-    const known = new Set(this.rows.keys());
     const generation = this.generation;
-    const deadline = Date.now() + timeoutMs;
     return new Promise((resolve) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let checking = false;
       const wait: NewAgentWait = {
-        finish: (id: string | null) => {
-          clearTimeout(timer);
+        known: new Set(this.rows.keys()),
+        finish: (id) => {
+          clearInterval(tick);
+          clearTimeout(timeout);
           if (this.newAgentWait === wait) this.newAgentWait = null;
           resolve(id);
         },
-        check: async () => {
-          if (checking) return;
-          checking = true;
-          clearTimeout(timer);
-          const credential = this.credential();
-          if (credential) await this.sequence(() => this.refreshAgents(credential, generation));
-          checking = false;
-          if (this.newAgentWait !== wait) return;
-          this.publish();
-          const fresh = [...this.rows.keys()].find((id) => !known.has(id));
-          if (fresh) return wait.finish(fresh);
-          if (Date.now() >= deadline) return wait.finish(null);
-          timer = setTimeout(() => void wait.check(), intervalMs);
-        },
       };
+      const tick = setInterval(() => {
+        const credential = this.credential();
+        if (!credential) return;
+        void this.sequence(() => this.refreshAgents(credential, generation)).then(() => {
+          if (generation === this.generation) this.publish();
+        });
+      }, intervalMs);
+      const timeout = setTimeout(() => wait.finish(null), timeoutMs);
       this.newAgentWait = wait;
-      timer = setTimeout(() => void wait.check(), intervalMs);
     });
-  }
-
-  /** The owner is back from Messages: look now rather than at the next tick. */
-  checkForNewAgent(): void {
-    void this.newAgentWait?.check();
   }
 
   async changeLine(input: { agentId: string; lineUid: string }): Promise<string | null> {
@@ -781,6 +769,9 @@ export class CloudAgentState {
 
   private publish(): void {
     this.deps.onChange?.();
+    const wait = this.newAgentWait;
+    const fresh = wait && [...this.rows.keys()].find((id) => !wait.known.has(id));
+    if (fresh) wait.finish(fresh);
   }
 }
 

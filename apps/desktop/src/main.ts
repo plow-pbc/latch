@@ -525,8 +525,6 @@ function createMainWindow(): void {
   };
   mainWindow.on("resized", persist);
   mainWindow.on("moved", persist);
-  // Back from Messages after deploying: look for the new agent now.
-  mainWindow.on("focus", () => cloudAgents?.checkForNewAgent());
   // Cmd-W destroys the form as surely as Quit does, so it asks the same
   // question. `allowClose` is what lets the second, answered close through, and
   // `cleanedUp` is the quit that already asked — NOT `quitting`, which only

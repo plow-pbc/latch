@@ -18,7 +18,7 @@ import {
   PlowApiError,
 } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
-import { deferred } from "./deferred.js";
+import { Deferred, deferred } from "./deferred.js";
 
 const CREDENTIAL = "plow_session_123456789";
 
@@ -665,13 +665,19 @@ describe("CloudAgentState deploy catalog", () => {
   const LIFE = { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88 };
 
   it.each([
-    ["describes agents from the Index", async () => ({ life: LIFE }), { life: LIFE }],
-    ["keeps the provider list when the Index fails", async () => { throw new Error("offline"); }, {}],
-  ] as const)("%s", async (_case, agentIndex, expected) => {
-    const { state } = build({ agentIndex });
+    ["describes agents once the Index answers", (index: Deferred<AgentIndex>) => index.resolve({ "exe:life": LIFE }), { "exe:life": LIFE }],
+    ["keeps the provider list when the Index fails", (index: Deferred<AgentIndex>) => index.reject(new Error("offline")), {}],
+  ] as const)("%s, without holding up the roster", async (_case, settle, expected) => {
+    const index = deferred<AgentIndex>();
+    const onChange = vi.fn();
+    const { state } = build({ agentIndex: () => index.promise, onChange });
     await state.refresh();
-    expect(state.state().cloudAgentIndex).toEqual(expected);
+    expect(state.state().cloudAgents).toHaveLength(1);
     expect(state.state().cloudProviders).toHaveLength(1);
+    onChange.mockClear();
+    settle(index);
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalled());
+    expect(state.state().cloudAgentIndex).toEqual(expected);
     expect(state.state().cloudProvidersError).toBeNull();
   });
 });
@@ -683,14 +689,7 @@ describe("CloudAgentState waiting for a deployed agent", () => {
     let listed = [agent()];
     const built = build({
       listAgents: async () => listed,
-      // The real poll (`cloudAgents.ts`) only resolves once an agent reaches a
-      // terminal status; `build()`'s default double does not honor that, so a
-      // "provisioning" row left provisioning forever would make
-      // `pollToTerminal`'s post-poll `refresh()` restart the same poll on
-      // every pass — an infinite loop with nothing to do with this describe's
-      // subject. Settling it to "running" here, and writing that back into
-      // `listed` so the next `list()` agrees, keeps the fixture inside that
-      // contract without touching production code.
+      // Settle like the real poll does, or pollToTerminal's refresh re-polls forever.
       pollAgent: async (receipt, transition) => {
         const settled = { ...receipt, status: "running" as const };
         listed = listed.map((row) => (row.agentId === settled.agentId ? settled : row));
@@ -717,12 +716,12 @@ describe("CloudAgentState waiting for a deployed agent", () => {
     expect(await state.awaitNewAgent({ intervalMs: 5, timeoutMs: 30 })).toBeNull();
   });
 
-  it("looks right away when the window regains focus", async () => {
+  it("resolves as soon as any refresh sees the new agent", async () => {
     const { state, arrive } = withArrival();
     await state.refresh();
     const waited = state.awaitNewAgent({ intervalMs: 60_000, timeoutMs: 120_000 });
     arrive();
-    state.checkForNewAgent();
+    await state.refresh();
     expect(await waited).toBe("agent_new");
   });
 
