@@ -1610,11 +1610,18 @@ function cloudEntityRow(agent, state, redraw) {
     : null;
   message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId));
   const actions = [message].filter(Boolean);
-  return el("div", { class: `entity-row cloud-agent-row${agent.agentId === justDeployed ? " cloud-agent-new" : ""}`, attrs: { "data-cloud-agent-id": agent.agentId } }, [
+  const row = el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent.agentId } }, [
     entityMark(name),
     main,
     actions.length ? el("div", { class: "entity-actions" }, actions) : null,
   ]);
+  const age = agent.agentId === justDeployed?.id ? performance.now() - justDeployed.at : Infinity;
+  if (age < NEW_AGENT_HIGHLIGHT_MS) {
+    row.classList.add("cloud-agent-new");
+    // CSSOM, which style-src 'self' allows: a redraw continues the fade, not restarts it.
+    row.style.animationDelay = `-${age}ms`;
+  }
+  return row;
 }
 
 function sessionEntityRow(row, section, redraw) {
@@ -1660,9 +1667,10 @@ function sectionHeader(title, count, unit, action) {
   ]);
 }
 
-/** The agent the deploy modal just saw arrive; the next roster draw
-    highlights its row once. */
+/** The agent the deploy modal just saw arrive, and when. Expires by time, not
+    by first draw: one arrival publishes twice, and both draws must highlight. */
 let justDeployed = null;
+const NEW_AGENT_HIGHLIGHT_MS = 2500; // .cloud-agent-new's animation in styles.css
 
 /** The deploy picker: a card per agent Plow offers, described by the Agent Index. */
 function openDeployModal(trigger, s, redraw) {
@@ -1734,7 +1742,7 @@ async function deployAgent(panel, card, redraw) {
     showDeployWaiting(panel, card, true, redraw);
     return;
   }
-  justDeployed = agentId;
+  justDeployed = { id: agentId, at: performance.now() };
   closeCloudModal();
   await redraw();
 }
@@ -1769,7 +1777,6 @@ function cloudSection(s, redraw) {
   add.disabled = !(s.cloudProviders?.length);
   add.addEventListener("click", () => openDeployModal(add, s, redraw));
   const rows = s.cloudAgents.map((agent) => cloudEntityRow(agent, s, redraw));
-  justDeployed = null;
   const notices = [];
   if (!s.cloudChatsLoaded) {
     notices.push(s.cloudChatsError

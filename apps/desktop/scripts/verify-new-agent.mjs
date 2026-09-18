@@ -59,8 +59,11 @@ app.whenReady().then(async () => {
       ? { managed_phone: "+15551234567", providers } : agentRows;
     return new Response(JSON.stringify(body), { status: 200 });
   });
+  let win;
   const cloudAgents = new CloudAgentState({
     home, agents: new CloudAgentsClient(api), providers: api,
+    // Production's publish path: every change reaches the renderer, as in main.ts.
+    onChange: () => win?.webContents.send("connect:changed"),
     chats: { list: async () => [{
       uid: "cht_ash", lineUid: "lin_ash", status: "active", memberCount: 1, hasOwnerMember: true,
       label: "Ash", recipients: { line: "+15557654321", members: ["+15550000001"] }, people: [],
@@ -92,7 +95,7 @@ app.whenReady().then(async () => {
     "cloud:cancelLineFlow": state,
   })) ipcMain.handle(channel, value);
 
-  const win = new BrowserWindow({ width: 1040, height: 720, show: true, webPreferences: {
+  win = new BrowserWindow({ width: 1040, height: 720, show: true, webPreferences: {
     preload: path.join(dist, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false,
   } });
   try {
@@ -128,7 +131,6 @@ app.whenReady().then(async () => {
 
     providers = [...providers, { id: "exe:hermes", name: "Hermes", phrases: ["Start Hermes"] }];
     await cloudAgents.refresh();
-    win.webContents.send("connect:changed");
     await delay(250);
     await mouseClick(win, newAgent);
     assert.deepEqual(await win.webContents.executeJavaScript('[...document.querySelectorAll(".deploy-card-name")].map(n => n.textContent)'), ["Life", "Hermes"]);
@@ -148,7 +150,6 @@ app.whenReady().then(async () => {
     agentRows = [{ uid: "agent_1", name: "Life", provider: "exe:life", status: "running",
       line: { uid: "lin_willow", display_name: "Willow", provider_key: "+15551111111" } }];
     await cloudAgents.refresh();
-    win.webContents.send("connect:changed");
     await delay(250);
     await mouseClick(win, 'document.querySelector(".cloud-agent-open")');
     await mouseClick(win, '[...document.querySelectorAll(".cloud-modal button")].find(b => b.textContent === "Change line")');
