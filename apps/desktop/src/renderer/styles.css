@@ -809,6 +809,8 @@ pre.script {
   border-radius: 8px; background: var(--sel); color: var(--blue-fg);
   font-weight: 700;
 }
+.entity-mark.logo { overflow: hidden; background: #fff; }
+.entity-mark.logo img { width: 100%; height: 100%; object-fit: cover; }
 .entity-mark.client {
   font-family: var(--mono); background: var(--bg); color: var(--muted);
   border: 1px solid var(--border); font-size: 11px;
