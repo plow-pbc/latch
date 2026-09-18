@@ -23,6 +23,27 @@ const READ_BOILERPLATE = [
   "/private/var/select",
 ];
 
+// Single entries the profile lets a run read — directories it must stat on
+// the way down, and devices. `sandboxGrants` asks the same list.
+const READ_LITERALS = [
+  "/",
+  "/private",
+  "/private/var",
+  // CUPS' socket. `lp` reads it before connecting when launchd has idled
+  // cupsd out; denied, the first print after a quiet spell fails.
+  "/private/var/run/cupsd",
+  "/private/tmp",
+  "/tmp",
+  "/var",
+  "/etc",
+  "/Users",
+  "/dev/null",
+  "/dev/urandom",
+  "/dev/random",
+  "/dev/zero",
+  "/dev/tty",
+];
+
 function quote(p: string): string {
   return '"' + p.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 }
@@ -70,22 +91,7 @@ export const SandboxProfile = {
       "(allow file-read* " +
         [
           ...READ_BOILERPLATE.map((p) => `(subpath ${quote(p)})`),
-          '(literal "/")',
-          '(literal "/private")',
-          '(literal "/private/var")',
-          // CUPS' socket. `lp` reads it before connecting when launchd has
-          // idled cupsd out; denied, the first print after a quiet spell fails.
-          '(literal "/private/var/run/cupsd")',
-          '(literal "/private/tmp")',
-          '(literal "/tmp")',
-          '(literal "/var")',
-          '(literal "/etc")',
-          '(literal "/Users")',
-          '(literal "/dev/null")',
-          '(literal "/dev/urandom")',
-          '(literal "/dev/random")',
-          '(literal "/dev/zero")',
-          '(literal "/dev/tty")',
+          ...READ_LITERALS.map((p) => `(literal ${quote(p)})`),
           '(subpath "/dev/fd")',
         ].join(" ") +
         ")",
@@ -162,11 +168,7 @@ export function sandboxGrants(
   const writable = writableRoots(args);
   const write = writable.some((root) => under(target, root));
   const readRoots = [...READ_BOILERPLATE, home, ...writable, ...args.readPaths, "/dev/fd"];
-  const literals = new Set([
-    "/", "/private", "/private/var", "/private/tmp", "/tmp", "/var", "/etc", "/Users",
-    "/dev/null", "/dev/urandom", "/dev/random", "/dev/zero", "/dev/tty",
-  ]);
-  const read = write || literals.has(target) || readRoots.some((root) => under(target, root));
+  const read = write || READ_LITERALS.includes(target) || readRoots.some((root) => under(target, root));
   return { read, write };
 }
 
