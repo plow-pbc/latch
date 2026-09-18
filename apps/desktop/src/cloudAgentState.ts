@@ -376,24 +376,32 @@ export class CloudAgentState {
     this.newAgentWait?.finish(null);
     const generation = this.generation;
     return new Promise((resolve) => {
+      let tick: ReturnType<typeof setTimeout> | undefined;
       const wait: NewAgentWait = {
         known: new Set(this.rows.keys()),
         finish: (id) => {
-          clearInterval(tick);
+          clearTimeout(tick);
           clearTimeout(timeout);
           if (this.newAgentWait === wait) this.newAgentWait = null;
           resolve(id);
         },
       };
-      const tick = setInterval(() => {
-        const credential = this.credential();
-        if (!credential) return;
-        void this.sequence(() => this.refreshAgents(credential, generation)).then(() => {
-          if (generation === this.generation) this.publish();
-        });
-      }, intervalMs);
+      // Re-armed only once the previous re-read lands: a slow agent list must
+      // not pile ticks onto the shared sequence() chain.
+      const schedule = (): void => {
+        tick = setTimeout(() => {
+          const credential = this.credential();
+          const read = credential ? this.sequence(() => this.refreshAgents(credential, generation)) : Promise.resolve();
+          void read.then(() => {
+            if (this.newAgentWait !== wait) return;
+            if (generation === this.generation) this.publish();
+            if (this.newAgentWait === wait) schedule();
+          });
+        }, intervalMs);
+      };
       const timeout = setTimeout(() => wait.finish(null), timeoutMs);
       this.newAgentWait = wait;
+      schedule();
     });
   }
 

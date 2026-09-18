@@ -736,4 +736,34 @@ describe("CloudAgentState waiting for a deployed agent", () => {
     expect(await waited).toBeNull();
     state.signedOut(); // ends the newer wait, so no timer outlives the test
   });
+
+  it("does not pile up re-reads when the agent list is slow", async () => {
+    const heldOpen = deferred<CloudAgentResource[]>();
+    let agentListImpl = async () => [agent()];
+    const { state, calls } = build({
+      listAgents: async () => agentListImpl(),
+    });
+
+    // Refresh once with a fast answer to load initial state
+    await state.refresh();
+    const initialCalls = calls.filter((c) => c === "listAgents").length;
+
+    // Switch to the held-open deferred and start the wait
+    agentListImpl = async () => heldOpen.promise;
+    const waited = state.awaitNewAgent({ intervalMs: 5, timeoutMs: 1000 });
+
+    // Let ticks accumulate for ~60ms (12+ intervals at 5ms each)
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Count how many listAgents calls were queued while the first one was in flight.
+    // Should be exactly 1 (the one held open), not 12+.
+    const callsDuringWait = calls.filter((c) => c === "listAgents").length - initialCalls;
+    expect(callsDuringWait).toBe(1);
+
+    // Resolve the held-open deferred with a new agent
+    heldOpen.resolve([agent(), agent({ agentId: "agent_new", name: "New" })]);
+    expect(await waited).toBe("agent_new");
+
+    state.signedOut();
+  });
 });
