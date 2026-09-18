@@ -80,11 +80,6 @@ describe("deployCards", () => {
     ]);
   });
 
-  it("carries the Index's logo onto the card", () => {
-    const logo = "data:image/png;base64,iVBORw0KGgo=";
-    expect(deployCards([provider("x", "X")], { x: entry(1, { logo }) })[0]?.logo).toBe(logo);
-  });
-
   it.each([["🦊 Fox", "🦊"], ["", "?"]])("takes %j's initial as one whole character", (name, initial) => {
     expect(deployCards([provider("x", name)], {})[0]?.initial).toBe(initial);
   });

@@ -1469,12 +1469,12 @@ function rosterPermissionCopy(row) {
   return permissions;
 }
 
-function entityMark(name, client = false, logo = null) {
+function entityMark(name, client = false) {
   const words = String(name).trim().split(/\s+/).filter(Boolean);
   const text = client
     ? words.slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "?"
     : (words[0]?.[0] || "?").toUpperCase();
-  return logoMark(logo) ?? el("span", { class: `entity-mark${client ? " client" : ""}`, text });
+  return el("span", { class: `entity-mark${client ? " client" : ""}`, text });
 }
 
 /** An agent's Agent Index logo — a PNG data URL main checked — or null to draw its initial. */
@@ -1616,7 +1616,7 @@ function cloudEntityRow(agent, state, redraw) {
   message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId));
   const actions = [message].filter(Boolean);
   const row = el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent.agentId } }, [
-    entityMark(name, false, state.cloudAgentIndex?.[agent.provider]?.logo),
+    logoMark(state.cloudAgentIndex?.[agent.provider]?.logo) ?? entityMark(name),
     main,
     actions.length ? el("div", { class: "entity-actions" }, actions) : null,
   ]);
