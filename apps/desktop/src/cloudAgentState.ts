@@ -173,8 +173,9 @@ export interface CloudAgentStateDeps {
   onChange?: () => void;
 }
 
-/** One pending `awaitNewAgent`: the roster it started from, and its answer. */
-type NewAgentWait = { known: Set<string>; finish(id: string | null): void };
+/** One pending `awaitNewAgent`: the provider deployed, the roster it started
+ * from, and its answer. */
+type NewAgentWait = { provider: string; known: Set<string>; finish(id: string | null): void };
 
 export class CloudAgentState {
   /** Keyed on the agent uid, which is stable for the agent's whole life. */
@@ -366,18 +367,21 @@ export class CloudAgentState {
   }
 
   /**
-   * Wait for an agent that was not on the roster when the wait began: the one
-   * the owner's setup text just created. Any publish that sees it ends the
+   * Wait for an agent of `provider` that was not on the roster when the wait
+   * began: the one the owner's setup text just created. Matching the provider
+   * keeps an earlier, abandoned deploy's arrival from ending this wait. Any
+   * publish that sees it ends the
    * wait — this one's re-read every `intervalMs`, the renderer's refresh when
    * the owner comes back from Messages, a poll finishing. Answers null when
    * `timeoutMs` passes, a newer wait starts, or this Mac signs out.
    */
-  awaitNewAgent({ intervalMs = 5_000, timeoutMs = 120_000 }: { intervalMs?: number; timeoutMs?: number } = {}): Promise<string | null> {
+  awaitNewAgent(provider: string, { intervalMs = 5_000, timeoutMs = 120_000 }: { intervalMs?: number; timeoutMs?: number } = {}): Promise<string | null> {
     this.newAgentWait?.finish(null);
     const generation = this.generation;
     return new Promise((resolve) => {
       let tick: ReturnType<typeof setTimeout> | undefined;
       const wait: NewAgentWait = {
+        provider,
         known: new Set(this.rows.keys()),
         finish: (id) => {
           clearTimeout(tick);
@@ -778,8 +782,8 @@ export class CloudAgentState {
   private publish(): void {
     this.deps.onChange?.();
     const wait = this.newAgentWait;
-    const fresh = wait && [...this.rows.keys()].find((id) => !wait.known.has(id));
-    if (fresh) wait.finish(fresh);
+    const fresh = wait && [...this.rows.values()].find((row) => row.provider === wait.provider && !wait.known.has(row.agentId));
+    if (fresh) wait.finish(fresh.agentId);
   }
 }
 

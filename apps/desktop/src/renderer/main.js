@@ -1720,23 +1720,23 @@ function openDeployModal(trigger, s, redraw) {
 }
 
 /** Open Messages with the card's setup text, then wait for the agent it makes.
-    A token per attempt: a stale wait (closed modal, a retry) is ignored. */
+    The token is swapped only once Messages opened, so a failed retry keeps the
+    running wait; a stale answer (closed modal, a later retry) is ignored. */
 async function deployAgent(panel, card, redraw) {
-  const token = {};
-  cloudModal.deployToken = token;
-  const current = () => cloudModal?.deployToken === token;
+  const modal = cloudModal;
   for (const button of panel.querySelectorAll("button")) button.disabled = true;
-  if (!await window.domo.cloudNewAgentMessages(card.id).catch(() => false)) {
-    if (current()) {
-      panel.querySelector(".deploy-note").textContent = "Could not open Messages. Refresh and try again.";
-      for (const button of panel.querySelectorAll("button")) button.disabled = false;
-    }
+  const opened = await window.domo.cloudNewAgentMessages(card.id).catch(() => false);
+  if (cloudModal !== modal) return;
+  if (!opened) {
+    panel.querySelector(".deploy-note").textContent = "Could not open Messages. Refresh and try again.";
+    for (const button of panel.querySelectorAll("button")) button.disabled = false;
     return;
   }
-  if (!current()) return;
+  const token = {};
+  modal.deployToken = token;
   showDeployWaiting(panel, card, false, redraw);
-  const agentId = await window.domo.cloudAwaitNewAgent();
-  if (!current()) return;
+  const agentId = await window.domo.cloudAwaitNewAgent(card.id);
+  if (cloudModal?.deployToken !== token) return;
   if (!agentId) {
     showDeployWaiting(panel, card, true, redraw);
     return;

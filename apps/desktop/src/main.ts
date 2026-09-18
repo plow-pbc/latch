@@ -848,7 +848,8 @@ ipcMain.handle("cloud:newAgentMessages", async (_e, providerId: unknown) => {
 });
 // The deploy modal's wait: the id of the agent the owner's setup text created,
 // or null if none appeared in time. Resolves on its own — the renderer asks once.
-ipcMain.handle("cloud:awaitNewAgent", async () => (await cloudAgents?.awaitNewAgent()) ?? null);
+ipcMain.handle("cloud:awaitNewAgent", async (_e, providerId: unknown) =>
+  typeof providerId === "string" ? (await cloudAgents?.awaitNewAgent(providerId)) ?? null : null);
 ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
   await cloudAgents?.changeLine({

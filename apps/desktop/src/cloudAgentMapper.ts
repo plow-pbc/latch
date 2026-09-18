@@ -23,6 +23,8 @@ export interface CloudAgentLine {
 export interface CloudAgentDisplayRow {
   agentId: string;
   name: string;
+  /** Plow's provider id, e.g. `exe:life` — the deploy catalog's id. */
+  provider: string;
   line: CloudAgentLine | null;
   /** Whether the resolved line has an E.164 destination for Messages. */
   canMessage: boolean;
@@ -59,6 +61,7 @@ export function toCloudAgentDisplayRow(
   return {
     agentId: agent.agentId,
     name: agent.name,
+    provider: agent.provider,
     line: line === null ? null : { uid: line.uid, label: line.label },
     canMessage: context.canMessage === true,
     threads: (context.threads ?? [])

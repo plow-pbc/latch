@@ -683,7 +683,7 @@ describe("CloudAgentState deploy catalog", () => {
 });
 
 describe("CloudAgentState waiting for a deployed agent", () => {
-  const FAST = { intervalMs: 5, timeoutMs: 200 };
+  const HERMES = "exe:hermes"; // agent()'s provider
 
   function withArrival() {
     let listed = [agent()];
@@ -697,29 +697,34 @@ describe("CloudAgentState waiting for a deployed agent", () => {
         return settled;
       },
     });
-    const arrive = () => { listed = [agent(), agent({ agentId: "agent_new", name: "New", status: "provisioning" })]; };
+    const arrive = (provider = HERMES) => {
+      listed = [agent(), agent({ agentId: "agent_new", name: "New", provider, status: "provisioning" })];
+    };
     return { ...built, arrive };
   }
 
-  it("resolves with the agent that appears after the wait began", async () => {
+  it.each([
+    ["the deployed provider's new agent", HERMES, "agent_new"],
+    // An earlier, abandoned deploy landing late must not end this one.
+    ["nothing for another provider's new agent", "exe:life", null],
+  ])("resolves with %s", async (_case, provider, expected) => {
     const { state, arrive } = withArrival();
     await state.refresh();
-    const waited = state.awaitNewAgent(FAST);
-    arrive();
-    expect(await waited).toBe("agent_new");
-    expect(state.state().cloudAgents.map((row) => row.agentId)).toContain("agent_new");
+    const waited = state.awaitNewAgent(HERMES, { intervalMs: 5, timeoutMs: 60 });
+    arrive(provider);
+    expect(await waited).toBe(expected);
   });
 
   it("resolves null when nothing appears before the timeout", async () => {
     const { state } = withArrival();
     await state.refresh();
-    expect(await state.awaitNewAgent({ intervalMs: 5, timeoutMs: 30 })).toBeNull();
+    expect(await state.awaitNewAgent(HERMES, { intervalMs: 5, timeoutMs: 30 })).toBeNull();
   });
 
   it("resolves as soon as any refresh sees the new agent", async () => {
     const { state, arrive } = withArrival();
     await state.refresh();
-    const waited = state.awaitNewAgent({ intervalMs: 60_000, timeoutMs: 120_000 });
+    const waited = state.awaitNewAgent(HERMES, { intervalMs: 60_000, timeoutMs: 120_000 });
     arrive();
     await state.refresh();
     expect(await waited).toBe("agent_new");
@@ -727,11 +732,11 @@ describe("CloudAgentState waiting for a deployed agent", () => {
 
   it.each([
     ["a sign-out", (state: CloudAgentState) => state.signedOut()],
-    ["a newer wait", (state: CloudAgentState) => { void state.awaitNewAgent({ intervalMs: 60_000, timeoutMs: 120_000 }); }],
+    ["a newer wait", (state: CloudAgentState) => { void state.awaitNewAgent(HERMES, { intervalMs: 60_000, timeoutMs: 120_000 }); }],
   ])("gives up with null on %s", async (_case, interrupt) => {
     const { state } = withArrival();
     await state.refresh();
-    const waited = state.awaitNewAgent({ intervalMs: 60_000, timeoutMs: 120_000 });
+    const waited = state.awaitNewAgent(HERMES, { intervalMs: 60_000, timeoutMs: 120_000 });
     interrupt(state);
     expect(await waited).toBeNull();
     state.signedOut(); // ends the newer wait, so no timer outlives the test
@@ -746,7 +751,7 @@ describe("CloudAgentState waiting for a deployed agent", () => {
 
     await state.refresh();
     agentListImpl = async () => heldOpen.promise;
-    const waited = state.awaitNewAgent({ intervalMs: 5, timeoutMs: 1000 });
+    const waited = state.awaitNewAgent(HERMES, { intervalMs: 5, timeoutMs: 1000 });
     await new Promise((r) => setTimeout(r, 60));
 
     // Measure post-release burst: old code queues ~12 ticks behind the held read.
