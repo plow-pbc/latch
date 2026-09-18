@@ -664,8 +664,8 @@ app.whenReady().then(async () => {
   }})()`);
 
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelectorAll("#view .panel.agents .list-section").length === 3`,
-    "the three-section Agents pane");
+  await waitFor(win, `document.querySelectorAll("#view .panel.agents .list-section").length === 2`,
+    "the two-section Agents pane");
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Connect MCP client").click()`,
   );
@@ -685,7 +685,7 @@ app.whenReady().then(async () => {
       // The move itself: its own tab, FIRST in the bar, under the new key.
       agentsTabFirst: tabs[0] === "agents",
       tabOrder: tabs,
-      hasAgentsPane: document.querySelectorAll("#view .panel.agents .list-section").length === 3,
+      hasAgentsPane: document.querySelectorAll("#view .panel.agents .list-section").length === 2,
       showsTitle: text.includes("Connect an MCP client"),
       noConnectTab: !document.querySelector('#seg button[data-tab="connect"]'),
       // The client shortcut. Exactly one: a card exists only for a client whose
