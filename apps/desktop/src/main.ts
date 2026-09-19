@@ -62,7 +62,7 @@ import { AuditIndex, AuditQuery } from "./auditIndex.js";
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { capabilitiesView, CapabilitiesView, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
+import { capabilitiesView, CapabilitiesView, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
 import { browserPluginRow, grantList, pluginRows, type GrantItem, type PluginRow } from "./pluginsModel.js";
 import { actOnRequirement } from "./requirements.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
@@ -240,11 +240,10 @@ let connectors: Connectors | null = null;
 /** What `loadPlugins` found at startup — the Plugins tab's inventory, and the
  *  list the owner's off switch selects from. Empty until whenReady. */
 let stagedPlugins: readonly StagedPlugin[] = [];
-/** Whether this process could read Full Disk Access's files at launch. A grant
- *  that arrives later reaches the app but not its children until a relaunch;
- *  one already there at launch that a child still cannot use will not be
- *  fixed by relaunching (pluginsNow). Read once in whenReady. */
-let fullDiskAccessAtLaunch = false;
+/** Full Disk Access over this run (capabilitiesModel.ts): whether a grant a
+ *  child cannot use yet is waiting on a relaunch or broken. Made in
+ *  whenReady; fed by every read that sees it. */
+let fullDisk: FullDiskWatch | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
@@ -1441,13 +1440,14 @@ function grantTargetFor(key: string): GrantTarget | null {
   const label = permissionTitle(key);
   const probes = device?.hostProbes ?? null;
   const probe = async (): Promise<boolean> => {
-    // Done once a child can use it (the Settings row's own answer), or once
-    // it arrives during this run, which a relaunch finishes. On at launch but
-    // not inherited, the panel stays up for the row's remove-and-re-add.
+    // Done once a child can use it, or once it came back on during this run
+    // (fresh, or a remove-and-re-add), which a relaunch finishes. Held all
+    // run but not inherited, the panel stays up for the row's remove-and-re-add.
     if (key === "full_disk_access") {
-      if (!(await probeFullDiskAccess())) return false;
-      if (!fullDiskAccessAtLaunch) return true;
-      return (await device!.hostInventory({ automationTargets: [] })).child_attribution.status === "ok";
+      const app = await probeFullDiskAccess();
+      const inherited = app && (await device!.hostInventory({ automationTargets: [] })).child_attribution.status === "ok";
+      const state = fullDisk!.observe(app, inherited);
+      return state === "granted" || state === "relaunch";
     }
     if (!probes) return false;
     if (app) return (await probes.automationStatus(app.bundleId)) === "granted";
@@ -1601,6 +1601,8 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
   const inventory = device ? await device.hostInventory({ automationTargets }) : null;
   const view = await capabilitiesNow(inventory);
   const granted = view.sections.flatMap((s) => s.rows).filter((r) => r.status === "granted").map((r) => r.key);
+  // A read that sees the app without it tells a later return from a broken grant.
+  if (inventory) fullDisk?.observe(inventory.full_disk_access.granted, granted.includes("full_disk_access"));
   const rows = pluginRows({
     plugins: stagedPlugins.map((p) => ({
       manifest: p.manifest,
@@ -2228,7 +2230,7 @@ app.whenReady().then(async () => {
   // What the Plugins tab lists, and what its off switch selects from.
   stagedPlugins = plugins;
   // Before any window exists to read the Plugins tab.
-  fullDiskAccessAtLaunch = await probeFullDiskAccess();
+  fullDisk = new FullDiskWatch(await probeFullDiskAccess());
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
