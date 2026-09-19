@@ -1,16 +1,10 @@
 import { setImmediate } from "node:timers/promises";
 import vm from "node:vm";
-import ts from "typescript";
 import { expect, it } from "vitest";
-import { compileMain, mainFunctions, mainSource } from "./mainSource.js";
+import { compileMain, mainFunctions, mainHandler } from "./mainSource.js";
 
 // Exercise the registered handlers and their returned snapshot without booting Electron.
-const withSnapshot = (channel: string) => compileMain(...mainFunctions("agentsTabState"), mainSource.statements.find((node) =>
-  ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
-  && node.expression.expression.getText(mainSource) === "ipcMain.handle"
-  && ts.isStringLiteral(node.expression.arguments[0])
-  && node.expression.arguments[0].text === channel,
-)!);
+const withSnapshot = (channel: string) => compileMain(...mainFunctions("agentsTabState"), mainHandler(channel));
 
 it.each([
   ["cloud:changeLine", "move"],

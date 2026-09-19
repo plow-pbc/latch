@@ -1,30 +1,18 @@
-import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { compileMain, mainHandler, mainSource } from "./mainSource.js";
 
-const source = ts.createSourceFile("main.ts", fs.readFileSync(
-  new URL("../src/main.ts", import.meta.url), "utf8",
-), ts.ScriptTarget.Latest, true);
-
-const registration = (channel: string) => source.statements.find((node) =>
-  ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
-  && node.expression.expression.getText(source) === "ipcMain.handle"
-  && ts.isStringLiteral(node.expression.arguments[0])
-  && node.expression.arguments[0].text === channel,
-)!;
-const requested = source.statements.find((node) =>
+const requested = mainSource.statements.find((node) =>
   ts.isVariableStatement(node) && node.declarationList.declarations.some((declaration) =>
     ts.isIdentifier(declaration.name) && declaration.name.text === "vaultImportRequested"),
 )!;
-const compiled = ts.transpileModule([
+const compiled = compileMain(
   requested,
-  registration("onboarding:finish"),
-  registration("vault:importRequested"),
-  registration("vault:importAcknowledged"),
-].map((node) => node.getText(source)).join("\n"), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022 },
-}).outputText;
+  mainHandler("onboarding:finish"),
+  mainHandler("vault:importRequested"),
+  mainHandler("vault:importAcknowledged"),
+);
 
 describe("onboarding password import handoff", () => {
   it.each([
