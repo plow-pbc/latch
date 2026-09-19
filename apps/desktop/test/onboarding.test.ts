@@ -249,7 +249,7 @@ describe("wizard steps around the existing verification flow", () => {
     onboarding.reset();
   });
 
-  it("offers Back from Plugins, Access and Availability but not from Verified, the Gatekeeper or Done", async () => {
+  it("owns Back availability and transitions for every setup step", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     let notifications = 0;
     const onboarding = build({
@@ -262,16 +262,20 @@ describe("wizard steps around the existing verification flow", () => {
     await onboarding.advance();
     await settle();
     expect(onboarding.state().step).toBe("privacy");
+    expect(onboarding.state().canGoBack).toBe(false);
     notifications = 0;
     expect((await onboarding.back()).step).toBe("privacy");
     expect(notifications).toBe(0);
 
     expect((await onboarding.advance()).step).toBe("gatekeeper");
+    expect(onboarding.state().canGoBack).toBe(true);
     notifications = 0;
-    expect((await onboarding.back()).step).toBe("gatekeeper");
-    expect(notifications).toBe(0);
+    expect((await onboarding.back()).step).toBe("privacy");
+    expect(notifications).toBe(1);
 
+    expect((await onboarding.advance()).step).toBe("gatekeeper");
     expect((await onboarding.advance()).step).toBe("plugins");
+    expect(onboarding.state().canGoBack).toBe(true);
     notifications = 0;
     expect((await onboarding.back()).step).toBe("gatekeeper");
     expect(notifications).toBe(1);
@@ -279,6 +283,7 @@ describe("wizard steps around the existing verification flow", () => {
     // Re-enter Plugins to continue the walk.
     expect((await onboarding.advance()).step).toBe("plugins");
     expect((await onboarding.advance()).step).toBe("access");
+    expect(onboarding.state().canGoBack).toBe(true);
     notifications = 0;
     expect((await onboarding.back()).step).toBe("plugins");
     expect(notifications).toBe(1);
@@ -286,6 +291,7 @@ describe("wizard steps around the existing verification flow", () => {
     // Back from Availability also lands on Plugins, not on Access.
     expect((await onboarding.advance()).step).toBe("access");
     expect((await onboarding.advance()).step).toBe("availability");
+    expect(onboarding.state().canGoBack).toBe(true);
     notifications = 0;
     expect((await onboarding.back()).step).toBe("plugins");
     expect(notifications).toBe(1);
@@ -293,6 +299,7 @@ describe("wizard steps around the existing verification flow", () => {
     expect((await onboarding.advance()).step).toBe("access");
     await onboarding.advance();
     await onboarding.advance();
+    expect(onboarding.state().canGoBack).toBe(false);
     notifications = 0;
     expect((await onboarding.back()).step).toBe("done");
     expect(notifications).toBe(0);
@@ -561,6 +568,18 @@ describe("the gatekeeper's instructions", () => {
 
     expect((await onboarding.advance()).step).toBe("plugins");
     expect(loadSettings(home).agentPurpose).toBe(PRESET_TEXT.home);
+  });
+
+  it("keeps an unsaved draft across Gatekeeper → Privacy → Gatekeeper", async () => {
+    const onboarding = await toGatekeeper();
+
+    expect((await onboarding.back("  Let my assistant handle family logistics.  ")).step).toBe("privacy");
+    expect(loadSettings(home).agentPurpose).toBe("");
+    expect((await onboarding.advance()).step).toBe("gatekeeper");
+    expect(onboarding.state().purpose).toBe("  Let my assistant handle family logistics.  ");
+
+    await onboarding.advance();
+    expect(loadSettings(home).agentPurpose).toBe("Let my assistant handle family logistics.");
   });
 
   it("saves the owner's draft on Continue, trimmed, and brings it back from Plugins", async () => {

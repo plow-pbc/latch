@@ -72,6 +72,8 @@ export async function waitFor(win, expr, label, timeoutMs = 10_000) {
  * `expectEnabled` names a button that must remain actionable in that state.
  * `expectNeutralNote` names connector status copy that must use neutral rather
  * than error styling.
+ * `expectFooter` and `expectBack` pin the shared onboarding navigation shell;
+ * both inspect visibility, not merely whether the persistent nodes exist.
  */
 export async function shootScreens({ win, outDir, prefix, screens, load, beforeShot }) {
   fs.mkdirSync(outDir, { recursive: true });
@@ -104,6 +106,18 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     const dotCount = await win.webContents.executeJavaScript(
       `document.querySelectorAll(".foot-dot").length`,
     );
+    const footerVisible = await win.webContents.executeJavaScript(
+      `(() => { const el = document.querySelector(".wizard-footer"); return !!el && !el.hidden && getComputedStyle(el).display !== "none"; })()`,
+    );
+    const backVisible = await win.webContents.executeJavaScript(
+      `(() => {
+        const footer = document.querySelector(".wizard-footer");
+        const el = footer?.querySelector(".nav-back");
+        return !!footer && !footer.hidden && getComputedStyle(footer).display !== "none"
+          && !!el && !el.hidden && getComputedStyle(el).visibility !== "hidden"
+          && getComputedStyle(el).display !== "none";
+      })()`,
+    );
     const missing = [
       ...(screen.expect ?? []).filter((needle) => !text.includes(needle.toLowerCase())),
       ...(screen.reject ?? [])
@@ -127,6 +141,12 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
         : []),
       ...(screen.expectDotCount !== undefined && dotCount !== screen.expectDotCount
         ? [`${screen.expectDotCount} footer dots (found: ${dotCount})`]
+        : []),
+      ...(screen.expectFooter !== undefined && footerVisible !== screen.expectFooter
+        ? [`footer visible=${screen.expectFooter} (found: ${footerVisible})`]
+        : []),
+      ...(screen.expectBack !== undefined && backVisible !== screen.expectBack
+        ? [`Back visible=${screen.expectBack} (found: ${backVisible})`]
         : []),
     ];
     if (missing.length) failures += 1;

@@ -58,4 +58,12 @@ describe("onboarding visual fixtures", () => {
       ["browser", "needs-setup"],
     ]);
   });
+
+  it("carries the shared Back contract into browser previews", () => {
+    const reversible = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
+
+    for (const item of fixtures) {
+      expect(item.state.canGoBack, item.name).toBe(reversible.has(item.state.step));
+    }
+  });
 });

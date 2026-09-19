@@ -901,7 +901,7 @@ function agentsTabState(): Record<string, unknown> | null {
 ipcMain.handle("onboarding:get", async () => onboarding?.state() ?? null);
 ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
 ipcMain.handle("onboarding:advance", async (_e, draft: unknown) => onboarding?.advance(draft));
-ipcMain.handle("onboarding:back", async () => onboarding?.back());
+ipcMain.handle("onboarding:back", async (_event, draft: unknown) => onboarding?.back(draft));
 ipcMain.handle("onboarding:setTelemetry", async (_e, on: unknown) =>
   onboarding?.setTelemetryEnabled(on),
 );
