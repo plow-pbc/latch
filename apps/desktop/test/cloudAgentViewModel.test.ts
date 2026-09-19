@@ -96,6 +96,7 @@ describe("agentKind", () => {
 
   it.each([
     ["names its provider", "exe:life", "Life Assistant"],
+    ["names a self-hosted agent, which the provider list never carries", "self_hosted", "Self-hosted"],
     ["says nothing for a provider Plow no longer offers", "exe:gone", null],
   ] as const)("%s", (_case, provider, kind) => {
     expect(agentKind(provider, providers)).toBe(kind);

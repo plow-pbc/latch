@@ -103,9 +103,12 @@ export function deployCards(providers: CloudAgentProvider[], index: AgentIndex):
     }));
 }
 
+/** The one provider `/v1/signup` never lists, named as Plow's full catalog names it. */
+const SELF_HOSTED: CloudAgentProvider = { id: "self_hosted", name: "Self-hosted", phrase: null };
+
 /** What kind of agent this is — its provider's name, e.g. "Life Assistant" — or null for a provider Plow no longer offers. */
 export function agentKind(provider: string, providers: CloudAgentProvider[]): string | null {
-  return providers.find(({ id }) => id === provider)?.name.trim() || null;
+  return [...providers, SELF_HOSTED].find(({ id }) => id === provider)?.name.trim() || null;
 }
 
 function byline({ builder, users, successRate }: AgentIndexEntry): string {
