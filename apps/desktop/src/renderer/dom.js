@@ -53,9 +53,6 @@ const ICONS = {
          ["path", { d: "M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" }]],
   checkmark: [["path", { d: "M20 6L9 17l-5-5" }]],
   messages: [["path", { d: "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" }]],
-  hardDrive: [["rect", { x: "3", y: "5", width: "18", height: "14", rx: "2" }],
-              ["path", { d: "M3 13h18" }], ["circle", { cx: "7.5", cy: "16", r: "1" }],
-              ["path", { d: "M11 16h6" }]],
   // The Import sheet's arrow-into-tray.
   intake: [["path", { d: "M12 3v11" }], ["path", { d: "m7.5 10.5 4.5 4.5 4.5-4.5" }],
            ["path", { d: "M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" }]],
@@ -71,6 +68,12 @@ const ICONS = {
   hand: [["path", { d: "M9 12V5a1.4 1.4 0 0 1 2.8 0v5.5" }],
          ["path", { d: "M11.8 10.5V4.4a1.4 1.4 0 0 1 2.8 0V11" }],
          ["path", { d: "M14.6 11V6.4a1.4 1.4 0 0 1 2.8 0v7.1c0 3.6-2.4 6-6 6h-.8c-2 0-3.6-.9-4.7-2.4l-2.3-3.3a1.7 1.7 0 0 1 2.7-2L9 14.5" }]],
+  calendar: [["rect", { x: "3", y: "5", width: "18", height: "16", rx: "3" }], ["path", { d: "M3 10h18M8 3v4M16 3v4" }]],
+  mail: [["rect", { x: "3", y: "5", width: "18", height: "14", rx: "3" }], ["path", { d: "M4 7l8 6 8-6" }]],
+  pen: [["path", { d: "M4 20l4-1 11-11-3-3L5 16l-1 4z" }]],
+  git: [["circle", { cx: "6", cy: "6", r: "2" }], ["circle", { cx: "6", cy: "18", r: "2" }],
+        ["circle", { cx: "18", cy: "12", r: "2" }], ["path", { d: "M6 8v8M8 6h4a4 4 0 0 1 4 4" }]],
+  upload: [["path", { d: "M12 16V4M7 9l5-5 5 5M4 20h16" }]],
 };
 
 /**
@@ -98,4 +101,15 @@ export function icon(name, opts = {}) {
     svg.appendChild(node);
   }
   return svg;
+}
+
+/** The on/off switch (switch.css) around a checkbox `box`: the input stays
+ *  the control — check it, disable it, listen to it — and the track and knob
+ *  draw its state. `attrs` go on the label (a title, say). */
+export function switchEl(box, attrs) {
+  return el("label", { class: "switch", attrs }, [
+    box,
+    el("span", { class: "track", attrs: { "aria-hidden": "true" } }),
+    el("span", { class: "knob", attrs: { "aria-hidden": "true" } }),
+  ]);
 }

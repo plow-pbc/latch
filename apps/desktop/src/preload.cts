@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld("domo", {
   // path never touches the renderer either — main runs the open dialog and
   // reads the file itself.
   vaultImportSources: () => ipcRenderer.invoke("vault:importSources"),
+  vaultImportRequested: () => ipcRenderer.invoke("vault:importRequested"),
+  vaultImportAcknowledged: () => ipcRenderer.invoke("vault:importAcknowledged"),
   vaultImportInspect: (text: string) => ipcRenderer.invoke("vault:importInspect", text),
   vaultImportFile: () => ipcRenderer.invoke("vault:importFile"),
   // The 1Password vaults the owner kept, by id: main re-stages just their rows
@@ -83,16 +85,26 @@ contextBridge.exposeInMainWorld("domo", {
   // Settings' Permissions section (capabilitiesModel.ts): every switch with
   // its status and what it stopped, and the banner — one whole-state
   // shape per read, like every other pane. `act` does the row's one thing
-  // (the panel flow, a request, a folder touch) and answers with the fresh
-  // state; `dismiss` and `bannerSeen` record the owner's "not now".
+  // (the panel flow, a request, a folder touch), waits for it to end, and
+  // answers with the fresh state; `dismiss` and `bannerSeen` record the
+  // owner's "not now".
   capabilitiesGet: () => ipcRenderer.invoke("capabilities:get"),
   capabilitiesAct: (key: string) => ipcRenderer.invoke("capabilities:act", key),
   capabilitiesDismiss: (key: string) => ipcRenderer.invoke("capabilities:dismiss", key),
   capabilitiesBannerSeen: () => ipcRenderer.invoke("capabilities:bannerSeen"),
-  // The Plugins tab (pluginsModel.ts): one whole-state shape per read;
-  // `setEnabled` is the owner's off switch and answers with the fresh state.
+  // The Plugins tab (pluginsModel.ts): one whole-state shape per read, with
+  // `grants`, the ordered list setup walks; `setEnabled` is the owner's off
+  // switch and answers with the fresh state.
   pluginsGet: () => ipcRenderer.invoke("plugins:get"),
   pluginsSetEnabled: (name: string, on: boolean) => ipcRenderer.invoke("plugins:setEnabled", name, on),
+  // Any requirement's button, by id (requirements.ts): the panel, macOS's
+  // dialog, Google sign-in or Safari's setting, awaited to the flow's end.
+  // Answers with the fresh Plugins state, and `error` when the act could not
+  // be done.
+  requirementsAct: (id: string) => ipcRenderer.invoke("requirements:act", id),
+  // Quit and reopen: what finishes a grant only a fresh process inherits
+  // (a requirement whose status is "relaunch").
+  appRelaunch: () => ipcRenderer.invoke("app:relaunch"),
   // A block by this Mac lands the tray item and the notification on its
   // switch (Settings), or on the Audit tab's Blocked view when it named none.
   onShowCapabilities: (cb: () => void) => ipcRenderer.on("ui:showCapabilities", cb),
@@ -114,11 +126,6 @@ contextBridge.exposeInMainWorld("domo", {
   // The drag session ended (dropped or cancelled): the tile, hidden while its
   // image rode with the cursor, comes back.
   onFullDiskDragEnd: (cb: () => void) => ipcRenderer.on("fullDisk:dragEnd", cb),
-  // Start the Full Disk Access grant flow: main opens the pane and floats the
-  // drag panel next to System Settings (fdaGrantFlow.ts owns the whole
-  // lifecycle). Setup's "Data & permissions" step uses this; the
-  // Permissions section goes through `capabilitiesAct`.
-  fullDiskGrantFlow: () => ipcRenderer.invoke("fullDisk:grantFlow"),
   // The floating panel's close button; main owns the panel's lifecycle.
   fullDiskDismiss: () => ipcRenderer.send("fullDisk:dismiss"),
   // Mid-gesture guard: while the pointer is down on the drag tile, the panel
@@ -170,14 +177,17 @@ contextBridge.exposeInMainWorld("domo", {
   // renders from one shape and never has to reconcile two.
   onboardingGet: () => ipcRenderer.invoke("onboarding:get"),
   onboardingBegin: () => ipcRenderer.invoke("onboarding:begin"),
-  onboardingAdvance: () => ipcRenderer.invoke("onboarding:advance"),
+  onboardingAdvance: (draft?: string) => ipcRenderer.invoke("onboarding:advance", draft),
   onboardingBack: () => ipcRenderer.invoke("onboarding:back"),
   onboardingSetTelemetry: (on: boolean) => ipcRenderer.invoke("onboarding:setTelemetry", on),
+  gatekeeperPresets: () => ipcRenderer.invoke("onboarding:gatekeeperPresets"),
+  gatekeeperPreview: (preset: string, index: number, draft: string) =>
+    ipcRenderer.invoke("onboarding:gatekeeperPreview", preset, index, draft),
   // The renderer is sandboxed and cannot open a URL; main owns the `sms:` one,
   // so the renderer never has to build it or be trusted with it.
   onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
   onboardingNewCode: () => ipcRenderer.invoke("onboarding:newCode"),
-  onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
+  onboardingFinish: (destination?: string) => ipcRenderer.invoke("onboarding:finish", destination),
   onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
 
   // Connected accounts. OAuth stays in main: these calls carry only the
@@ -203,15 +213,11 @@ contextBridge.exposeInMainWorld("domo", {
   // missing — an inactive credential on a still-running agent — where there is
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
-  agentDismissToken: () => ipcRenderer.invoke("agents:dismissToken"),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
   cloudAgents: (): Promise<CloudAgentsPreloadState | null> => ipcRenderer.invoke("cloud:agents"),
-  cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>
-    ipcRenderer.invoke("cloud:create", input),
-  cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),
-  cloudRetryLineFlow: () => ipcRenderer.invoke("cloud:retryLineFlow"),
-  cloudRetryFailed: (agentId: string) => ipcRenderer.invoke("cloud:retryFailed", agentId),
-  cloudChangeLine: (input: { agentId: string; lineUid: string | null }) =>
+  cloudNewAgentMessages: (providerId: string) => ipcRenderer.invoke("cloud:newAgentMessages", providerId),
+  cloudAwaitNewAgent: (providerId: string): Promise<string | null> => ipcRenderer.invoke("cloud:awaitNewAgent", providerId),
+  cloudChangeLine: (input: { agentId: string; lineUid: string }) =>
     ipcRenderer.invoke("cloud:changeLine", input),
   cloudOpenMessages: (agentId?: string) => ipcRenderer.invoke("cloud:openMessages", agentId),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),

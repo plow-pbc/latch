@@ -36,12 +36,21 @@ describe("parseManifest", () => {
 
   it("defaults requires to empty arrays when the manifest omits it", () => {
     const m = parseManifest(JSON.stringify(MINIMAL));
-    expect(m.requires).toEqual({ accounts: [] });
+    expect(m.requires).toEqual({ accounts: [], permissions: [] });
   });
 
   it("keeps a declared account requirement", () => {
-    const requires = { accounts: ["google"] };
-    expect(parseManifest(withPatch({ requires })).requires).toEqual(requires);
+    const requires = { accounts: ["google"], permissions: [] };
+    expect(parseManifest(withPatch({ requires: { accounts: ["google"] } })).requires).toEqual(requires);
+  });
+
+  it("keeps declared permission requirements", () => {
+    const requires = { accounts: [], permissions: ["full_disk_access", "automation:com.apple.MobileSMS"] };
+    expect(parseManifest(withPatch({ requires: { permissions: requires.permissions } })).requires).toEqual(requires);
+  });
+
+  it("keeps an owner-facing summary", () => {
+    expect(parseManifest(withPatch({ summary: "Find and read your texts." })).summary).toBe("Find and read your texts.");
   });
 
   it.each([
@@ -72,6 +81,8 @@ describe("parseManifest", () => {
     ["an empty daemon argv", withPatch({ daemon: { argv: [], health: "/health" } }), "daemon needs argv and health"],
     ["a non-string name", withPatch({ name: true }), "manifest name must be a string"],
     ["a non-string command", withPatch({ command: true }), "manifest command must be a string"],
+    ["a non-string title", withPatch({ title: 7 }), "manifest title must be a string"],
+    ["a blank title", withPatch({ title: " " }), "manifest title must not be blank"],
     ["a binary with a non-string name", withPatch({ runtime: { binaries: [{ name: true, url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }] } }), "binary name must be a string"],
     ["a runtime.binaries that is not an array", withPatch({ runtime: { binaries: "nope" } }), "runtime.binaries must be an array"],
     ["an argv.read that is not an array", withPatch({ argv: { read: "nope", write: [["put"]] } }), "argv.read must be an array"],
@@ -81,6 +92,10 @@ describe("parseManifest", () => {
     ["a requires that is not an object", withPatch({ requires: "nope" }), "requires must be an object"],
     ["a non-array requires.accounts", withPatch({ requires: { accounts: "google" } }), "requires.accounts must be an array"],
     ["an account id no connector answers to", withPatch({ requires: { accounts: ["Google Drive"] } }), "requires.accounts entries must name an account connector this Mac offers"],
+    ["a non-array requires.permissions", withPatch({ requires: { permissions: "full_disk_access" } }), "requires.permissions must be an array"],
+    ["a permission this Mac cannot check", withPatch({ requires: { permissions: ["camera"] } }), "requires.permissions entries must name a permission this Mac can check"],
+    ["automation for an app this Mac does not offer", withPatch({ requires: { permissions: ["automation:com.example.x"] } }), "requires.permissions entries must name a permission this Mac can check"],
+    ["a blank summary", withPatch({ summary: " " }), "manifest summary must not be blank"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
   });

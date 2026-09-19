@@ -17,7 +17,13 @@ import { pluginFor, type StagedPlugin } from "./plugins/registry.js";
 import { classifyArgv, ruleArgv } from "./plugins/argvRules.js";
 import { resolveEnv } from "./plugins/env.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
-import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
+import {
+  compactCalendarEvents,
+  conflictRefusal,
+  gogExitReason,
+  mergeFanout,
+  planPlowGog,
+} from "./providers/plowGog.js";
 import fs from "node:fs";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
@@ -48,6 +54,7 @@ import {
   hostInventory,
   HostInventory,
   HostProbes,
+  InventoryDeps,
   isHostGate,
   nodeProbes,
   stderrHint,
@@ -60,6 +67,10 @@ import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
+
+/** The browser's own name in `disabledPlugins` — it has no manifest and is
+ *  not one of `this.plugins`, but the owner's off switch treats it the same. */
+export const BROWSER_PLUGIN = "browser";
 
 /**
  * A delegate that denies because the adversarial reviewer could not run for
@@ -262,6 +273,8 @@ export class DeviceAgent {
   readonly skills: SkillRegistry;
   /** Staged plugins the owner has turned off — see `setDisabledPlugins`. */
   private disabledPlugins = new Set<string>();
+  /** Account connectors with an account connected — see `setConnectedAccounts`. */
+  private connectedAccounts = new Set<string>();
   /** Null when no browser runtime is installed — browser tools report so. */
   readonly browserSessions: BrowserSessions | null = null;
   /** Exposed so the approval UI can resolve credential item titles locally. */
@@ -400,7 +413,8 @@ export class DeviceAgent {
     registerPlowFolderSkill(this.skills, ownerHome);
     registerContactsSkill(this.skills, ownerHome);
     if (browserRuntime) {
-      this.skills.register(BROWSING_SKILL);
+      // Not registered here: syncPluginSkills() owns it, on exactly while
+      // this runtime is present and the owner has not turned the browser off.
       const browserDir = path.join(home, "device/browser");
       // Earlier builds wrote every agent screenshot under here and never
       // removed one. Nothing reads them, so an install that still has the
@@ -539,10 +553,14 @@ export class DeviceAgent {
    * The sandbox rows go through the REAL executor with a throwaway profile:
    * a read-only run, no network, no writes, so it is also reapable — and
    * `/usr/bin/true` exits at once regardless.
+   *
+   * `automationTargets` narrows the Automation sweep for a caller that needs
+   * only some pairs (the Plugins tab); everything else is always probed.
    */
-  async hostInventory(): Promise<HostInventory> {
+  async hostInventory(scope: Pick<InventoryDeps, "automationTargets"> = {}): Promise<HostInventory> {
     const vaultDir = this.vaultDir;
     return hostInventory({
+      ...scope,
       probes: this.hostProbes,
       ownerHome: this.ownerHome,
       runSandboxed:
@@ -852,15 +870,30 @@ export class DeviceAgent {
   }
 
   /**
-   * The named plugin, if this Mac has it staged.
+   * The named plugin, if this Mac has it staged and it is on.
    *
    * Per-plugin rather than "is anything staged": the day a second row joins
    * the registry, a Mac with only gog staged would otherwise report the other
    * as present — publishing its skill and minting for it.
    */
   private plugin(name: string): StagedPlugin | null {
-    if (this.disabledPlugins.has(name)) return null;
-    return this.plugins.find((p) => p.manifest.name === name) ?? null;
+    const staged = this.plugins.find((p) => p.manifest.name === name);
+    return staged !== undefined && this.offReason(staged) === null ? staged : null;
+  }
+
+  /**
+   * Why a staged plugin is off right now, or null when it is on: the owner's
+   * switch, or an account its manifest `requires` that is not connected — a
+   * plugin that cannot mint is not advertised to an agent, and its command
+   * never reaches an approval card only to fail at the mint. The one sentence
+   * every gate gives.
+   */
+  private offReason(staged: StagedPlugin): string | null {
+    const { name, command, requires } = staged.manifest;
+    if (this.disabledPlugins.has(name)) return `${command} is turned off on this Mac`;
+    const missing = requires.accounts.find((id) => !this.connectedAccounts.has(id));
+    if (missing === undefined) return null;
+    return `${command} needs a connected ${missing} account — the owner connects one in Plow Latch's Plugins tab`;
   }
 
   /**
@@ -869,9 +902,31 @@ export class DeviceAgent {
    * this device is concerned, skill unpublished, commands refused by name at
    * the pre-intent chokepoint. Called at startup and on every toggle — one
    * code path.
+   *
+   * The browser carries a fourth: a session already open when the switch
+   * flips is a live window onto the owner's logins that the Plugins tab can
+   * no longer see or stop, so turning it off closes every one of them —
+   * `closeOpen`, not `closeAll`, because the switch flipping back on must be
+   * able to open a fresh browser, not find the runtime latched shut.
    */
-  setDisabledPlugins(names: readonly string[]): void {
+  setDisabledPlugins(names: readonly string[]): Promise<void> {
+    const turningBrowserOff = names.includes(BROWSER_PLUGIN) && !this.disabledPlugins.has(BROWSER_PLUGIN);
     this.disabledPlugins = new Set(names);
+    this.syncPluginSkills();
+    if (!turningBrowserOff || this.browserSessions === null) return Promise.resolve();
+    return this.browserSessions.closeOpen("turned_off").catch((error: unknown) => {
+      console.error("[browser] closing open sessions after the plugin was turned off:", error);
+    });
+  }
+
+  /**
+   * The account connectors the owner has an account connected for, e.g.
+   * "google" — main's view of Plow's answer, pushed on every change. A plugin
+   * that `requires` one is off until it is (`offReason`); the mint still asks
+   * Plow which accounts, per call.
+   */
+  setConnectedAccounts(ids: readonly string[]): void {
+    this.connectedAccounts = new Set(ids);
     this.syncPluginSkills();
   }
 
@@ -882,6 +937,10 @@ export class DeviceAgent {
    * under a shared name — order is the whole mechanism, re-run each time.
    */
   private syncPluginSkills(): void {
+    // The browser is a plugin without a manifest: on exactly while a runtime is
+    // installed and the owner has not turned it off, like any staged plugin.
+    if (this.browserSessions !== null && !this.disabledPlugins.has(BROWSER_PLUGIN)) this.skills.register(BROWSING_SKILL);
+    else this.skills.unregister(BROWSING_SKILL.name);
     for (const staged of this.plugins) {
       const skill = this.pluginSkill(staged);
       if (skill === null) continue;
@@ -889,6 +948,14 @@ export class DeviceAgent {
       else this.skills.unregister(skill.name);
     }
     this.skills.loadDir(path.join(this.home, "device/skills"));
+  }
+
+  /** Why a browser call cannot proceed on this Mac right now, or null. One
+   *  answer for the tool's pre-intent check and the two execution seams. */
+  browserRefusal(): string | null {
+    if (this.browserSessions === null) return "no browser runtime installed on this device";
+    if (this.disabledPlugins.has(BROWSER_PLUGIN)) return "browser use is turned off on this Mac";
+    return null;
   }
 
   /**
@@ -970,7 +1037,8 @@ export class DeviceAgent {
       ? (this.plugins.find((p) => p.manifest.name === provider.plugin) ?? null)
       : pluginFor(this.plugins, argv[0] ?? "");
     if (plugin === null) return null;
-    if (this.plugin(plugin.manifest.name) === null) return `${provider?.command ?? plugin.manifest.command} is turned off on this Mac`;
+    const off = this.offReason(plugin);
+    if (off !== null) return off;
     // Off is the one answer shared with a provider's command; the rest of its
     // belt is `providerRefusal`'s, and it takes a cwd (stripped, never run in).
     if (provider !== null) return null;
@@ -1073,9 +1141,8 @@ export class DeviceAgent {
     let runEnv: Record<string, string> | undefined;
     let runSysvSemaphores = false;
     if (plugin !== null) {
-      if (this.plugin(plugin.manifest.name) === null) {
-        return this.execError(intent.intentId, `${plugin.manifest.command} is turned off on this Mac`);
-      }
+      const off = this.offReason(plugin);
+      if (off !== null) return this.execError(intent.intentId, off);
       // The manifest's own belt (`argv.read`/`argv.write`) is checked before
       // anything spawns, the same defense-in-depth shape as `providerRefusal`
       // above — the device is the chokepoint regardless of what a caller
@@ -1560,9 +1627,13 @@ export class DeviceAgent {
         intentId: intent.intentId,
         exit_code: answered === 0 && allDegraded.length > 0 ? 1 : 0,
       });
+      const shown = plan.compact
+        ? compactCalendarEvents(merged.items)
+        : { items: merged.items, truncated: null };
       return {
         status: "completed",
-        items: merged.items,
+        items: shown.items,
+        ...(shown.truncated !== null ? { truncated: shown.truncated } : {}),
         degraded: allDegraded,
       } as JSONValue;
     }
@@ -1651,16 +1722,15 @@ export class DeviceAgent {
    * detail, like wait_ms; the approved bound is entirely in the capabilities).
    */
   private async executeBrowserIntent(intent: Intent, payload: JSONValue): Promise<JSONValue> {
-    if (!this.browserSessions) {
-      return { status: "error", error: "no browser runtime installed on this device" };
-    }
+    const refusal = this.browserRefusal();
+    if (refusal !== null) return { status: "error", error: refusal };
     const origins = intent.capabilities.find((c) => c.kind === "browser")?.origins ?? [];
     const items =
       intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
 
     const session = jv(payload).get("session").str;
     if (session !== null) {
-      return this.browserSessions.extend(intent.intentId, session, origins, items);
+      return this.browserSessions!.extend(intent.intentId, session, origins, items);
     }
     if (origins.length === 0) {
       return { status: "error", error: "plow_browser_open requires at least one origin" };
@@ -1669,7 +1739,7 @@ export class DeviceAgent {
     // owner approved, so it rides the payload and leaves the capability set —
     // and the rule the owner may have saved for these origins — untouched.
     const headed = jv(payload).get("headed").bool;
-    return this.browserSessions.open(
+    return this.browserSessions!.open(
       intent.intentId,
       intent.agentId,
       origins,
@@ -1683,13 +1753,12 @@ export class DeviceAgent {
    * already-approved run. Called in-process by the mcp-server's `browser` tool.
    */
   async browserCommand(session: string, params: JSONValue): Promise<JSONValue> {
-    if (!this.browserSessions) {
-      return { status: "error", error: "no browser runtime installed on this device" };
-    }
+    const refusal = this.browserRefusal();
+    if (refusal !== null) return { status: "error", error: refusal };
     if (jv(params).get("action").str === "close") {
-      return this.browserSessions.close(session, "agent");
+      return this.browserSessions!.close(session, "agent");
     }
-    return this.browserSessions.command(session, params);
+    return this.browserSessions!.command(session, params);
   }
 
   async getOutput(handle: string, since = 0): Promise<JSONValue> {

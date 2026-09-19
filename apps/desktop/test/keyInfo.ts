@@ -7,8 +7,7 @@
  */
 import type { KeyInfo } from "../src/plowApi.js";
 
-/** Plow publishes `token[5:13]` as the row's `key_prefix` (its `api/plow/auth.py`). */
-export const keyPrefixOf = (token: string) => token.slice(5, 13);
+export { keyPrefixOf } from "../src/plowApi.js";
 
 export const keyInfo = (overrides: Partial<KeyInfo> = {}): KeyInfo => ({
   id: 1,

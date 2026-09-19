@@ -37,9 +37,8 @@ const SCREENS = [
 ];
 let currentFixture = SCREENS[0];
 let current = currentFixture.state;
-let currentFullDiskAccess = false;
-let currentConnectors = null;
 let newCodeRequests = 0;
+let finishDestination = null;
 let releaseInitialGet;
 let markInitialGetStarted;
 const initialGetStarted = new Promise((resolve) => {
@@ -69,13 +68,20 @@ ipcMain.handle("onboarding:newCode", async () => {
   };
   return current;
 });
-ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: currentFullDiskAccess }));
-ipcMain.handle("fullDisk:grantFlow", async () => {});
 ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
   current = { ...current, telemetryEnabled: enabled === true };
   return current;
 });
-ipcMain.handle("onboarding:finish", async () => {});
+ipcMain.handle("onboarding:gatekeeperPresets", async () => currentFixture.gatekeeper?.presets ?? null);
+// "pending" holds every row on Checking.
+ipcMain.handle("onboarding:gatekeeperPreview", async (_event, _preset, index) => {
+  const results = currentFixture.gatekeeper?.results;
+  if (results === "pending" || !results) return new Promise(() => {});
+  return results[index];
+});
+ipcMain.handle("onboarding:finish", async (_event, destination) => {
+  finishDestination = destination ?? null;
+});
 let currentLaunch = { supported: true, openAtLogin: true };
 let currentAwake = { enabled: true };
 ipcMain.handle("launch:get", async () => currentLaunch);
@@ -88,10 +94,13 @@ ipcMain.handle("power:setKeepAwake", async (_event, on) => {
   currentAwake = { enabled: on === true };
   return currentAwake;
 });
-ipcMain.handle("connectors:refresh", async () => currentConnectors);
-ipcMain.handle("connectors:connect", async () => currentConnectors);
-ipcMain.handle("connectors:disconnect", async () => currentConnectors);
-ipcMain.handle("connectors:setDefault", async () => currentConnectors);
+ipcMain.handle("plugins:get", async () => {
+  if (currentFixture.pluginsPending) return new Promise(() => {});
+  return currentFixture.plugins;
+});
+ipcMain.handle("plugins:setEnabled", async () => currentFixture.plugins);
+ipcMain.handle("requirements:act", async () => ({ ...currentFixture.plugins, error: null }));
+ipcMain.handle("app:relaunch", async () => {});
 ipcMain.handle("cloud:agents", async () => currentFixture.cloud);
 ipcMain.handle("cloud:openMessages", async () => true);
 
@@ -115,6 +124,68 @@ verifyRearmFixture.prepare = async (win) => {
     throw new Error(`Send it again changed the display code: ${displayCodeBefore} → ${displayCodeAfter}`);
   }
   if (neutralNote !== REARM_NOTE) throw new Error("The re-arm note was not rendered neutrally");
+};
+// A fixture's `click` opens that row's reason, the way the owner would.
+for (const fixture of SCREENS.filter((f) => f.click)) {
+  fixture.prepare = async (win) => {
+    await clickText(win, fixture.click);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  };
+}
+
+const pluginQueries = [
+  "Can you find three times that work and send them?",
+  "Do you see my thread with the contractor? Are we all paid up?",
+  "What should I know before replying to this guest about the cabin?",
+  "How much is in my rental account—and did the tenants pay?",
+];
+const pluginsFreshFixture = SCREENS.find((fixture) => fixture.name === "plugins-fresh");
+pluginsFreshFixture.prepare = async (win) => {
+  const examples = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll(".plugin-example"), (node) => ({
+    text: node.textContent,
+    visible: getComputedStyle(node).visibility === "visible",
+  }))`);
+  if (examples.length !== pluginQueries.length ||
+      pluginQueries.some((query) => !examples.some((example) => example.text.includes(query)))) {
+    throw new Error("Plugin query carousel did not render all four examples");
+  }
+  if (examples.filter((example) => example.visible).length !== 1) {
+    throw new Error("Plugin query carousel must expose exactly one example at a time");
+  }
+};
+
+// The final page does not implement an importer of its own: its primary action
+// must name the one-shot handoff that opens Browser Vault's existing sheet.
+const doneAgentFixture = SCREENS.find((fixture) => fixture.name === "done-agent");
+doneAgentFixture.prepare = async (win) => {
+  finishDestination = null;
+  const focused = await win.webContents.executeJavaScript(
+    `document.activeElement?.textContent.trim() ?? ""`,
+  );
+  if (focused !== "Import passwords") {
+    throw new Error(`Final page focused ${JSON.stringify(focused)}, not Import passwords`);
+  }
+  await clickText(win, "Import passwords");
+  if (finishDestination !== "import") {
+    throw new Error(`Import passwords handed off to ${String(finishDestination)}, not Browser Vault`);
+  }
+};
+
+const doneBrowserOffFixture = SCREENS.find((fixture) => fixture.name === "done-browser-off");
+doneBrowserOffFixture.prepare = async (win) => {
+  finishDestination = null;
+  await clickText(win, "Enable Browser & import passwords");
+  if (finishDestination !== "enable-browser-and-import") {
+    throw new Error(`Browser-off import handed off to ${String(finishDestination)}`);
+  }
+};
+
+const doneBrowserLoadingFixture = SCREENS.find((fixture) => fixture.name === "done-browser-loading");
+doneBrowserLoadingFixture.prepare = async (win) => {
+  const disabled = await win.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll("button")).find((button) => button.textContent.trim() === "Import passwords")?.disabled`,
+  );
+  if (disabled !== true) throw new Error("Import passwords was enabled before Browser status resolved");
 };
 
 failLoudly();
@@ -153,21 +224,15 @@ app.whenReady().then(async () => {
     load: async (fixture) => {
       currentFixture = fixture;
       current = fixture.state;
-      currentFullDiskAccess = fixture.fullDiskAccess === true;
       currentLaunch = fixture.launch ?? { supported: true, openAtLogin: true };
       currentAwake = fixture.awake ?? { enabled: true };
-      currentConnectors = fixture.connectors ?? {
-        busy: false,
-        message: "",
-        noteKind: "error",
-        google: { accounts: [], connecting: false },
-      };
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
       // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
       // its resting state after the font and first-paint gate has also settled.
+      // The Gatekeeper's pills cross the beam and bump back within about 1.5s.
       const settleMs = fixture.state?.step === "welcome" || fixture.state === null
         ? FONT_WAIT_CEILING_MS + 2200
-        : 400;
+        : fixture.state?.step === "gatekeeper" ? 1800 : 400;
       await new Promise((resolve) => setTimeout(resolve, settleMs));
     },
   });

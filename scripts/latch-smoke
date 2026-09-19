@@ -250,7 +250,7 @@ def read_log(log_path, ssh, budget, home):
     return records, None
 
 
-def send(url, token, argv, goal, budget, apple_events=False):
+def send(url, token, argv, goal, budget, apple_events=False, network=False):
     """POST one `tools/call`. Returns None, or `(reason, unknown, hint)`.
 
     `budget` is what is left of the run's deadline, and it bounds the read.
@@ -281,6 +281,8 @@ def send(url, token, argv, goal, budget, apple_events=False):
     tool_args = {"argv": list(argv), "goal": goal}
     if apple_events:
         tool_args["apple_events"] = True
+    if network:
+        tool_args["network"] = True
     body = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {
@@ -512,6 +514,9 @@ def main():
     parser.add_argument("--apple-events", action="store_true",
                         help="request the apple_events capability — the packaged-app send gate, "
                              "so an osascript-send argv exercises the real path instead of the denial")
+    parser.add_argument("--network", action="store_true",
+                        help="request the network capability — e.g. `-- /usr/bin/lp -d <queue> <file>`, "
+                             "which reaches cupsd over its socket")
     parser.epilog = "Everything after `--` is the command to run."
     options, command = split_command(sys.argv[1:])
     args = parser.parse_args(options)
@@ -604,7 +609,7 @@ def main():
     # terminal refusal retracts it rather than the print being delayed — an
     # operator who has already scrolled past it needs to be told it is void.
     print(f"nonce={nonce}")
-    sent = send(args.url, token, argv, f"smoke test: {nonce}", remaining(), apple_events=args.apple_events)
+    sent = send(args.url, token, argv, f"smoke test: {nonce}", remaining(), apple_events=args.apple_events, network=args.network)
     if sent is not None:
         reason, unknown, _hint = sent
         if not unknown:

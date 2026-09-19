@@ -34,6 +34,7 @@ import {
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
+  SAFARI_HARD_BLOCK_ROUTING,
   impliesNetwork,
   providerFor,
   providerRefusal,
@@ -427,7 +428,9 @@ export const TOOLS: ToolSpec[] = [
         network: {
           type: "boolean",
           description:
-            "Whether the command needs network access (default false). Ignored for a " +
+            "Whether the command needs network access (default false). Printing needs it: " +
+            "`lp` and `lpstat` reach CUPS over a socket, and without it every printer looks absent. " +
+            "Ignored for a " +
             "provider command: those reach their service by definition, so " +
             "network is granted whether you omit this or set it false, and the approver " +
             "sees it either way. The exception is asking for help — `--help` or `-h` as " +
@@ -610,7 +613,9 @@ export const TOOLS: ToolSpec[] = [
     title: "Script an app on the user's Mac",
     description:
       "Run an AppleScript that controls one app on the user's own Mac through Latch — Mail, Finder, " +
-      "Calendar, Notes, Reminders, Messages, System Events — and return what it produces. Use this " +
+      "Calendar, Notes, Reminders, Messages, Safari, System Events — and return what it produces. " +
+      `When a plow_browser session is bot-walled, ${SAFARI_HARD_BLOCK_ROUTING} (the camoufox-browsing skill has the recipe). ` +
+      "Use this " +
       "for AppleScript rather than plow_run_command with osascript: some apps refuse commands " +
       "from inside the sandbox (-10004), and this tool runs outside it. Name the app the script " +
       "addresses in 'app', by the name it has in `tell application \"…\"`; it is resolved to an " +
@@ -867,6 +872,11 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const origins = strings(a.get("origins").arr);
       if (origins.length === 0) throw new ToolError("missing 'origins'");
+      // Same chokepoint as a staged plugin's off switch: refused by name
+      // before an intent exists, so nobody is asked to approve a call this
+      // Mac was always going to refuse.
+      const refusal = ctx.device.browserRefusal();
+      if (refusal !== null) throw new ToolError(refusal);
       const capabilities: Capability[] = [{ kind: "browser", origins }];
       // The owner does not see the browser unless this session asks for a
       // window: say when one is coming in the line they read, and carry the
@@ -919,6 +929,11 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const session = a.get("session").str;
       if (session === null) throw new ToolError("missing 'session'");
+      // Same chokepoint as plow_browser_open: refused by name before an
+      // intent exists, so nobody is asked to approve a call this Mac was
+      // always going to refuse.
+      const refusal = ctx.device.browserRefusal();
+      if (refusal !== null) throw new ToolError(refusal);
       const origins = strings(a.get("origins").arr);
       const items = strings(a.get("credential_items").arr);
       const capabilities: Capability[] = [];
@@ -990,7 +1005,11 @@ export const TOOLS: ToolSpec[] = [
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page), and 'failed_requests' when the " +
       "page's own requests came back refused — a 401, 403 or 429 there is why an action that " +
-      "reported success changed nothing, so read it before retrying.",
+      "reported success changed nothing, so read it before retrying. " +
+      "A page that says you are blocked and offers nothing to solve — no CAPTCHA, no button, " +
+      "often a plain 200 with no failed_requests at all — is a hard block: the same URL in this " +
+      "browser will not change, and waiting will not help: " +
+      `${SAFARI_HARD_BLOCK_ROUTING}. The camoufox-browsing skill's Safari section has the recipe.`,
     inputSchema: {
       type: "object",
       required: ["session", "action"],

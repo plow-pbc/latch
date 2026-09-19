@@ -26,6 +26,8 @@ import { Intent, JSONValue } from "@domo/protocol";
 import {
   ApprovalStore,
   LEGACY_VAULT_SERVER_FRAGMENTS,
+  BROWSER_PLUGIN,
+  BROWSING_SKILL,
   DeviceAgent,
   PaymentApprovalClient,
   PaymentApprovalRequest,
@@ -60,11 +62,14 @@ import { AuditIndex, AuditQuery } from "./auditIndex.js";
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
-import { pluginRows } from "./pluginsModel.js";
+import { capabilitiesView, CapabilitiesView, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
+import { browserPluginRow, grantList, pluginRows, type GrantItem, type PluginRow } from "./pluginsModel.js";
+import { actOnRequirement } from "./requirements.js";
+import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
+import { applyPlowFolderIcon } from "./plowFolderIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
@@ -73,15 +78,17 @@ import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./
 import { resolveTelemetryConfig, SimulatedError, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
-import { Connectors } from "./connectors.js";
+import { CONNECTOR_SETUP_WAIT_MS, Connectors } from "./connectors.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
+import { fetchAgentIndex } from "./agentIndex.js";
 import { cloudAgentsIpcResult } from "./cloudAgentsIpc.js";
 import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
+import { gatekeeperPresets, previewRow } from "./gatekeeperPreview.js";
 import {
   ApprovalDecision,
   ApprovalQueue,
@@ -97,6 +104,7 @@ import {
   readAgentPurpose,
   readInference,
   setAgentPurpose,
+  retireUnretiredSession,
   revokeAndSignOut,
   setApprovalMode,
   signOutOfPlow,
@@ -238,16 +246,17 @@ let connectors: Connectors | null = null;
 /** What `loadPlugins` found at startup — the Plugins tab's inventory, and the
  *  list the owner's off switch selects from. Empty until whenReady. */
 let stagedPlugins: readonly StagedPlugin[] = [];
+/** Full Disk Access over this run (capabilitiesModel.ts): whether a grant a
+ *  child cannot use yet is waiting on a relaunch or broken. Made in
+ *  whenReady; fed by every read that sees it. */
+let fullDisk: FullDiskWatch | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
-let agentToken: string | null = null;
-function requireAgentTokenSaved(): void {
-  if (agentToken) throw new Error("Save the agent token before creating or deleting an agent.");
-}
 let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 let telemetry: Telemetry | null = null;
+let vaultImportRequested = false;
 
 // MARK: The audit log's live index (auditIndex.ts)
 
@@ -672,11 +681,10 @@ function signOut() {
   // And the cloud group: its rows, its chat list and any provision still being
   // polled all belong to the account that just went away.
   cloudAgents?.signedOut();
-  agentToken = null;
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
   // Opening it boots at Welcome. Activation is deliberately deferred until
-  // Continue from Privacy.
+  // Get started.
   gate.sync();
   return onboarding?.state();
 }
@@ -791,19 +799,12 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * `discord` and `website` are Settings' Support section; `account` is the
  * Plow web console, Settings' View Account button. It follows the build's API
  * origin so a `DOMO_API_BASE_URL` run opens the environment it signed into.
- *
- * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
- * Access pane. macOS has no API an app can call to request that permission —
- * sending the person to the switch IS the whole grant flow (see
- * device-core's hostGate/fullDiskAccess.ts), so the deep link belongs in this table like any other
- * page the app may open.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   account: `${apiBaseUrl}/app/`,
   claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
   discord: "https://watchmepivot.com/discord",
   website: "https://watchmepivot.com/",
-  fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
 ipcMain.handle("external:open", async (_e, key: string) => {
@@ -827,7 +828,6 @@ ipcMain.handle("cloud:agents", async () => {
   return cloudAgentsIpcResult(cloudAgents);
 });
 ipcMain.handle("connect:create", async (_e, name: string) => {
-  requireAgentTokenSaved();
   await connectClient?.createCredential(name);
   // The ROSTER, not the cloud agents: what was just minted is a credential,
   // and it is the MCP clients list it appears in. Refreshing the agents left
@@ -850,36 +850,18 @@ ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
   return agentsTabState();
 });
 
-ipcMain.handle("cloud:create", async (_e, input: unknown) => {
-  const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
-  await cloudAgents?.create({
-    name: typeof raw.name === "string" ? raw.name : "",
-    provider: typeof raw.provider === "string" ? raw.provider : "",
-    lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
-  });
-  await cloudAgents?.refresh();
-  return agentsTabState();
+ipcMain.handle("cloud:newAgentMessages", async (_e, providerId: unknown) => {
+  return openSmsUrl(typeof providerId === "string" ? cloudAgents?.newAgentSmsUrl(providerId) : null);
 });
-ipcMain.handle("agents:dismissToken", () => { agentToken = null; });
-ipcMain.handle("cloud:cancelLineFlow", async () => {
-  cloudAgents?.cancelLineFlow();
-  return agentsTabState();
-});
-ipcMain.handle("cloud:retryLineFlow", async () => {
-  await cloudAgents?.retryLineFlow();
-  await cloudAgents?.refresh();
-  return agentsTabState();
-});
-ipcMain.handle("cloud:retryFailed", async (_e, agentId: string) => {
-  await cloudAgents?.retryFailed(agentId);
-  await cloudAgents?.refresh();
-  return agentsTabState();
-});
+// The deploy modal's wait: the id of the agent the owner's setup text created,
+// or null if none appeared in time. Resolves on its own — the renderer asks once.
+ipcMain.handle("cloud:awaitNewAgent", async (_e, providerId: unknown) =>
+  typeof providerId === "string" ? (await cloudAgents?.awaitNewAgent(providerId)) ?? null : null);
 ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
   await cloudAgents?.changeLine({
     agentId: typeof raw.agentId === "string" ? raw.agentId : "",
-    lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
+    lineUid: typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
   await cloudAgents?.refresh();
   return agentsTabState();
@@ -887,7 +869,7 @@ ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
 ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown) => {
   const url = typeof agentId === "string"
     ? cloudAgents?.agentSmsUrl(agentId)
-    : cloudAgents?.createSmsUrl();
+    : null;
   return openSmsUrl(url);
 });
 
@@ -917,7 +899,7 @@ function agentsTabState(): Record<string, unknown> | null {
   const connect = connectClient?.state() ?? null;
   const cloud = cloudAgents?.state() ?? null;
   if (!connect) return null;
-  return { ...connect, ...(cloud ?? {}), agentToken };
+  return { ...connect, ...(cloud ?? {}) };
 }
 
 // MARK: IPC for the first-run setup window
@@ -927,12 +909,25 @@ function agentsTabState(): Record<string, unknown> | null {
 // leaves the window rendered but inert. See the note in onboarding.ts.
 ipcMain.handle("onboarding:get", async () => onboarding?.state() ?? null);
 ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
-ipcMain.handle("onboarding:advance", async () => onboarding?.advance());
+ipcMain.handle("onboarding:advance", async (_e, draft: unknown) => onboarding?.advance(draft));
 ipcMain.handle("onboarding:back", async () => onboarding?.back());
 ipcMain.handle("onboarding:setTelemetry", async (_e, on: unknown) =>
   onboarding?.setTelemetryEnabled(on),
 );
 ipcMain.handle("onboarding:newCode", async () => onboarding?.newActivationCode());
+ipcMain.handle("onboarding:gatekeeperPresets", async () => gatekeeperPresets());
+// One live review of one example row against the owner's draft instructions.
+// Not an operation: no audit line, no telemetry, no rule. The credential stays
+// here; the renderer names a preset and a row and gets only the verdict back.
+ipcMain.handle(
+  "onboarding:gatekeeperPreview",
+  async (_e, preset: unknown, index: unknown, draft: unknown) =>
+    previewRow(preset, index, draft, {
+      review: adversarialReview,
+      settings: loadSettings(home),
+      apiBaseUrl,
+    }),
+);
 /**
  * Open Messages with the activation text drafted.
  *
@@ -948,7 +943,16 @@ ipcMain.handle("onboarding:openMessages", async () => {
 // The last step of the wizard. It does not just close the setup window — it
 // hands the user over to the app, which is the whole point of the gate: the
 // main window has not existed until now.
-ipcMain.handle("onboarding:finish", async () => {
+ipcMain.handle("onboarding:finish", async (_event, destination?: string) => {
+  if (destination === "import" || destination === "enable-browser-and-import") {
+    if (destination === "enable-browser-and-import") {
+      await updateDisabledPlugins((disabled) => disabled.delete(BROWSER_PLUGIN));
+    }
+    vaultImportRequested = true;
+    const settings = loadSettings(home);
+    settings.selectedTab = "vault";
+    saveSettings(home, settings);
+  }
   gate.sync();
 });
 
@@ -1135,6 +1139,11 @@ ipcMain.handle("vault:importSources", async () => {
     chrome: { icon: chromeApp ? await iconOf(chromeApp) : null },
   };
 });
+
+// Setup can finish before the main window exists. The Vault pane consumes this
+// one-shot request only once it has rendered far enough to host vimportSheet.
+ipcMain.handle("vault:importRequested", async () => vaultImportRequested);
+ipcMain.handle("vault:importAcknowledged", async () => { vaultImportRequested = false; });
 
 // Pasted text: 1Password's "Copy item JSON", or CSV text.
 ipcMain.handle("vault:importInspect", async (_e, text: string) => stageImport(parsePasswordExport(String(text))));
@@ -1414,30 +1423,36 @@ async function capabilityIcons(view: CapabilitiesView): Promise<Record<string, s
 }
 
 /**
- * Automation consent for every app the tab offers, read passively through
- * the helper and reconciled with the memo: a conclusive answer is written
- * back, so a pair the owner turned off in System Settings shows denied and
- * STAYS denied after the target app quits (macOS declines to say for a quit
- * app). Adopted from the apple-events branch.
+ * Automation consent for every app the tab offers, taken from the inventory's
+ * own sweep (never probed a second time — on a target that does not answer
+ * Apple events each sweep costs the probe timeout) and reconciled with the
+ * memo: a conclusive answer is written back, so a pair the owner turned off in
+ * System Settings shows denied and STAYS denied after the target app quits
+ * (macOS declines to say for a quit app). Adopted from the apple-events branch.
  */
-async function automationRows(): Promise<{ app: (typeof AUTOMATION_APPS)[number]; status: AutomationStatus }[]> {
+function automationRows(inventory: HostInventory | null): { app: (typeof AUTOMATION_APPS)[number]; status: AutomationStatus }[] {
   const settings = loadSettings(home);
   const memo = { ...(settings.automation ?? {}) };
   let changed = false;
-  const rows = await Promise.all(
-    AUTOMATION_APPS.map(async (app) => {
-      const live = device ? await device.hostProbes.automationStatus(app.bundleId) : ("unknown" as const);
-      const r = reconcile(live, memo[app.bundleId]);
-      if (r.changed) {
-        changed = true;
-        if (r.memo === undefined) delete memo[app.bundleId];
-        else memo[app.bundleId] = r.memo as "granted" | "denied" | "not_asked";
-      }
-      return { app, status: r.status };
-    }),
-  );
+  const rows = AUTOMATION_APPS.map((app) => {
+    const live = inventory?.automation.find((a) => a.target === app.name)?.status ?? ("unknown" as const);
+    const r = reconcile(live, memo[app.bundleId]);
+    if (r.changed) {
+      changed = true;
+      if (r.memo === undefined) delete memo[app.bundleId];
+      else memo[app.bundleId] = r.memo as "granted" | "denied" | "not_asked";
+    }
+    return { app, status: r.status };
+  });
   if (changed) saveSettings(home, { ...loadSettings(home), automation: memo });
   return rows;
+}
+
+/** Full Disk Access as this run's one watch reads it: granted to the app, and
+ *  whether a sandboxed child inherits it too. Settings, the Plugins tab and
+ *  the grant panel all derive it this same way. */
+function fullDiskStateOf(inv: HostInventory): FullDiskState | undefined {
+  return fullDisk?.observe(inv.full_disk_access.granted, inv.full_disk_access.granted && inv.child_attribution.status === "ok");
 }
 
 /** The whole tab, fresh: inventory, Automation rows, the audit log's blocks,
@@ -1447,7 +1462,8 @@ async function capabilitiesNow(inventory?: HostInventory | null): Promise<Capabi
   const settings = loadSettings(home);
   return capabilitiesView({
     inventory: inv,
-    automation: await automationRows(),
+    fullDisk: inv ? fullDiskStateOf(inv) : undefined,
+    automation: automationRows(inv),
     // The log as the live index holds it — not read off disk again.
     events: device ? ensureAuditIndex().events() : [],
     dismissals: settings.capabilityDismissals ?? {},
@@ -1469,10 +1485,18 @@ function grantTargetFor(key: string): GrantTarget | null {
   const pane = paneFor(key);
   if (!pane) return null;
   const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
-  const label = app ? `Automation for ${app.name}` : (PERMISSION_TITLES[key] ?? key);
+  const label = permissionTitle(key);
   const probes = device?.hostProbes ?? null;
   const probe = async (): Promise<boolean> => {
-    if (key === "full_disk_access") return probeFullDiskAccess();
+    // Done once a child can use it, or once it came back on during this run
+    // (fresh, or a remove-and-re-add), which a relaunch finishes. Held all
+    // run but not inherited, the panel stays up for the row's remove-and-re-add.
+    if (key === "full_disk_access") {
+      const app = await probeFullDiskAccess();
+      const inherited = app && (await device!.hostInventory({ automationTargets: [] })).child_attribution.status === "ok";
+      const state = fullDisk!.observe(app, inherited);
+      return state === "granted" || state === "relaunch";
+    }
     if (!probes) return false;
     if (app) return (await probes.automationStatus(app.bundleId)) === "granted";
     if (key === "accessibility" || key === "contacts" || key === "calendars" || key === "screen_recording") {
@@ -1484,34 +1508,34 @@ function grantTargetFor(key: string): GrantTarget | null {
 }
 
 /**
- * A row's one action. What it is was decided by the model (the button's
- * label said so); this is the doing: the panel flow beside the right pane,
- * macOS's own dialog raised on purpose (a service, or an Automation pair
- * through the gated osascript probe), or a folder touched so macOS asks.
- * Every one of these is behind a click on this Mac — the one condition
- * under which this app raises a consent dialog.
+ * A row's one action, run to the end of its flow. What it is was decided by
+ * the model (the button's label said so); this is the doing: the panel flow
+ * beside the right pane, macOS's own dialog raised on purpose (a service, or
+ * an Automation pair through the gated osascript probe), or a folder touched
+ * so macOS asks. Every one of these is behind a click on this Mac — the one
+ * condition under which this app raises a consent dialog. Whether the switch
+ * is on afterwards is the caller's fresh read.
  */
-ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
-  const key = typeof rawKey === "string" ? rawKey : "";
-  const view = await capabilitiesNow();
+async function actOnPermission(key: string): Promise<void> {
+  const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
+  const view = await capabilitiesNow(device ? await device.hostInventory({ automationTargets: app ? [app.name] : [] }) : null);
   const row = view.sections.flatMap((s) => s.rows).find((r) => r.key === key);
-  if (!row || !device) return view;
+  if (!row || !device) return;
+  const inPanel = async (): Promise<void> => {
+    const target = grantTargetFor(key);
+    if (target) await fdaGrantFlow.start(target);
+  };
   switch (row.action) {
     case "grant":
     case "open": {
       const pane = paneFor(key);
       // A pane the panel can do nothing beside (Screen Recording, Automation) is just
       // opened; the owner finds the switch themselves.
-      if (pane && pane.panel === false) {
-        await shell.openExternal(pane.url);
-        break;
-      }
-      const target = grantTargetFor(key);
-      if (target) await fdaGrantFlow.start(target);
+      if (pane && pane.panel === false) await shell.openExternal(pane.url);
+      else await inPanel();
       break;
     }
     case "request": {
-      const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
       if (app) {
         const status = await requestAutomation(app.bundleId, osascriptRunner());
         if (status === "granted" || status === "denied" || status === "not_asked") {
@@ -1522,41 +1546,54 @@ ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
         const status = await device.hostProbes.requestPermission(key as RequestablePermission);
         // Refused before, or no usage string in this build: macOS answered
         // without asking, and only the pane can change that now.
-        if (status === "denied") {
-          const target = grantTargetFor(key);
-          if (target) await fdaGrantFlow.start(target);
-        }
+        if (status === "denied") await inPanel();
       }
       break;
     }
     case "ask": {
       const folder = CONSENT_FOLDERS.find((f) => f.permission === key);
-      if (folder) {
-        const [result] = await requestFolderAccess(os.homedir(), { folders: [folder] });
-        if (result && result.status !== "missing") {
-          const settings = loadSettings(home);
-          saveSettings(home, {
-            ...settings,
-            folderConsent: {
-              ...(settings.folderConsent ?? {}),
-              [key]: result.status === "granted" ? "granted" : result.status === "denied" ? "denied" : "not_asked",
-            },
-            folderConsentAt: { ...(settings.folderConsentAt ?? {}), [key]: new Date().toISOString() },
-          });
-        }
-        // macOS refused without asking — a Don't Allow it remembers — and
-        // only the pane can undo that: float the panel beside it.
-        if (result?.status === "denied") {
-          const target = grantTargetFor(key);
-          if (target) await fdaGrantFlow.start(target);
-        }
+      if (!folder) break;
+      const [result] = await requestFolderAccess(os.homedir(), { folders: [folder] });
+      if (result && result.status !== "missing") {
+        const settings = loadSettings(home);
+        saveSettings(home, {
+          ...settings,
+          folderConsent: {
+            ...(settings.folderConsent ?? {}),
+            [key]: result.status === "granted" ? "granted" : result.status === "denied" ? "denied" : "not_asked",
+          },
+          folderConsentAt: { ...(settings.folderConsentAt ?? {}), [key]: new Date().toISOString() },
+        });
       }
+      // macOS refused without asking — a Don't Allow it remembers — and
+      // only the pane can undo that: float the panel beside it.
+      if (result?.status === "denied") await inPanel();
       break;
     }
-    default:
-      break;
   }
-  return capabilitiesNow();
+}
+
+/**
+ * Bring the window that asked back to the front once its grant lands — the
+ * owner was last in System Settings, a browser or Safari. This app's port of
+ * PermissionFlow's `closePanel(returnToPreviousApp:)`: upstream returns when
+ * its panel closes, this returns only on a grant, so an owner still working
+ * in a bare pane or mid sign-in is not pulled away from it.
+ */
+function returnToCaller(sender: Electron.WebContents): void {
+  const win = BrowserWindow.fromWebContents(sender);
+  if (!win || win.isDestroyed()) return;
+  app.focus({ steal: true });
+  win.show();
+  win.focus();
+}
+
+ipcMain.handle("capabilities:act", async (e, rawKey: unknown) => {
+  const key = typeof rawKey === "string" ? rawKey : "";
+  await actOnPermission(key);
+  const view = await capabilitiesNow();
+  if (view.sections.flatMap((s) => s.rows).find((r) => r.key === key)?.status === "granted") returnToCaller(e.sender);
+  return view;
 });
 // "Not now" on a row: off the badge until a block newer than this lands.
 ipcMain.handle("capabilities:dismiss", async (_e, rawKey: unknown) => {
@@ -1577,36 +1614,128 @@ ipcMain.handle("capabilities:bannerSeen", async () => {
 
 // MARK: The Plugins tab (pluginsModel.ts)
 
-/** The whole tab, fresh: what is staged, and what each plugin still needs. */
-function pluginsNow(): { rows: ReturnType<typeof pluginRows> } {
+/** A runner safariJavaScript.ts drives directly against this Mac —
+ *  never the device's sandboxed inventory runner, which runs under seatbelt
+ *  and cannot write into Safari's container. */
+const unsandboxedRunner: Runner = async (argv) => {
+  try {
+    const { stdout } = await promisify(execFile)(argv[0]!, argv.slice(1), { timeout: 30_000 });
+    return { exitCode: 0, stdout };
+  } catch (e) {
+    const err = e as { code?: unknown; stdout?: string };
+    return { exitCode: typeof err.code === "number" ? err.code : 1, stdout: err.stdout ?? "" };
+  }
+};
+
+/** Connector ids with an account connected — what a manifest's
+ *  `requires.accounts` names. One connector today, and it is connected exactly
+ *  when an account is. */
+function connectedAccountIds(): string[] {
+  return (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [];
+}
+
+/** Connector state owns its own failure/late-success explanation; setup only
+ * associates that explanation with the corresponding model requirement. */
+function connectorAccountNotices(): Record<string, { message: string; noteKind: "neutral" | "error" }> {
+  const state = connectors?.state();
+  return state?.message ? { google: { message: state.message, noteKind: state.noteKind } } : {};
+}
+
+/** The whole tab, fresh: what is staged, what each plugin still needs, and
+ *  the one ordered list of it setup walks. A permission is met when Settings'
+ *  own Permissions section reads it granted — one answer, so the two tabs
+ *  cannot disagree. The inventory asks only about the Automation pairs a
+ *  staged plugin declares: this runs on every refresh, and the full sweep
+ *  waits out a probe timeout on any app not answering Apple events. */
+async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
+  const automationTargets = stagedPlugins
+    .flatMap((p) => p.manifest.requires.permissions)
+    .filter((key) => key.startsWith("automation:"))
+    .map((key) => automationApp(key.slice("automation:".length))!.name);
+  const inventory = device ? await device.hostInventory({ automationTargets }) : null;
+  const view = await capabilitiesNow(inventory);
+  const granted = view.sections.flatMap((s) => s.rows).filter((r) => r.status === "granted").map((r) => r.key);
+  const fullDiskState = inventory ? fullDiskStateOf(inventory) : undefined;
+  const relaunchPending = fullDiskState === "relaunch" ? ["full_disk_access"] : [];
   const rows = pluginRows({
     plugins: stagedPlugins.map((p) => ({
       manifest: p.manifest,
       enabled: !disabled.has(p.manifest.name),
       description: device?.pluginDescription(p.manifest.name) ?? null,
     })),
-    // One connector today, and it is connected exactly when an account is.
-    connectedAccounts: (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [],
+    connectedAccounts: connectedAccountIds(),
+    accountNotices: connectorAccountNotices(),
+    grantedPermissions: granted,
+    relaunchPending,
   });
-  return { rows };
+  rows.push(browserPluginRow({
+    enabled: !disabled.has(BROWSER_PLUGIN),
+    runtimePresent: device !== null && device.browserSessions !== null,
+    safariJavaScript: process.platform === "darwin" ? await safariJavaScriptEnabled(unsandboxedRunner) : false,
+    fullDiskAccess: granted.includes("full_disk_access"),
+    relaunchPending,
+    description: device?.skills.skill(BROWSING_SKILL.name)?.description ?? BROWSING_SKILL.description,
+  }));
+  return { rows, grants: grantList(rows) };
+}
+
+/** Plugins → Continue: does a switched-on plugin still need a grant? A resumed
+ *  setup can get here before the relay's poll, so ask Plow for the accounts —
+ *  quietly and briefly: past the wait the cache answers, and a late reply
+ *  redraws Access. A slow Plow never holds Continue. */
+async function prepareSetupAccounts(): Promise<void> {
+  await Promise.race([connectors?.poll(), new Promise((done) => setTimeout(done, CONNECTOR_SETUP_WAIT_MS))]);
+}
+
+async function accessNeeded(): Promise<boolean> {
+  await prepareSetupAccounts();
+  return (await pluginsNow()).grants.some((g) => g.status !== "met");
 }
 
 ipcMain.handle("plugins:get", async () => pluginsNow());
 
-/** The owner's off switch: the disabled NAMES persist (a later plugin is on
+/** The owner's off switches: the disabled NAMES persist (a later plugin is on
  *  by default), and the device is told in the same breath, so the skill and
  *  the exec gate follow without a relaunch. */
+async function updateDisabledPlugins(change: (disabled: Set<string>) => void): Promise<void> {
+  const settings = loadSettings(home);
+  const disabled = new Set(settings.disabledPlugins ?? []);
+  change(disabled);
+  saveSettings(home, { ...settings, disabledPlugins: [...disabled] });
+  await device?.setDisabledPlugins([...disabled]);
+}
+
 ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
-  if (stagedPlugins.some((p) => p.manifest.name === name)) {
-    const settings = loadSettings(home);
-    const disabled = new Set(settings.disabledPlugins ?? []);
-    if (on) disabled.delete(name);
-    else disabled.add(name);
-    saveSettings(home, { ...settings, disabledPlugins: [...disabled] });
-    device?.setDisabledPlugins([...disabled]);
+  if (stagedPlugins.some((p) => p.manifest.name === name) || name === BROWSER_PLUGIN) {
+    await updateDisabledPlugins((disabled) => (on ? disabled.delete(name) : disabled.add(name)));
   }
   return pluginsNow();
+});
+
+/** A plugin requirement's button, by id: the act runs to its flow's end, a
+ *  requirement the fresh tab reads met — or waiting only on a relaunch —
+ *  brings the owner back here, and the answer is that tab with the act's
+ *  error line. Settings' rows share its permission half through
+ *  capabilities:act. */
+ipcMain.handle("requirements:act", async (e, rawId: unknown) => {
+  const id = typeof rawId === "string" ? rawId : "";
+  const { error } = await actOnRequirement(id, {
+    permission: actOnPermission,
+    connectAccount: async () => (await connectors?.connect())?.message || null,
+    fullDiskAccess: probeFullDiskAccess,
+    enableSafari: () => enableSafariJavaScript(unsandboxedRunner),
+  });
+  const now = await pluginsNow();
+  if (now.rows.some((r) => r.requirements.some((q) => q.id === id && q.status !== "open"))) returnToCaller(e.sender);
+  return { ...now, error };
+});
+// A relaunch-pending requirement's button, and setup's "Relaunch to finish":
+// the same relaunch the simulated updater's install does.
+ipcMain.handle("app:relaunch", () => {
+  onboarding?.prepareRelaunch();
+  app.relaunch();
+  app.quit();
 });
 // The floating panel's poll: has the switch it points at landed?
 ipcMain.handle("grant:state", async () => {
@@ -1806,24 +1935,17 @@ ipcMain.on("fullDisk:panelHold", (_e, on: boolean) => fdaGrantFlow.setHold(on ==
 ipcMain.on("fullDisk:panelHeight", (_e, height: unknown) => {
   if (typeof height === "number" && Number.isFinite(height)) fdaGrantFlow.setHeight(height);
 });
-// The grant flow itself: opens the pane and floats the drag panel next to it,
-// following the System Settings window (fdaGrantFlow.ts owns the lifecycle —
-// this handler only starts it). The helper binary is optional by design: no
-// Swift toolchain at build time just means the panel doesn't follow.
+// The grant flow itself: opens a switch's pane and floats the drag panel next
+// to it, following the System Settings window (fdaGrantFlow.ts owns the
+// lifecycle; grantTargetFor names the switch). The helper binary is optional
+// by design: no Swift toolchain at build time just means the panel doesn't
+// follow.
 const fdaGrantFlow = new FdaGrantFlow({
   rendererDir,
   preloadPath: path.join(dirname, "preload.cjs"),
   helperPath: fdaHelperPath,
-  fullDisk: {
-    key: "full_disk_access",
-    label: "Full Disk Access",
-    pane: EXTERNAL_URLS.fullDiskSettings,
-    acceptsDrop: true,
-    probe: () => probeFullDiskAccess(),
-  },
   openSettings: (pane) => shell.openExternal(pane),
 });
-ipcMain.handle("fullDisk:grantFlow", async () => fdaGrantFlow.start());
 // The panel's own close button (PermissionFlow's xmark) — the panel is
 // non-focusable and cannot close itself.
 ipcMain.on("fullDisk:dismiss", () => fdaGrantFlow.stop());
@@ -1995,9 +2117,13 @@ async function startRelay(): Promise<void> {
     credential,
     deviceId,
     beforeConnect: async () => {
+      // Logged, so a 409 here lands in plow-wire.log.
+      const api = new PlowApi(apiBaseUrl, loggingFetch(home));
       let registered;
       try {
-        registered = await new PlowApi(apiBaseUrl).registerRelayDevice(credential, deviceId, hostName());
+        // Clears a session an earlier offline sign-out couldn't reach.
+        await retireUnretiredSession(home, api);
+        registered = await api.registerRelayDevice(credential, deviceId, hostName());
       } catch (error) {
         if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
         if (loadSettings(home).relayCredential.trim() !== credential) return;
@@ -2018,6 +2144,9 @@ async function startRelay(): Promise<void> {
       // Transitions only — the client can restate an unchanged status.
       if (isConnected !== connected) {
         telemetry?.track(isConnected ? "relay_connected" : "relay_disconnected");
+        // Main holds no accounts until it asks Plow, and the device gates
+        // plugins on them — so every (re)connect asks, window open or not.
+        if (isConnected) void connectors?.poll();
       }
       connected = isConnected;
       notifyRenderer("status:changed");
@@ -2193,6 +2322,8 @@ app.whenReady().then(async () => {
   }
   // What the Plugins tab lists, and what its off switch selects from.
   stagedPlugins = plugins;
+  // Before any window exists to read the Plugins tab.
+  fullDisk = new FullDiskWatch(await probeFullDiskAccess());
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -2216,6 +2347,13 @@ app.whenReady().then(async () => {
     // degrades — the same contract as the Full Disk Access tracker.
     nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath, native: nativePermissions() }),
   );
+  // DeviceAgent has just ensured the owner's real ~/Plow exists. Decorating
+  // it is cosmetic and must not hold relay startup or weaken that ownership.
+  void applyPlowFolderIcon({
+    folderPath: plowFolderPath(os.homedir()),
+    helperPath: nativeHelperPath("plow-folder-icon"),
+    badgePath: nativeHelperPath("plow-badge.png"),
+  });
   // The owner's off switches, as they left them: one call, and the device
   // publishes exactly the skills it will honour commands for.
   device.setDisabledPlugins(loadSettings(home).disabledPlugins ?? []);
@@ -2300,6 +2438,27 @@ app.whenReady().then(async () => {
   device.audit.events.on("recorded", (entry) => telemetry?.auditEntryRecorded(entry));
   // The version rides the MCP handshake, so it has to be the app's real one.
   mcp = createDomoMcpServer(device, { version: app.getVersion() });
+  // Before the relay starts: its first connect refreshes these, and a plugin
+  // that needs an account is off on the device until one is known.
+  connectors = new Connectors({
+    api: new PlowApi(apiBaseUrl),
+    credential: () => loadSettings(home).relayCredential,
+    openExternal: (url) => shell.openExternal(url),
+    recordAudit: (event, fields) => device?.audit.record(event, fields),
+    onChange: () => {
+      const state = connectors?.state();
+      device?.setConnectedAccounts(connectedAccountIds());
+      onboardingWindow?.webContents.send("connectors:changed", state);
+      mainWindow?.webContents.send("connectors:changed", state);
+    },
+  });
+  // Keep asking while connected: an account connected or disconnected outside
+  // this app (Plow hands agents a connect link), or a refresh that failed, must
+  // not leave a plugin that needs one in the wrong state until the next
+  // reconnect. The poll is quiet and publishes only a changed list.
+  setInterval(() => {
+    if (connected) void connectors?.poll();
+  }, 60_000);
   await startRelay();
 
   onboarding = new Onboarding({
@@ -2314,32 +2473,31 @@ app.whenReady().then(async () => {
       keepAwake?.setEnabled(true);
       setLaunchAtLogin(app.isPackaged, loginItems, true);
     },
-  });
-  connectors = new Connectors({
-    api: new PlowApi(apiBaseUrl),
-    credential: () => loadSettings(home).relayCredential,
-    openExternal: (url) => shell.openExternal(url),
-    recordAudit: (event, fields) => device?.audit.record(event, fields),
-    onChange: () => {
-      const state = connectors?.state();
-      onboardingWindow?.webContents.send("connectors:changed", state);
-      mainWindow?.webContents.send("connectors:changed", state);
+    // The Plugins screen opens with on only what already works: every staged
+    // plugin still needing setup joins the owner's off switches. A re-setup
+    // can get here before main has read the connected accounts, so read them
+    // first — or a connected Google account still turns Gmail off.
+    applyPluginDefault: async () => {
+      await connectors?.refresh();
+      const { rows } = await pluginsNow();
+      const off = rows.filter((r) => r.status === "needs-setup").map((r) => r.name);
+      if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
     },
+    accessNeeded,
+    // A checkpointed relaunch skips Plugins, so give the same bounded account
+    // refresh a chance to land before Access becomes interactive.
+    prepareAccess: prepareSetupAccounts,
   });
+  // A checkpointed relaunch skips the Plugins transition (and accessNeeded),
+  // so give its account inventory the same bounded chance before the window.
+  await onboarding.prepareInitialStep();
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
-  const cloudAgentsClient = new CloudAgentsClient(cloudApi, undefined, (token, owner) => {
-    if (loadSettings(home).relayCredential.trim() !== owner) return;
-    agentToken = token;
-    notifyRenderer("connect:changed");
-  }, (owner) => {
-    if (loadSettings(home).relayCredential.trim() === owner) requireAgentTokenSaved();
-  });
+  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
     home,
     isConnected: () => connected,
-    signOutThisMac,
     // The same uid the relay registers this Mac under and the MCP URL is built
     // from. Read through the identity, not out of the URL.
     deviceUid: () => device?.identity.deviceId ?? null,
@@ -2353,14 +2511,12 @@ app.whenReady().then(async () => {
     // There is no server-side request log we can read, and during the rollout
     // that account is the only one there is.
     agents: cloudAgentsClient,
-    activation: cloudApi,
     chats: new CloudChatsClient(cloudApi),
     providers: cloudApi,
     lines: new CloudLinesClient(cloudApi),
+    agentIndex: () => fetchAgentIndex(),
     home,
-    recordAudit: (event, fields) => device?.audit.record(event, fields),
     onChange: () => notifyRenderer("connect:changed"),
-    warn: (message) => console.log(message),
   });
 
   // Only a packaged install updates: a from-source run has no app-update.yml
@@ -2538,8 +2694,7 @@ let leaveInFlight: Promise<boolean> | null = null;
 let settleLeave: ((ok: boolean) => void) | null = null;
 function hasPendingAgentSetup(): boolean {
   const connect = connectClient?.state();
-  return Boolean(agentToken || connect?.busy || connect?.credential ||
-    cloudAgents?.state().cloudLineFlow.phase === "creating");
+  return Boolean(connect?.busy || connect?.credential);
 }
 function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
   if (!win || win.isDestroyed()) return Promise.resolve(true);

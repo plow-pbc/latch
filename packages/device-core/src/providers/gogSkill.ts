@@ -40,6 +40,26 @@ accounts rather than all, name them: \`--account a@x,b@y\`. A calendar id
 (\`--calendars\`) needs its owner, so under a fan-out it is refused — add
 \`--account\` for the one account whose calendar it is.
 
+**Calendar events come back compact, with the day already named.** Each
+fanned-out \`calendar events\` item is \`{summary, startDayOfWeek, startLocal,
+endLocal, allDay?, attendees?, transparency?, declined?, id, account}\`.
+\`attendees\` is the email of everyone else invited who has not declined (no
+rooms): look them up in mail and messages to learn what the event is about.
+\`startLocal\`/\`endLocal\` are the owner's local time with its UTC offset (a
+bare date for all-day events, whose \`endLocal\` is the day AFTER the last
+one), and \`startDayOfWeek\` is the weekday of \`startLocal\` in the owner's
+time zone. **Take every day name you write from \`startDayOfWeek\` — never work
+it out from the date yourself, and never from memory.** When a result carries
+\`truncated: {omitted, after}\`, events were cut to fit from \`after\` on — a
+local time, or a date meaning that whole day: read from there again with a
+narrower \`--from\`/\`--to\` before calling any of it free. Times are in the
+owner's zone unless you pass \`--timezone\`, which then sets both the times and
+the day names. \`--json\` does not change this shape. To get the raw events,
+pass \`--select\` or \`--fields\` with the fields you need (keep
+\`startDayOfWeek\` in it), or read one account with \`--account <email>\`,
+which returns the CLI's own output — its JSON items carry the same
+\`startDayOfWeek\` and \`startLocal\` fields, in the same zone.
+
 **\`primary\` is one calendar per account, not the owner's week.** Their
 commitments also sit on the other calendars they keep — a shared family
 calendar, a second work calendar, an old address. For availability, list them
@@ -69,8 +89,15 @@ readers who shouldn't learn it). Do not bounce the refusal back to the user
 and do not pick any other account unnamed. (Follow-ups are different: a reply or an edit
 stays on the account that owns the thread or event, per the rule below.)
 
-**Follow-ups carry the item's account.** Message and event IDs are
-per-mailbox: a \`gmail get\` on an id from a fan-out result passes
+**A \`gmail search\` row is a THREAD, not a message.** Its \`id\` is the
+thread's, its \`from\` and \`subject\` are the FIRST message's, and its \`date\` is
+the NEWEST's — so a row showing one sender can hold a reply from someone else,
+and a \`messageCount\` above 1 means replies the row does not show. Read it with
+\`gmail thread get <id>\`. \`gmail get\` reads ONE message: handed a thread id it
+silently returns the oldest one, and the reply you were looking for is missed.
+
+**Follow-ups carry the item's account.** Message, thread and event IDs are
+per-mailbox: a read on an id from a fan-out result passes
 \`--account <that item's account>\`. When replying, use the
 account that received the thread.
 
@@ -151,10 +178,12 @@ exactly what you need — the flags exist:
 - **Select fields on lists**: \`--fields\` (or \`--select\` with dot paths in
   JSON mode) instead of taking every property of every row. On a fan-out,
   keep the merge's sort key in the selection — \`date\` for gmail, \`start\`
-  for calendar — or the merged order degrades to grouped-by-account.
-- **\`gmail get\` defaults to the ENTIRE message.** Unless you need the body,
-  pass \`--format metadata --headers From,To,Subject,Date\`. Fetch \`full\`
-  for one message you are about to act on, not for triage.
+  for calendar — or the merged order degrades to grouped-by-account. A
+  fanned-out calendar event list is already compact; select on it only when
+  you need a field it leaves out.
+- **Triage from the search rows, then read only the thread you need**, with
+  \`--sanitize-content\`: it strips HTML and omits the raw Gmail payload, which
+  is most of a message's bytes.
 - **Summarize, don't replay.** Extract the facts into your reply; never echo
   a raw JSON result back into the conversation.
 
@@ -162,8 +191,8 @@ Useful starting points:
 
     ["plow-gog","accounts"]
     ["plow-gog","gmail","search","from:someone newer_than:30d","--max","10"]
-    ["plow-gog","gmail","get","<messageId>","--format","metadata","--headers","From,To,Subject,Date","--account","<the item's account>","--json"]
-    ["plow-gog","gmail","drafts","reply","<messageId>","--body","...","--account","..."]  # draft, for review
+    ["plow-gog","gmail","thread","get","<the row's id>","--sanitize-content","--account","<the item's account>","--json"]
+    ["plow-gog","gmail","drafts","reply","<a message id from thread get>","--body","...","--account","..."]  # draft, for review
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--account","..."]
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--attach","/Users/me/Plow/receipt.jpg","--account","..."]
     ["plow-gog","calendar","calendars"]   # every account's calendars; the shown ones carry selected

@@ -1,0 +1,30 @@
+{
+  "name": "messages",
+  "title": "iMessage history",
+  "summary": "Find and read your texts, right on this Mac.",
+  "version": "0.1.0",
+  "command": "plow-messages",
+  "runtime": {
+    "binaries": [
+      {
+        "name": "plow-messages",
+        "url": {
+          "arm64": "https://github.com/plow-pbc/plow-messages/releases/download/v0.1.0/plow-messages_0.1.0_darwin_arm64.tar.gz",
+          "x64": "https://github.com/plow-pbc/plow-messages/releases/download/v0.1.0/plow-messages_0.1.0_darwin_amd64.tar.gz"
+        },
+        "sha256": {
+          "arm64": "edc4d60ed4bb30b4509a6f3699b08af76a0bf678ddaabdbf62e3fda903524f2a",
+          "x64": "29a3986a8d9803820748c2a7aa1ae007f8548753ff342cef0385d379b7e89f09"
+        }
+      }
+    ]
+  },
+  "requires": { "permissions": ["full_disk_access"] },
+  "exec": { "argv": ["plow-messages"] },
+  "env": {},
+  "argv": {
+    "read": [["search"], ["thread"], ["chats"], ["unreplied"], ["--help"]],
+    "write": []
+  },
+  "skill": "skill.md"
+}

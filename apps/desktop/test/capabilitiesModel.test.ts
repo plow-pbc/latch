@@ -14,6 +14,8 @@ import {
   CapabilitiesInput,
   CapabilityGroup,
   CapabilityRow,
+  FullDiskWatch,
+  type FullDiskState,
   isGroup,
   LABEL_IN_SETTINGS,
   LABEL_VIA_PROMPT,
@@ -161,6 +163,10 @@ describe("capabilitiesView", () => {
     // showing it granted is not a contradiction the owner resolves alone —
     // and it is the re-add, not the relaunch a fresh grant would ask for.
     expect(rows.find((r) => r.key === "full_disk_access")!.hint).toContain("add it again");
+    // Once the owner has done that re-add this run, the same inventory is a
+    // grant waiting on a relaunch (FullDiskWatch), and the row says so.
+    const readded = capabilitiesView(input({ inventory: broken, fullDisk: "relaunch" })).sections.flatMap((s) => s.rows);
+    expect(readded.find((r) => r.key === "full_disk_access")).toMatchObject({ status: "denied", hint: "Quit and reopen after granting." });
     const fresh = capabilitiesView(input()).sections.flatMap((s) => s.rows);
     expect(fresh.find((r) => r.key === "full_disk_access")!.hint).toBe("Quit and reopen after granting.");
   });
@@ -428,6 +434,27 @@ describe("panes", () => {
     expect(paneFor("screen_recording")?.panel).toBe(false);
     expect(paneFor("automation:com.apple.mail")?.panel).toBe(false);
     expect(Object.entries(SETTINGS_PANES).filter(([, p]) => p.panel === false).map(([k]) => k).sort()).toEqual(["automation", "screen_recording"]);
+  });
+});
+
+/**
+ * Full Disk Access across one run: a grant the app gains while it runs waits
+ * on a relaunch; one held all run that a child cannot use is broken. Each row
+ * is a run — whether it was on at launch, then what each read saw
+ * (app granted, child inherits) — and the state after the last read.
+ */
+describe("FullDiskWatch", () => {
+  it.each<[string, boolean, [boolean, boolean][], FullDiskState]>([
+    ["off at launch and still off", false, [[false, false]], "off"],
+    ["granted during the run, a child not yet inheriting", false, [[true, false]], "relaunch"],
+    ["granted during the run and inherited", false, [[true, true]], "granted"],
+    ["on and inherited all run", true, [[true, true]], "granted"],
+    ["on all run, a child cannot use it", true, [[true, false]], "broken"],
+    ["on at launch, removed, then re-added", true, [[true, false], [false, false], [true, false]], "relaunch"],
+  ])("%s", (_name, onAtLaunch, reads, expected) => {
+    const watch = new FullDiskWatch(onAtLaunch);
+    const states = reads.map(([app, inherited]) => watch.observe(app, inherited));
+    expect(states.at(-1)).toBe(expected);
   });
 });
 

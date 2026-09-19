@@ -743,6 +743,7 @@ describe("sandboxGrants — the profile's decision, asked after the fact", () =>
     expect(sandboxGrants(base, out)).toEqual({ read: true, write: false });
     expect(sandboxGrants({ ...base, writePaths: [path.join(home, "Plow")] }, out)).toEqual({ read: true, write: true });
     expect(sandboxGrants(base, "/usr/bin/ls")).toEqual({ read: true, write: false });
+    expect(sandboxGrants(base, "/private/var/run/cupsd")).toEqual({ read: true, write: false });
     expect(sandboxGrants(base, "/private/var/db/x")).toEqual({ read: true, write: false });
     expect(sandboxGrants(base, "/Users/Shared/x")).toEqual({ read: false, write: false });
     expect(sandboxGrants(base, "/Users")).toEqual({ read: true, write: false });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   API_BASE_URL_ENV,
+  isDeviceCredential,
   PRODUCTION_API_BASE_URL,
   PlowApi,
   REQUEST_TIMEOUT_MS,
@@ -227,113 +228,6 @@ describe("PlowApi", () => {
       activationSecret: "act_secret_xyz",
       sendTo: "+15551230000",
     });
-  });
-
-  it("starts a provisioned activation with no sign-in name", async () => {
-    const { calls, fetchImpl } = recordingFetch([{
-      status: 200,
-      body: {
-        display_code: "Z1SWY",
-        activation_secret: "act_secret_xyz",
-        send_to: "+15551230000",
-      },
-    }]);
-
-    await new PlowApi("https://api.plow.co", fetchImpl).createProvisionedActivation();
-
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ provision_chat: true });
-  });
-
-  it.each([
-    {
-      caseName: "uncoded 503",
-      status: 503,
-      body: { detail: "no chat line available" },
-      expected: { status: 503, code: undefined },
-    },
-    {
-      caseName: "structured no-line code",
-      status: 409,
-      body: {
-        detail: {
-          code: "NO_CHAT_LINE_AVAILABLE",
-          message: "server-authored wording is not display copy",
-        },
-      },
-      expected: {
-        status: 409,
-        code: "NO_CHAT_LINE_AVAILABLE",
-        message: "Plow returned 409.",
-      },
-    },
-  ])("parses provisioned-activation errors: $caseName", async ({ status, body, expected }) => {
-    const { fetchImpl } = recordingFetch([{ status, body }]);
-
-    const error = await new PlowApi("https://api.plow.co", fetchImpl)
-      .createProvisionedActivation()
-      .catch((caught: unknown) => caught as PlowApiError);
-
-    expect(error).toMatchObject(expected);
-  });
-
-  it("drops the provisioned redeem token and finds an agent participant out of position", async () => {
-    const token = "plow_session_that_must_be_dropped";
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: {
-        status: "verified",
-        token,
-        chat: {
-          uid: "cht_new",
-          participants: [
-            { type: "member", role: "owner", provider_key: "+15550111" },
-            { type: "agent", line: { uid: "lin_new", provider_key: "+15550100" } },
-          ],
-        },
-      },
-    }]);
-
-    const result = await new PlowApi("https://api.plow.co", fetchImpl)
-      .redeemProvisionedActivation("act_secret_xyz");
-
-    expect(result).toMatchObject({
-      status: "verified",
-      chat: { lineUid: "lin_new" },
-      shape: {
-        chat: "object",
-        participantTypes: ["member", "agent"],
-        agentLine: "uid_string",
-      },
-    });
-    expect(JSON.stringify(result)).not.toContain(token);
-  });
-
-  it("does not carry a redeem token echoed by provisioned chat fields", async () => {
-    const token = "plow_session_that_must_be_dropped";
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: {
-        status: "verified",
-        token,
-        chat: {
-          uid: "cht_new",
-          participants: [
-            { type: token },
-            { type: "agent", line: { uid: `lin_${token}`, provider_key: "+15550100" } },
-          ],
-        },
-      },
-    }]);
-
-    const result = await new PlowApi("https://api.plow.co", fetchImpl)
-      .redeemProvisionedActivation("act_secret_xyz");
-
-    expect(result).toMatchObject({
-      status: "verified",
-      chat: null,
-      shape: { participantTypes: ["other", "agent"] },
-    });
-    expect(JSON.stringify(result)).not.toContain(token);
   });
 
   it("reads a redeem poll, including the verified answer that omits the token", async () => {
@@ -566,61 +460,32 @@ describe("PlowApi", () => {
     }[why]);
   });
 
-  it("lists cloud-agent providers with the credential only in the bearer header", async () => {
-    const credential = "plow_device_provider_list_secret";
-    const roster = [
-      {
-        id: " provider/Zeta ",
-        name: "Zeta",
-        image: "public.ecr.aws/plow/zeta:latest",
-        future_field: true, settings: {},
-      },
-      { id: "self_hosted", name: "Self-hosted" },
+  it("reads the public signup catalog without authentication and normalizes phrases", async () => {
+    const providers = [
+      { id: "exe:life", name: "Life", phrases: ["Start Life", "Life alias"] },
+      { id: "self_hosted", name: "Self-hosted", phrases: [] },
     ];
-    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: roster }]);
-
-    await expect(
-      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders(credential),
-    ).resolves.toEqual([
-      { id: " provider/Zeta ", name: "Zeta" },
-      { id: "self_hosted", name: "Self-hosted" },
-    ]);
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe("https://api.plow.co/v1/agents/providers");
-    expect(calls[0].url).not.toContain(credential);
-    expect(calls[0].init.method).toBe("GET");
-    expect(calls[0].init.body).toBeUndefined();
-    expect((calls[0].init.headers as Record<string, string>).authorization)
-      .toBe(`Bearer ${credential}`);
-  });
-
-  it("uses cloud-agent copy when the provider roster is unavailable", async () => {
-    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
-
-    await expect(
-      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders("plow_device"),
-    ).rejects.toMatchObject({
-      status: 503,
-      message: "Plow couldn't load agent types right now. Try again.",
-    });
+    const { fetchImpl, calls } = recordingFetch([{ status: 200, body: {
+      managed_phone: "+15551234567", providers,
+    } }]);
+    const result = await new PlowApi("https://stub.invalid", fetchImpl).listCloudAgentProviders();
+    expect(result).toEqual({ managedPhone: "+15551234567", providers: [
+      { id: "exe:life", name: "Life", phrase: "Start Life" },
+      { id: "self_hosted", name: "Self-hosted", phrase: null },
+    ] });
+    expect(calls[0].url).toBe("https://stub.invalid/v1/signup");
+    expect(calls[0].init.headers.authorization).toBeUndefined();
   });
 
   it.each([
-    ["retired string shape", "provider/valid"],
-    ["non-string name", { id: "provider/valid", name: 7 }],
-    ["blank name", { id: "provider/valid", name: "   " }],
-  ])("rejects a malformed cloud-agent provider: %s", async (_case, provider) => {
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: [provider],
-    }]);
-
-    await expect(
-      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders("plow_device"),
-    ).rejects.toMatchObject({
-      message: "Plow did not return a usable cloud-agent provider list.",
-    });
+    { managed_phone: "https://wrong.invalid", providers: [] },
+    { managed_phone: "+15551234567", providers: [{ id: "a", name: "A" }] },
+    { managed_phone: "+15551234567", providers: [{ id: "a", name: "A", phrases: [""] }] },
+    [],
+  ])("rejects an unusable signup catalog: %j", async (body) => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body }]);
+    await expect(new PlowApi("https://stub.invalid", fetchImpl).listCloudAgentProviders())
+      .rejects.toThrow("usable cloud-agent provider list");
   });
 
   it("lists Google connector accounts with the stored credential in the bearer header", async () => {
@@ -998,6 +863,26 @@ describe("revoking this Mac's own credential", () => {
     await expect(api.revokeDeviceCredential("plow_sk_do_not_leak_me")).rejects.toBeInstanceOf(
       PlowApiError,
     );
+  });
+});
+
+describe("isDeviceCredential", () => {
+  const credential = "plow_sk_abc123_and_the_rest_of_it";
+
+  /**
+   * The shapes a prefix is not. The first two are what produced the bug: a
+   * hand-written prefix WITH the scheme on it matched `startsWith` in a fixture
+   * and could never match in production.
+   */
+  it.each([
+    ["plow's published prefix", credential.slice(5, 13), true],
+    ["absent", null, false],
+    ["the whole token", credential, false],
+    ["the scheme included", "plow_sk_", false],
+    ["too short", "sk_abc", false],
+    ["too long", "sk_abc123456", false],
+  ])("%s", (_shape, prefix, expected) => {
+    expect(isDeviceCredential(prefix, credential)).toBe(expected);
   });
 });
 

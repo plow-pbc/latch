@@ -1,6 +1,6 @@
 // Compile the native helpers in native/ into dist/native/.
 //
-// Four artifacts today, all Swift, all built universal (arm64 + x86_64,
+// Six artifacts today, all Swift, all built universal (arm64 + x86_64,
 // lipo-fused) so each is byte-identical in both of electron-builder's arch
 // passes and the universal merge copies it through untouched:
 //
@@ -14,6 +14,8 @@
 //    the one probe the host-gate diagnosis (device-core's hostGate/) cannot
 //    make from Node. Without it those answers are "unknown" and everything
 //    else still works.
+//  - plow-folder-icon — gives the existing ~/Plow workspace the same branded
+//    Finder icon as plow-mac. Its canonical badge PNG ships beside it.
 //  - libdomo-credential-import.dylib — the Swift shim behind receiving an
 //    Apple Passwords credential exchange (ASCredentialImportManager is
 //    Swift-only API); loaded in-process via @domo/native-credential-import.
@@ -157,6 +159,27 @@ const compileUniversal = (tmp, output, { sources, target, extraArgs = [] }) => {
     compileUniversal(tmp, output, { sources: [source], target: "macos13.0" });
     fs.chmodSync(output, 0o755);
   });
+}
+
+// 1d) The shared workspace's branded Finder icon (a plain CLI). The badge is
+// an input to the build stamp and a sibling runtime resource: a changed badge
+// rebuilds the helper even though its Swift source did not change.
+{
+  const source = path.join(nativeDir, "plow-folder-icon.swift");
+  const badge = path.join(nativeDir, "plow-badge.png");
+  const output = path.join(outDir, "plow-folder-icon");
+  build("helper plow-folder-icon", [source, badge], output, (tmp) => {
+    compileUniversal(tmp, output, {
+      sources: [source],
+      target: "macos13.0",
+      extraArgs: [
+        "-framework", "AppKit",
+        "-framework", "QuickLookThumbnailing",
+      ],
+    });
+    fs.chmodSync(output, 0o755);
+  });
+  fs.copyFileSync(badge, path.join(outDir, "plow-badge.png"));
 }
 
 // 2) The credential-exchange shim (a dylib the app dlopens in-process).

@@ -1,7 +1,8 @@
 /**
  * Sandbox conformance:
- *   - SBPL byte-parity against fixtures/sbpl.json (machine-dependent: the
- *     fixture embeds $HOME, so it only asserts when generated on this machine).
+ *   - SBPL byte-parity against fixtures/sbpl.json, generated for the
+ *     fixture's own home so it asserts on any machine — except `tmp-paths`,
+ *     which freezes macOS resolving /tmp to /private/tmp.
  *   - Real sandboxed execution: write-outside-scope blocked, network deny
  *     blocks a fetch that succeeds when allowed — mirroring the Swift
  *     DeviceCoreTests sandbox assertions (DESIGN.md §10).
@@ -26,17 +27,18 @@ function tempDir(): string {
   return dir;
 }
 
+const ON_MAC = process.platform === "darwin";
+
 describe("SBPL profile", () => {
-  const machineMatches = sbpl.home === os.homedir();
   for (const c of sbpl.cases) {
-    it(`${c.name}${machineMatches ? "" : " (skipped: fixture from another machine)"}`, () => {
-      if (!machineMatches) return;
+    it.runIf(ON_MAC || c.name !== "tmp-paths")(c.name, () => {
       const profile = SandboxProfile.generate({
         readPaths: c.readPaths,
         writePaths: c.writePaths,
         network: c.network,
         appleEvents: c.appleEvents ?? false,
         scratch: c.scratch,
+        home: sbpl.home,
       });
       expect(profile).toBe(c.profile);
     });
@@ -52,8 +54,6 @@ describe("SBPL profile", () => {
 // Seatbelt (`sandbox-exec`) is the Mac's own, and these cases run real
 // commands through it; anywhere else they would be asserting against a spawn
 // error rather than the sandbox's behavior.
-const ON_MAC = process.platform === "darwin";
-
 describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
   it("runs a command and captures output", async () => {
     const executor = new Executor(tempDir());

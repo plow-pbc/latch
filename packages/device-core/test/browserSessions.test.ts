@@ -1073,6 +1073,47 @@ describe.skipIf(!ON_MAC)("every browser opens as the user, already signed in", (
     expect(closed[0].fields.reason).toBe("agent");
   });
 
+  /** Races closeOpen() — the off switch — against an open() still in
+   *  flight: open() claims the map entry before it awaits ensureReady(), so
+   *  closeOpen() can already find the session and start closing it. `env`
+   *  decides which way ensureReady() settles: fast (the default) lands it
+   *  on the resolve path; held past when the off switch's own "quit" has
+   *  already killed the pre-ready child (SLOW_START) lands it on the
+   *  reject path instead — the fake server wires up stdin at once and only
+   *  delays the ready line under SLOW_START, so a "quit" sent while that
+   *  delay is pending is guaranteed to arrive before ready. Both must answer
+   *  the owner the same way. */
+  function raceOffSwitchAgainstOpen(env: Record<string, string> = {}) {
+    const sessions = new BrowserSessions(
+      { ...ctx.browsers, env: { ...ctx.browsers.env, ...env } },
+      new CredentialBroker({ command: ["node", FAKE_BROKER], env: {} }),
+      (event, fields) => ctx.events.push({ event, fields }),
+      60_000,
+    );
+    const opened = sessions.open("int-1", AGENT, ["a.example"]);
+    const closed = sessions.closeOpen("turned_off");
+    return { sessions, opened, closed };
+  }
+
+  it.each([
+    ["ensureReady resolves before the quit lands", {}],
+    ["ensureReady rejects because the quit lands first", { SLOW_START: "200" }],
+  ])("does not publish a session the off switch closed while it was still starting (%s)", async (_what, env) => {
+    const { sessions, opened, closed } = raceOffSwitchAgainstOpen(env);
+    const result = jv(await opened);
+    await closed;
+
+    expect(result.get("status").str).toBe("error");
+    expect(result.get("error").str).toBe("browser use was turned off while the browser was starting");
+    expect(ctx.events.some((e) => e.event === "browser_session_opened")).toBe(false);
+    // Exactly one teardown ran for this session — a second rollBack() racing
+    // close()'s own would either double the "closed" line or double the
+    // profile removal (harmless with force:true, but proof there was only
+    // ever one teardown in flight).
+    expect(ctx.events.filter((e) => e.event === "browser_session_closed" && e.fields.reason === "turned_off")).toHaveLength(1);
+    expect(sessions.current()).toBeNull();
+  });
+
   it("refuses to open once the app is on its way out", async () => {
     // An intent can sit waiting for the owner and be approved mid-quit. The
     // browser it would start is one nobody is left to close.

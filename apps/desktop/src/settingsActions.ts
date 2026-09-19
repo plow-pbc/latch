@@ -11,7 +11,7 @@
  */
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 import { InferenceStatus, inferenceStatus } from "./reviewPolicy.js";
-import { PlowApiError } from "./plowApi.js";
+import { PlowApi, PlowApiError } from "./plowApi.js";
 
 /** One process's retry budget. The queue itself survives after this budget and
  * is tried again on the next launch or successful relay connection. */
@@ -157,7 +157,12 @@ export function signOutOfPlow(home: string): void {
     s.accountUid = "";
     s.mcpUrl = "";
     s.setupComplete = false;
+    s.onboardingResumeStep = undefined;
   });
+}
+
+function forgetUnretired(home: string, retired: readonly string[]): void {
+  update(home, (s) => (s.unretiredKeyPrefixes = s.unretiredKeyPrefixes?.filter((p) => !retired.includes(p))));
 }
 
 /**
@@ -210,6 +215,7 @@ export async function revokeAndSignOut(
     s.accountUid = "";
     s.mcpUrl = "";
     s.setupComplete = false;
+    s.onboardingResumeStep = undefined;
   });
   if (!credential) return true;
   try {
@@ -224,6 +230,28 @@ export async function revokeAndSignOut(
     console.warn("[settings] session revoke pending; will retry");
     return false;
   }
+}
+
+/**
+ * Retire every session `revokeAndSignOut` recorded but couldn't reach — Plow
+ * refuses to register this Mac's device to a new session while an old one is
+ * still live (409). Errors propagate: the relay client's own backoff retries
+ * `beforeConnect`, and the records stay on disk for that retry.
+ */
+export async function retireUnretiredSession(
+  home: string,
+  api: Pick<PlowApi, "listApiKeys" | "revokeApiKey">,
+): Promise<void> {
+  const settings = loadSettings(home);
+  const prefixes = settings.unretiredKeyPrefixes ?? [];
+  const credential = (settings.relayCredential ?? "").trim();
+  if (!prefixes.length || !credential) return;
+  const keys = await api.listApiKeys(credential);
+  for (const key of keys) {
+    if (key.is_active && key.key_prefix && prefixes.includes(key.key_prefix)) await api.revokeApiKey(credential, key.id);
+  }
+  // Only this account's keys are listed; another account's prefix waits for it.
+  forgetUnretired(home, prefixes.filter((prefix) => keys.some((key) => key.key_prefix === prefix)));
 }
 
 /**

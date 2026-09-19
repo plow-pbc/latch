@@ -188,46 +188,14 @@ describe("settings storage", () => {
   });
 });
 
-describe("the launch-at-login first-run marker", () => {
-  it("grandfathers a signed-in home from before the field existed", () => {
-    const home = tempHome();
-    write(home, JSON.stringify({ relayCredential: "plow_sk_secret" }));
-    expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
-  });
-
-  it("leaves a signed-out legacy home un-defaulted — its first run is still ahead", () => {
-    const home = tempHome();
-    write(home, JSON.stringify({ selectedTab: "audit" }));
-    expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
-  });
-
-  it("never overrides an explicit false — a fresh setup writes the key and owns it", () => {
-    const home = tempHome();
-    write(
-      home,
-      JSON.stringify({ relayCredential: "plow_sk_secret", launchAtLoginDefaulted: false }),
-    );
-    expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
-  });
-
-  it("starts false in a brand-new home", () => {
-    expect(loadSettings(tempHome()).launchAtLoginDefaulted).toBe(false);
-  });
-
-});
-
 /**
  * Unknown keys ride the load/save spread straight back to disk, so retired
  * settings would otherwise outlive their features for as long as the file.
- *
- * One home covers the whole contract, because the two halves are one event: the
- * write that removes the secret is the write that persists everything else the
- * load decided. Split across two homes, nothing holds the order between them.
  */
 describe("retired settings fields are scrubbed on read", () => {
   const RETIRED_KEY = "sk-ant-do-not-leak-me";
 
-  it("takes them off disk on load, keeps what survives, and persists the grandfathered bit", () => {
+  it("takes them off disk on load and keeps what survives", () => {
     const home = tempHome();
     write(
       home,
@@ -239,6 +207,7 @@ describe("retired settings fields are scrubbed on read", () => {
         provisionedChatUid: "cht_retired",
         provisionedChatLabel: "Retired chat",
         welcomeEntrancePlayed: true,
+        launchAtLoginDefaulted: true,
       }),
     );
 
@@ -250,6 +219,7 @@ describe("retired settings fields are scrubbed on read", () => {
     expect(loaded).not.toHaveProperty("provisionedChatUid");
     expect(loaded).not.toHaveProperty("provisionedChatLabel");
     expect(loaded).not.toHaveProperty("welcomeEntrancePlayed");
+    expect(loaded).not.toHaveProperty("launchAtLoginDefaulted");
     expect(JSON.stringify(loaded)).not.toContain(RETIRED_KEY);
     // …the scrub took nothing else with it…
     expect(loaded).toMatchObject({
@@ -265,16 +235,7 @@ describe("retired settings fields are scrubbed on read", () => {
     expect(raw).not.toContain("provisionedChatUid");
     expect(raw).not.toContain("provisionedChatLabel");
     expect(raw).not.toContain("welcomeEntrancePlayed");
-
-    // The ordering the same write pins: this legacy home is signed in, so the
-    // launch-at-login bit is grandfathered on this load — and it has to already
-    // be set when the scrub writes, or the load hands back `true` and persists
-    // `false`, and the NEXT load reads the explicit false and leaves the
-    // owner's login item to be flipped by a re-setup.
-    expect(loaded.launchAtLoginDefaulted).toBe(true);
-    expect(JSON.parse(raw).launchAtLoginDefaulted).toBe(true);
-    // The second load, which finds nothing to scrub, agrees with the first.
-    expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
+    expect(raw).not.toContain("launchAtLoginDefaulted");
   });
 });
 

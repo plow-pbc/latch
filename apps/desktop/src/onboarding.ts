@@ -15,21 +15,23 @@
  */
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { chatPeople, chatRowTitle, usableChatDisplayName } from "./chatRows.js";
+import { PRESET_TEXT } from "./gatekeeperPreview.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 /**
  * The verification sub-steps retain their existing mechanics. A successful
- * login pauses on a confirmation screen before the post-login data choice.
+ * login moves straight to Privacy, which doubles as the confirmation screen
+ * before the gatekeeper's instructions and the post-login plugin choice.
  */
 export type OnboardingStep =
   | "welcome"
   | "privacy"
+  | "gatekeeper"
   | "activate"
   | "waiting"
-  | "verified"
-  | "data"
+  | "plugins"
+  | "access"
   | "availability"
-  | "connect"
   | "done";
 
 /**
@@ -66,8 +68,8 @@ export function activationSmsBody(displayCode: string): string {
 
 /** The draft Messages opens with, in the form the shipping Plow app uses
  * (`app/Phoenix/DaemonClient.swift`): `sms:<phone>?&body=<encoded>`. */
-export function activationSmsUrl(sendTo: string, displayCode: string): string {
-  return `sms:${sendTo}?&body=${encodeURIComponent(activationSmsBody(displayCode))}`;
+export function smsUrl(sendTo: string, body: string): string {
+  return `sms:${sendTo}?&body=${encodeURIComponent(body)}`;
 }
 
 export interface OnboardingActivation {
@@ -132,8 +134,11 @@ export interface OnboardingState {
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
   activationStale: boolean;
-  /** The data screen's pending choice. It is persisted only on Continue. */
+  /** The plugins screen's pending choice. It is persisted only on Continue. */
   telemetryEnabled: boolean;
+  /** The gatekeeper's instructions the step opens on. The owner's draft is
+   * saved (trimmed) only on Continue from that step. */
+  purpose: string;
 }
 
 export interface OnboardingDeps {
@@ -143,13 +148,19 @@ export interface OnboardingDeps {
   startRelay: () => Promise<void>;
   /** Names this Mac in the activation request. */
   deviceName: string;
+  /** Once per entry from Privacy: turn off every plugin that can't work yet, so the switches start on only what works. */
+  applyPluginDefault: () => Promise<void>;
+  /** Whether any switched-on plugin still has something to grant; false skips Access. */
+  accessNeeded: () => Promise<boolean>;
+  /** Load account-backed grants before a checkpointed launch exposes Access. */
+  prepareAccess?: () => Promise<void>;
   /**
    * Turn the availability defaults on — Keep Awake, and Launch at Login where
-   * the build can. Called once per home, on reaching the Availability screen,
-   * so the switches it shows are on because they ARE on; the marker
-   * (`Settings.launchAtLoginDefaulted`) records that it ran. It writes
-   * settings itself (Keep Awake persists its opt-in), so it runs between two
-   * loads here, never inside one.
+   * the build can. Called at sign-in, which every setup (a re-setup after
+   * sign-out included) passes exactly once and a relaunch mid-setup resumes
+   * past — so the Availability screen opens with both on because they ARE on,
+   * and a switch turned off there stays off. It writes settings itself (Keep
+   * Awake persists its opt-in), so it runs after sign-in's own write.
    */
   applyAvailabilityDefault?: () => void;
   onChange?: () => void;
@@ -180,11 +191,18 @@ export class Onboarding {
   private pendingMintId = 0;
   private mints = 0;
   private telemetryEnabled: boolean;
+  private purpose: string;
 
   constructor(private readonly deps: OnboardingDeps) {
     const settings = this.settings();
     this.telemetryEnabled = settings.telemetryEnabled;
+    this.purpose = this.storedPurpose(settings);
     this.step = this.initialStep(settings);
+  }
+
+  /** A first setup starts from the Home instructions; a re-setup from what is stored. */
+  private storedPurpose(settings: Settings): string {
+    return settings.agentPurpose.trim() || PRESET_TEXT.home;
   }
 
   state(): OnboardingState {
@@ -196,17 +214,22 @@ export class Onboarding {
       activation: this.activation,
       activationStale: this.activationStale,
       telemetryEnabled: this.telemetryEnabled,
+      purpose: this.purpose,
     };
   }
 
-  /** Advance the presentational steps and commit the data-screen choice. */
-  async advance(): Promise<OnboardingState> {
+  /** Finish the external inventory needed by a checkpointed opening step. */
+  async prepareInitialStep(): Promise<OnboardingState> {
+    if (this.step === "access") await this.deps.prepareAccess?.();
+    return this.state();
+  }
+
+  /** Advance the presentational steps, commit the plugins-screen choice, and
+   * save the gatekeeper's `draft` on the way out of that step — the only step
+   * that reads it. It comes from the renderer, so it is checked here. */
+  async advance(draft?: unknown): Promise<OnboardingState> {
     if (this.busy) return this.state();
     if (this.step === "welcome") {
-      this.step = "privacy";
-      return this.publish();
-    }
-    if (this.step === "privacy") {
       // Returning from verification keeps the live activation and its watcher.
       // Re-entering therefore shows the same code without another network call.
       if (this.activation) {
@@ -215,34 +238,48 @@ export class Onboarding {
       }
       return this.newActivationCode();
     }
-    if (this.step === "verified") {
-      // The display code is spent, but stays visible through the confirmation
-      // treatment so the screen does not jump while redemption finishes.
-      this.activation = null;
-      this.step = "data";
+    if (this.step === "privacy") {
+      // run() keeps a throw readable on Privacy and retries the default
+      // rather than skipping it; the step moves only once it has applied.
+      return this.run(async () => {
+        await this.deps.applyPluginDefault();
+        // A reset() (sign-out) can land during this await; don't overwrite it.
+        if (this.step !== "privacy") return;
+        this.step = "gatekeeper";
+      });
+    }
+    if (this.step === "gatekeeper") {
+      const settings = this.settings();
+      settings.agentPurpose = (typeof draft === "string" ? draft : this.purpose).trim();
+      this.save(settings);
+      this.purpose = settings.agentPurpose;
+      this.step = "plugins";
       return this.publish();
     }
-    if (this.step === "data") {
-      const settings = this.settings();
-      settings.telemetryEnabled = this.telemetryEnabled;
-      this.save(settings);
-      if (!settings.launchAtLoginDefaulted) {
-        this.deps.applyAvailabilityDefault?.();
-        const defaulted = this.settings();
-        defaulted.launchAtLoginDefaulted = true;
-        this.save(defaulted);
-      }
+    if (this.step === "plugins") {
+      return this.run(async () => {
+        const needsAccess = await this.deps.accessNeeded();
+        // Same reset()-mid-await guard as the privacy branch above.
+        if (this.step !== "plugins") return;
+        const settings = this.settings();
+        settings.telemetryEnabled = this.telemetryEnabled;
+        this.save(settings);
+        if (needsAccess) {
+          this.step = "access";
+          return;
+        }
+        this.step = "availability";
+      });
+    }
+    if (this.step === "access") {
+      this.clearResumeStep();
       this.step = "availability";
       return this.publish();
     }
     if (this.step === "availability") {
-      this.step = "connect";
-      return this.publish();
-    }
-    if (this.step === "connect") {
       const settings = this.settings();
       settings.setupComplete = true;
-      this.save(settings);
+      this.clearResumeStep(settings);
       this.step = "done";
       return this.publish();
     }
@@ -252,18 +289,29 @@ export class Onboarding {
   /** Return through the steps that have a Back affordance. */
   async back(): Promise<OnboardingState> {
     if (this.busy) return this.state();
-    if (this.step === "privacy") this.step = "welcome";
-    else if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
-    else if (this.step === "availability") this.step = "data";
-    else if (this.step === "connect") this.step = "availability";
+    if (this.step === "activate" || this.step === "waiting") this.step = "welcome";
+    else if (this.step === "access") {
+      this.clearResumeStep();
+      this.step = "plugins";
+    } else if (this.step === "availability") this.step = "plugins";
+    else if (this.step === "plugins") this.step = "gatekeeper";
     else return this.state();
     return this.publish();
   }
 
-  /** Change the pending choice; Continue from data is its only disk write. */
+  /** Persist the one setup location whose own grant flow requires a relaunch. */
+  prepareRelaunch(): OnboardingState {
+    if (this.step !== "access") return this.state();
+    const settings = this.settings();
+    settings.onboardingResumeStep = "access";
+    this.save(settings);
+    return this.state();
+  }
+
+  /** Change the pending choice; Continue from plugins is its only disk write. */
   setTelemetryEnabled(enabled: unknown): OnboardingState {
     if (this.busy) return this.state();
-    if (this.step === "data" && typeof enabled === "boolean") {
+    if (this.step === "plugins" && typeof enabled === "boolean") {
       this.telemetryEnabled = enabled;
       return this.publish();
     }
@@ -275,7 +323,7 @@ export class Onboarding {
   /** Retry a mint only when the activation view is already waiting for one. */
   async begin(): Promise<OnboardingState> {
     // Renderer boot is intentionally a read-like no-op on the presentational
-    // steps. The first activation is minted only by Continue from Privacy.
+    // steps. The first activation is minted only by Get started on Welcome.
     if (this.step !== "activate" || this.activation) {
       return this.state();
     }
@@ -298,7 +346,7 @@ export class Onboarding {
     // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
     // account — so a second mint nobody is shown is a live credential loose on
     // the account, and the screen can only ever show one of them. A double-click
-    // on Privacy Continue and a retry arriving while its mint is in flight can
+    // on Get started and a retry arriving while its mint is in flight can
     // race before `activation` is set. Joining the flight in progress is the
     // only place that gap can be closed.
     if (this.pendingMint) return this.pendingMint;
@@ -333,7 +381,7 @@ export class Onboarding {
           displayCode: created.displayCode,
           sendTo: created.sendTo,
           smsBody: activationSmsBody(created.displayCode),
-          smsUrl: activationSmsUrl(created.sendTo, created.displayCode),
+          smsUrl: smsUrl(created.sendTo, activationSmsBody(created.displayCode)),
           pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS,
         };
         // Polling starts here, not when the user taps the button: a user who
@@ -448,10 +496,9 @@ export class Onboarding {
         this.activationSecret = null;
         this.stall();
         const finished = await this.run(() => this.finishWithSession(result.token as string));
-        // The verified screen is actionable while the relay connects. `run`
-        // clears busy and publishes before this await, and nothing after it
-        // mutates onboarding state.
-        if (finished.step === "verified") await this.deps.startRelay();
+        // Privacy is actionable while the relay connects. `run` clears busy and
+        // publishes before this await, and nothing after it mutates state.
+        if (finished.step === "privacy") await this.deps.startRelay();
         return;
       }
       if (generation !== this.pollGeneration) return;
@@ -541,7 +588,9 @@ export class Onboarding {
     this.noteKind = "error";
     this.busy = false;
     const settings = this.settings();
+    this.clearResumeStep(settings);
     this.telemetryEnabled = settings.telemetryEnabled;
+    this.purpose = this.storedPurpose(settings);
     this.step = this.initialStep(settings);
     return this.publish();
   }
@@ -611,19 +660,17 @@ export class Onboarding {
     // lines the account's own chats run on, which is the only source that
     // cannot be wrong.
     this.save(settings);
+    this.deps.applyAvailabilityDefault?.();
 
-    // The activation secret is spent and dropped. The public display value is
-    // retained until Continue so the verified treatment can hold the same
-    // screen steady.
-    //
-    // Everything here is derived from the save above; none of it needs the
-    // socket to be up.
+    // The activation is spent and dropped. Everything here is derived from
+    // the save above; none of it needs the socket to be up.
     this.cancelPolling();
+    this.activation = null;
     this.activationSecret = null;
     this.activationStale = false;
     this.message = "";
     this.noteKind = "error";
-    this.step = "verified";
+    this.step = "privacy";
     this.telemetryEnabled = settings.telemetryEnabled;
   }
 
@@ -637,9 +684,16 @@ export class Onboarding {
     saveSettings(this.deps.home, settings);
   }
 
+  /** Clear a consumed or abandoned navigation intent and persist its peers. */
+  private clearResumeStep(settings: Settings = this.settings()): void {
+    settings.onboardingResumeStep = undefined;
+    this.save(settings);
+  }
+
   private initialStep(settings: Settings): OnboardingStep {
     if (!settings.relayCredential.trim()) return "welcome";
-    return settings.setupComplete ? "done" : "data";
+    if (settings.setupComplete) return "done";
+    return settings.onboardingResumeStep === "access" ? "access" : "plugins";
   }
 
   private now(): number {

@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CONNECTOR_POLL_INTERVAL_MS,
   CONNECTOR_TIMEOUT_NOTE,
-  CONNECTOR_TIMEOUT_MS,
   Connectors,
   ConnectorsState,
 } from "../src/connectors.js";
@@ -117,6 +116,7 @@ function build(
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -150,16 +150,42 @@ describe("connecting a Google account", () => {
     }]);
   });
 
-  it("polls for thirty seconds and leaves a neutral re-auth note", async () => {
+  it("keeps earlier accounts in successive connection snapshots", async () => {
+    const one = account("one@example.com", { isDefault: true });
+    const two = account("two@example.com");
+    const three = account("three@example.com");
+    const plow = new FakePlow();
+    plow.listAnswers = [
+      overview(), overview([one]),
+      overview([one]), overview([one, two]),
+      overview([one, two]), overview([one, two, three]),
+    ];
+    const { connectors, audits } = build(plow);
+
+    const first = await connectors.connect();
+    const second = await connectors.connect();
+    const third = await connectors.connect();
+
+    expect(first.google.accounts).toEqual([one]);
+    expect(second.google.accounts).toEqual([one, two]);
+    expect(third.google.accounts).toEqual([one, two, three]);
+    expect(audits).toEqual([
+      { event: "connector_connected", fields: { provider: "google", account: "one@example.com" } },
+      { event: "connector_connected", fields: { provider: "google", account: "two@example.com" } },
+      { event: "connector_connected", fields: { provider: "google", account: "three@example.com" } },
+    ]);
+  });
+
+  it("polls for five minutes and leaves a neutral re-auth note", async () => {
     const plow = new FakePlow();
     const { connectors, opened, audits, waits } = build(plow);
 
     const state = await connectors.connect();
 
     expect(opened).toEqual([CONNECT_URL]);
-    expect(waits).toHaveLength(CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS);
+    expect(waits).toHaveLength(100);
     expect(waits.reduce((total, milliseconds) => total + milliseconds, 0))
-      .toBe(CONNECTOR_TIMEOUT_MS);
+      .toBe(5 * 60 * 1_000);
     expect(plow.listCredentials).toHaveLength(1 + waits.length);
     expect(state.busy).toBe(false);
     expect(state.google.connecting).toBe(false);
@@ -168,7 +194,7 @@ describe("connecting a Google account", () => {
     expect(audits).toEqual([]);
   });
 
-  it("applies the thirty-second deadline to a poll request that never answers", async () => {
+  it("applies the five-minute deadline to a poll request that never answers", async () => {
     const polling = new AbortController();
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => polling.signal);
     const plow = new FakePlow();
@@ -185,10 +211,44 @@ describe("connecting a Google account", () => {
     polling.abort(new DOMException("The operation was aborted.", "TimeoutError"));
     const state = await pending;
 
-    expect(timeout).toHaveBeenCalledWith(CONNECTOR_TIMEOUT_MS);
+    expect(timeout).toHaveBeenCalledWith(5 * 60 * 1_000);
     expect(state.busy).toBe(false);
     expect(state.message).toBe(CONNECTOR_TIMEOUT_NOTE);
     expect(state.noteKind).toBe("neutral");
+  });
+
+  it("accepts an account returned as the polling deadline expires", async () => {
+    const polling = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => polling.signal);
+    const plow = new FakePlow();
+    plow.pollGate = async (signal, call) => {
+      if (call !== 2) return overview();
+      return new Promise((resolve) => {
+        signal.addEventListener("abort", () => {
+          resolve(overview([account("ada@example.com", { isDefault: true })]));
+        });
+      });
+    };
+    const { connectors, audits } = build(plow);
+
+    const pending = connectors.connect();
+    while (plow.listCredentials.length < 2) await Promise.resolve();
+    polling.abort(new DOMException("The operation was aborted.", "TimeoutError"));
+    const state = await pending;
+
+    expect(state).toEqual({
+      busy: false,
+      message: "",
+      noteKind: "error",
+      google: {
+        accounts: [account("ada@example.com", { isDefault: true })],
+        connecting: false,
+      },
+    });
+    expect(audits).toEqual([{
+      event: "connector_connected",
+      fields: { provider: "google", account: "ada@example.com" },
+    }]);
   });
 
   it("refuses a second action while the first is in flight", async () => {
@@ -340,6 +400,163 @@ describe("connector account lifecycle", () => {
     expect(connectors.state()).toEqual(signedOut);
     expect(publishedStates.at(-1)).toEqual(signedOut);
     expect(audits).toEqual([]);
+  });
+
+  it("resets the initial-poll baseline on sign-out", async () => {
+    const oldAccount = account("old@example.com", { isDefault: true });
+    const newAccount = account("new@example.com", { isDefault: true });
+    const plow = new FakePlow();
+    plow.listAnswers = [overview([oldAccount]), overview([newAccount])];
+    const { connectors, audits } = build(plow);
+
+    await connectors.poll();
+    connectors.signedOut();
+    await connectors.poll();
+
+    expect(connectors.state().google.accounts).toEqual([newAccount]);
+    expect(audits).toEqual([]);
+  });
+});
+
+/**
+ * The background poll main runs while no account is known: it finds an
+ * account connected outside the app without ever being the owner's action.
+ */
+describe("a background poll", () => {
+  it("establishes an initial account baseline without auditing existing accounts, then audits later additions", async () => {
+    const one = account("one@example.com", { isDefault: true });
+    const two = account("two@example.com");
+    const plow = new FakePlow();
+    plow.listAnswers = [overview([one]), overview([one, two])];
+    const { connectors, audits } = build(plow);
+
+    await connectors.poll();
+    expect(connectors.state().google.accounts).toEqual([one]);
+    expect(audits).toEqual([]);
+
+    await connectors.poll();
+    expect(connectors.state().google.accounts).toEqual([one, two]);
+    expect(audits).toEqual([{
+      event: "connector_connected",
+      fields: { provider: "google", account: "two@example.com" },
+    }]);
+  });
+
+  it("discards an older background answer after a newer poll connects an account", async () => {
+    const stale = deferred<ConnectorsOverview>();
+    const ada = account("ada@example.com", { isDefault: true });
+    const plow = new FakePlow();
+    const { connectors, audits } = build(plow);
+    await connectors.poll(); // establish the empty baseline
+    plow.pollGate = async (_signal, call) =>
+      call === 2 ? stale.promise : overview([ada]);
+
+    const older = connectors.poll();
+    while (plow.listCredentials.length < 2) await Promise.resolve();
+    await connectors.poll();
+    stale.resolve(overview());
+    await older;
+    await connectors.poll();
+
+    expect(connectors.state().google.accounts).toEqual([ada]);
+    expect(audits).toEqual([{
+      event: "connector_connected",
+      fields: { provider: "google", account: "ada@example.com" },
+    }]);
+  });
+
+  it("reconciles accounts connected after a timeout without a busy flicker", async () => {
+    const plow = new FakePlow();
+    let published = 0;
+    const { connectors, audits } = build(plow, { onChange: () => void published++ });
+    await connectors.connect(); // times out and leaves CONNECTOR_TIMEOUT_NOTE
+    published = 0;
+    plow.listAnswers = [overview([
+      account("ada@example.com", { isDefault: true }),
+      account("grace@example.com"),
+    ])];
+
+    await connectors.poll();
+    await connectors.poll();
+
+    expect(connectors.state()).toEqual({
+      busy: false,
+      message: "",
+      noteKind: "error",
+      google: {
+        accounts: [
+          account("ada@example.com", { isDefault: true }),
+          account("grace@example.com"),
+        ],
+        connecting: false,
+      },
+    });
+    expect(audits).toEqual([
+      {
+        event: "connector_connected",
+        fields: { provider: "google", account: "ada@example.com" },
+      },
+      {
+        event: "connector_connected",
+        fields: { provider: "google", account: "grace@example.com" },
+      },
+    ]);
+    // Once for the changed account list; the unchanged second answer says nothing.
+    expect(published).toBe(1);
+  });
+
+  it("keeps an unrelated notice while reconciling a newly connected account", async () => {
+    const plow = new FakePlow();
+    plow.connectUrl = "http://api.plow.co/v1/connectors/gmail/connect?code=unsafe";
+    const { connectors, audits } = build(plow);
+    await connectors.connect();
+    plow.listAnswers = [overview([account("ada@example.com")])];
+
+    await connectors.poll();
+
+    expect(connectors.state().message).toBe("Plow couldn't open the connection page.");
+    expect(connectors.state().noteKind).toBe("error");
+    expect(audits).toEqual([{
+      event: "connector_connected",
+      fields: { provider: "google", account: "ada@example.com" },
+    }]);
+  });
+
+  it("does not treat a known email as a newly connected account", async () => {
+    const plow = new FakePlow();
+    plow.listAnswers = [overview([account("ada@example.com")])];
+    const { connectors, audits } = build(plow);
+    await connectors.connect(); // re-authorizing an existing account times out
+    plow.listAnswers = [overview([account("ada@example.com", { isDefault: true })])];
+
+    await connectors.poll();
+
+    expect(connectors.state()).toEqual({
+      busy: false,
+      message: CONNECTOR_TIMEOUT_NOTE,
+      noteKind: "neutral",
+      google: {
+        accounts: [account("ada@example.com", { isDefault: true })],
+        connecting: false,
+      },
+    });
+    expect(audits).toEqual([]);
+  });
+
+  it("never drops the owner's click, and a poll that lands after it does not overwrite what it loaded", async () => {
+    const slowPoll = deferred<ConnectorsOverview>();
+    const plow = new FakePlow();
+    plow.pollGate = async (_signal, call) =>
+      call === 1 ? slowPoll.promise : overview([account("ada@example.com")]);
+    const { connectors } = build(plow);
+
+    const polling = connectors.poll();
+    const refreshed = await connectors.refresh();
+    slowPoll.resolve(overview());
+    await polling;
+
+    expect(refreshed.google.accounts).toEqual([account("ada@example.com")]);
+    expect(connectors.state().google.accounts).toEqual([account("ada@example.com")]);
   });
 });
 

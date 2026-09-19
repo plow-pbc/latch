@@ -273,6 +273,10 @@ verify-preload: build
       VAULT_OUT="${VAULT_OUT:-{{outdir}}/vault-locked.png}" \
       npx electron apps/desktop/scripts/verify-preload.mjs
 
+# Real-input signup verification; run on the test Mac.
+verify-new-agent: build
+    OUT_DIR="{{outdir}}/new-agent" npx electron apps/desktop/scripts/verify-new-agent.mjs
+
 # Screenshot the audit screen's live-browser thumbnail (evidence the owner can watch the browser).
 viewer-screenshot: build
     @mkdir -p "{{outdir}}"

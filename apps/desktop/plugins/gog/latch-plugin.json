@@ -1,5 +1,7 @@
 {
   "name": "gog",
+  "title": "Gmail and Google Calendar",
+  "summary": "Read and draft email; check and book your calendar.",
   "version": "0.36.0",
   "command": "plow-gog",
   "runtime": {

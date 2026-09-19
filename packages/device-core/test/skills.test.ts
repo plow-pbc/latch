@@ -78,11 +78,49 @@ describe("SkillRegistry", () => {
     expect(reg.skill("camoufox-browsing")?.body).toContain("plow_browser_open");
   });
 
-  it("the built-in browsing skill documents the critical gotchas", () => {
-    expect(BROWSING_SKILL.body).toContain("back");
-    expect(BROWSING_SKILL.body).toContain("use_page");
-    expect(BROWSING_SKILL.body).toContain("fill_secret");
-    expect(BROWSING_SKILL.body).toContain("plow_browser_request");
+  it.each([
+    ["that back does not work here", /`back` does not work/],
+    ["switching to a popup", /use_page/],
+    ["typing a vault value", /fill_secret/],
+    ["widening scope", /plow_browser_request/],
+    // The Safari fallback: the contracts, not the wording. Each regex is
+    // anchored to the sentence or script line that states the rule, so
+    // deleting the rule leaves the row red; a phrasing edit does not.
+    ["telling a hard block from a challenge", /a challenge has something to click\s+or type.*a hard block\s+does not/is],
+    ["not retrying the wall or substituting search", /neither a retry of\s+the same URL.*nor a public web search/is],
+    ["the owner's one-time Safari setting", /Allow JavaScript from Apple Events.*Plugins tab.*Browser use.*Enable/is],
+    ["not falling back to positional UI scripting", /Do not fall back to System Events UI scripting/],
+    ["step 1 handing the window id back", /return id of window 1/],
+    ["a later script taking the window by that id", /window id \(\(item 1 of argv\) as integer\)/],
+    ["the host refused unless every character is a hostname's", /if "abcdefghijklmnopqrstuvwxyz0123456789\.-" does not contain \(c as text\) then error "host is not a host"/],
+    ["the origin check running inside the same expression as the effect", /if \(location\.origin !== \\"https:\/\/" & h & "\\"\) throw new Error\(\\"window is not on the expected origin\\"\); " & item 3 of argv/],
+    ["the expression riding in args, never pasted into the script", /the window id, the site's host and the\s+JavaScript expression are its three args/is],
+    ["never reading the URL back", /never `location\.href` or `location\.search`/],
+    ["typed text riding in the expression, encoded", /percent-encoded by\s+`encodeURIComponent`, inside a DOUBLE-quoted literal/is],
+    ["the first Safari script asking the owner", /Automation dialog that asks the\s+owner/is],
+    ["when to finally report the site as blocked", /only after Safari itself fails to load/i],
+  ])("the built-in browsing skill documents %s", (_what, pattern) => {
+    expect(BROWSING_SKILL.body).toMatch(pattern);
+  });
+
+  // The old recipe read `front document` / `front window`, then a window found
+  // by URL prefix, then one found by title, then System Events' positional
+  // window 1 — each a page the owner could have open elsewhere. Every script
+  // now addresses the window step 1 opened, by Safari's id, and Safari's own
+  // do JavaScript is the only read and act path — this guards the class.
+  // The typing recipe's claim, exercised: encodeURIComponent leaves ' ( ) ! * ~
+  // alone, so only a double-quoted literal survives hostile text. Node's
+  // encodeURIComponent is the browser's.
+  it("the built-in browsing skill's typing recipe survives quotes and backslashes", () => {
+    const hostile = `it's "quoted" \\ back ') + alert(1) + ('`;
+    const expression = `decodeURIComponent("${encodeURIComponent(hostile)}")`;
+    expect(new Function(`return ${expression}`)()).toBe(hostile);
+  });
+
+  it("the built-in browsing skill reads Safari only through its own scripting seam, by window id", () => {
+    expect(BROWSING_SKILL.body).not.toMatch(/front (document|window)/);
+    expect(BROWSING_SKILL.body).not.toMatch(/tell application "System Events"/);
+    expect(BROWSING_SKILL.body).not.toMatch(/entire contents/);
   });
 });
 
@@ -176,15 +214,12 @@ describe("the built-in imessage skill", () => {
     ["the message body column", /\btext\b/],
     ["the typedstream body column", /attributedBody/],
     ["which side sent it", /is_from_me/],
-    ["how a group chat is told apart", /chat_identifier like 'chat%'/],
     ["a name resolved to handles through the contacts skill", /read the .?contacts.? skill\s+for their handles/i],
     ["a name matching several people going back to the owner", /more than one person, ask the owner which/i],
     ["a phone matched on all its digits, its country code taken as Messages does", /match a phone on all its digits[\s\S]*as Messages does/i],
     ["the Apple epoch offset", /978307200/],
-    ["the NSString extraction contract", /NSString/],
-    ["that the contract was validated, not guessed", /591\/591/],
-    ["that a where on text alone is never a search", /a .?where.? on .?text.? alone is never a search/i],
-    ["the search recipe's phrase placeholder inside a string literal", /values \('PHRASE_THE_OWNER_ASKED_FOR'\)/],
+    ["that a text-only query is never a search", /a .?text.?-only query reports real messages as absent/i],
+    ["reads going through the CLI rather than sqlite3", /never .?sqlite3.? against the store/i],
     ["a person reachable under more than one handle, searched by all of them", /more than one handle[\s\S]*every handle/i],
     // The rules, anchored to the sentence that states them.
     ["opening the owner's store read-only", /always .?-readonly.?, and never name the store in .?write_paths/i],
@@ -201,7 +236,7 @@ describe("the built-in imessage skill", () => {
     ["the success criterion for a send", /success criterion is .?is_sent = 1.? and .?error = 0.?/i],
     ["is_delivered not being part of that criterion", /is_delivered.? is not part of it/i],
     ["what a non-zero error means", /error = 22.?\s+is the\s+common one/i],
-    ["byte-identical argv for unattended reads", /byte-identical/i],
+    ["a read's always-allow rule keyed on the subcommand, not the full argv", /keyed on its subcommand, not\s+its full argv/i],
   ])("publishes %s", (_what, pattern) => {
     expect(imessageSkillFor("/Users/testowner").body).toMatch(pattern);
   });
@@ -212,6 +247,12 @@ describe("the built-in imessage skill", () => {
       expect(body).toContain(sql.split("\n")[0].trim());
     }
     expect(body).toContain(`'${IMESSAGE_HANDLE_PLACEHOLDER}'`);
+  });
+
+  it("names plow-messages for reads and carries no recentChats reference", () => {
+    const body = imessageSkillFor("/Users/testowner").body;
+    expect(body).toContain("plow-messages");
+    expect(body).not.toContain("recentChats");
   });
 
   it("publishes no send through plow_run_command, which Messages refuses (-10004)", () => {

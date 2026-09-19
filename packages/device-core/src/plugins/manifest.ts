@@ -8,10 +8,19 @@
  * or launch-time stderr — never the audit log or an agent.
  */
 
+import { AUTOMATION_APPS, QUERYABLE_PERMISSIONS } from "../hostGate/inventory.js";
+
 /** The account connectors this Mac can connect — "Connect Google" is the only
  *  button the Plugins tab can offer, so any other id is a requirement nothing
  *  can ever meet. Refused at the boundary. */
 const ACCOUNT_IDS: ReadonlySet<string> = new Set(["google"]);
+
+/** The permissions this Mac can both check and walk an owner through. */
+const PERMISSION_IDS: ReadonlySet<string> = new Set([
+  "full_disk_access",
+  ...QUERYABLE_PERMISSIONS,
+  ...AUTOMATION_APPS.map((a) => `automation:${a.bundleId}`),
+]);
 
 export class PluginError extends Error {
   constructor(message: string) {
@@ -22,15 +31,18 @@ export class PluginError extends Error {
 
 export type EnvSource = { fixed: string };
 
-/** What a plugin needs before it can work. One kind today — a connector the
- *  owner must connect — keyed so another is a field added, not a reshaping.
- *  Present and empty when the manifest omits it. */
+/** What a plugin needs before it can work: a connector the owner must
+ *  connect, and a macOS permission the owner must grant. Present and empty
+ *  when the manifest omits it. */
 export interface PluginRequires {
   accounts: string[]; // a connector id the app can connect, e.g. "google"
+  permissions: string[]; // a Settings › Permissions row key, e.g. "full_disk_access"
 }
 
 export interface PluginManifest {
   name: string; // ^[a-z][a-z0-9-]{0,31}$
+  title?: string; // what the owner reads on the Plugins tab; absent, the tab shows `name`
+  summary?: string; // what the owner reads on the setup flow; absent, the tab shows no summary
   version: string;
   command: string; // same charset as name; argv[0] agents type
   runtime: {
@@ -113,6 +125,10 @@ export function parseManifest(raw: string): PluginManifest {
 
   const name = typedString(m.name, "manifest name") ?? "";
   if (!SLUG.test(name)) fail("manifest name must be lowercase letters, digits and dashes");
+  const title = typedString(m.title, "manifest title");
+  if (title !== undefined && !title.trim()) fail("manifest title must not be blank");
+  const summary = typedString(m.summary, "manifest summary");
+  if (summary !== undefined && !summary.trim()) fail("manifest summary must not be blank");
   const command = typedString(m.command, "manifest command") ?? "";
   if (!SLUG.test(command)) fail("manifest command must be lowercase letters, digits and dashes");
   const version = typedString(m.version, "manifest version") ?? "";
@@ -194,6 +210,10 @@ export function parseManifest(raw: string): PluginManifest {
       if (!ACCOUNT_IDS.has(e)) fail("requires.accounts entries must name an account connector this Mac offers");
       return e;
     }),
+    permissions: strList(req.permissions, "requires.permissions").map((e) => {
+      if (!PERMISSION_IDS.has(e)) fail("requires.permissions entries must name a permission this Mac can check");
+      return e;
+    }),
   };
 
   const hooks = obj(m.hooks);
@@ -202,6 +222,8 @@ export function parseManifest(raw: string): PluginManifest {
 
   return {
     name,
+    ...(title === undefined ? {} : { title }),
+    ...(summary === undefined ? {} : { summary }),
     version,
     command,
     runtime: { binaries },

@@ -186,6 +186,10 @@ export interface BrowserSessionInfo {
  * few hundred MB, so there is a limit and it is said out loud when it is hit. */
 const DEFAULT_MAX_BROWSERS = 8;
 
+/** open() finding its own session already being closed by the off switch —
+ * one message for both shapes ensureReady() can settle with mid-race. */
+const TURNED_OFF_WHILE_STARTING = "browser use was turned off while the browser was starting";
+
 /**
  * A short one-way name for a session.
  *
@@ -317,9 +321,26 @@ export class BrowserSessions {
     try {
       await host.ensureReady(headed);
     } catch (error: unknown) {
+      // The off switch wins this race too: closeOpen() already called
+      // close() on this session, whose own "quit" is why the child died
+      // before it ever reported ready. That close owns the teardown —
+      // rollBack() would shut the same host down and remove the same
+      // profile a second time, concurrently with it.
+      if (session.closing) {
+        await session.closing;
+        return { status: "error", error: TURNED_OFF_WHILE_STARTING };
+      }
       await rollBack();
       const message = error instanceof Error ? error.message : String(error);
       return { status: "error", error: `browser failed to start: ${message}` };
+    }
+
+    // The claim was taken before this awaited, so the off switch's
+    // closeOpen() could already have found this session and started closing
+    // it — a browser this open must not publish as opened.
+    if (session.closing) {
+      await session.closing;
+      return { status: "error", error: TURNED_OFF_WHILE_STARTING };
     }
 
     // Same order as extend(), and for the same reason: a session the owner's
@@ -634,15 +655,16 @@ export class BrowserSessions {
   }
 
   /**
-   * Every session goes down at once. Serially, quitting could spend one
+   * Every open session closes, without refusing the next open — `closeAll`
+   * latches that refusal for the app's quit path, and the owner turning the
+   * plugin off must be able to turn it back on and open a fresh browser a
+   * moment later.
+   *
+   * Concurrently, not one at a time: serially, this could spend one
    * browser's whole shutdown budget before the next session was even asked to
-   * stop — and a quit that outruns this leaves a disposable profile, cookies
-   * and all, on disk. They share nothing, so nothing here has to be ordered.
+   * stop. They share nothing, so nothing here has to be ordered.
    */
-  async closeAll(reason: string): Promise<void> {
-    // Latched before the snapshot, so an open that resumes mid-shutdown is
-    // refused rather than registering behind us.
-    this.quitting = true;
+  async closeOpen(reason: string): Promise<void> {
     // settled, not fail-fast: one close that throws (a full disk on the audit
     // append) must not resolve this while a sibling browser is still inside
     // its shutdown timeout — the caller quits the app on this promise. The
@@ -652,6 +674,17 @@ export class BrowserSessions {
     );
     const failed = results.find((r) => r.status === "rejected");
     if (failed) throw failed.reason;
+  }
+
+  /**
+   * Every session goes down at once, and nothing opens again after — a quit
+   * that outruns this leaves a disposable profile, cookies and all, on disk.
+   */
+  async closeAll(reason: string): Promise<void> {
+    // Latched before the snapshot, so an open that resumes mid-shutdown is
+    // refused rather than registering behind us.
+    this.quitting = true;
+    await this.closeOpen(reason);
   }
 
   /**

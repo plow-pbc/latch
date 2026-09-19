@@ -2,12 +2,13 @@
    state after each action; this file only redraws that state inside one
    persistent shell. The page is sandboxed and receives no Node primitives. */
 
-import { el, icon } from "./dom.js";
-import { googleConnectorCard } from "./connectorsCard.js";
-import { singleFlight } from "./onboardingAction.js";
+import { el, icon, switchEl } from "./dom.js";
+import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { verifyIdlePresentation } from "./onboardingVerify.js";
+import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
+import { accessPrimary, clearMissed, runGrants } from "./onboardingGrants.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -18,26 +19,38 @@ const root = document.getElementById("root");
 let state = null;
 let primaryAction = null;
 let expiryTimer = null;
-let fullDiskAccess = null;
 /** The Availability screen's two switches, read fresh from the OS/disk on
  * entering the step and on window focus — never remembered across steps. */
 let availability = null;
 /** Set by availabilityScreen(); moves the live switches to `availability`
  * without a re-render, so a click keeps its focus. */
 let syncAvailability = null;
-let fullDiskProbe = null;
-let fullDiskRequestBusy = false;
-let restoreTelemetryFocus = false;
+/** The Plugins tab's state (pluginsGet): the rows setup switches and the
+ * ordered grants Access walks. Read fresh on entering either step and on
+ * window focus — null on every other step. */
+let pluginsState = null;
+/** Access's own run: the grants the owner skipped (kept across Back and
+ * Availability, dropped when setup leaves those steps), the one whose flow is
+ * running (the run's own, set until its act returns), and the one that
+ * stopped it ({ id, error }, cleared on any step change). */
+const skipped = new Set();
+let running = null;
+let missed = null;
+/** The id of the switch a redraw hands focus back to, so a click keeps it. */
+let restoreFocus = null;
 let doneAgent = null;
-let connectorState = null;
+let doneBrowserEnabled = null;
+/** The Gatekeeper screen's live pieces. Built on entering the step and updated
+ * in place, so typing never loses its focus to a redraw. */
+let gatekeeper = null;
+let gatekeeperPresets = null;
+/** The deck last shown, so an edited draft comes back from Plugins with its own examples. */
+let lastDeck = null;
+const PREVIEW_PAUSE_MS = 1000;
 const mutate = singleFlight(() => state?.busy === true);
 
 async function update(action) {
   await mutate(async () => apply(await action()));
-}
-
-async function updateConnectors(action) {
-  applyConnectors(await action());
 }
 
 function svgElement(tag, attrs = {}) {
@@ -61,7 +74,7 @@ const screen = el("section", { class: "wizard-screen", attrs: { "aria-live": "po
 const body = el("div", { class: "wizard-body" }, [screen]);
 const backButton = button("", "nav-back", () => update(() => window.domo.onboardingBack()));
 backButton.append(arrowIcon("back"), document.createTextNode("Back"));
-const dots = [0, 1, 2, 3, 4].map(() => el("i", { class: "foot-dot" }));
+const dots = [0, 1, 2, 3, 4, 5].map(() => el("i", { class: "foot-dot" }));
 const dotRow = el("span", { class: "foot-dots", attrs: { "aria-hidden": "true" } }, dots);
 const primaryLabel = el("span", { text: "Get started" });
 const primaryArrow = arrowIcon("next");
@@ -151,8 +164,8 @@ const TRUST_ROWS = [
     glyph: "sliders",
   },
   {
-    title: "A second AI checks the risky stuff",
-    detail: "An independent reviewer catches actions that don't look right.",
+    title: "The Plow gatekeeper reviews every data request",
+    detail: "The Plow adversarial reviewer catches actions that don't look right.",
     glyph: "shieldCheck",
   },
   {
@@ -173,15 +186,229 @@ function privacyScreen() {
     ]),
   );
   return el("div", { class: "step-inner" }, [
+    el("div", { class: "waiting-status verified" }, [
+      icon("checkmark", { class: "verified-check", strokeWidth: "1.7" }),
+      el("span", { class: "status-text", text: "Verified. This Mac is linked." }),
+    ]),
     el("div", { class: "head-center" }, [
-      el("h1", { text: "Privacy" }),
+      el("h1", { text: "Stay in control of how your AI agents use your data" }),
       el("p", {
         class: "subhead",
         text: "Your agents can get things done without giving up control of your data.",
       }),
     ]),
     el("div", { class: "trust-rows" }, rows),
+    note(state),
   ]);
+}
+
+const MINI_STROKE = "rgba(240,240,232,.34)";
+const PORT_STROKE = "rgba(240,240,232,.42)";
+
+/** The Mac mini, drawn — monochrome lines, no logo. Its status light and
+ * underglow pulse when a request gets through. */
+function macMini() {
+  const svg = svgElement("svg", { viewBox: "0 0 120 86", fill: "none", "aria-hidden": "true" });
+  const defs = svgElement("defs");
+  const grad = (tag, id, attrs, stops) => {
+    const g = svgElement(tag, { id, ...attrs });
+    for (const [offset, color, opacity] of stops) {
+      g.appendChild(svgElement("stop", { offset, "stop-color": color, "stop-opacity": opacity }));
+    }
+    return g;
+  };
+  defs.append(
+    grad("linearGradient", "gk-mm-top", { x1: "0", y1: "0", x2: "0", y2: "1" }, [["0", "#1b1c18", "1"], ["1", "#222420", "1"]]),
+    grad("linearGradient", "gk-mm-front", { x1: "0", y1: "0", x2: "0", y2: "1" }, [["0", "#191a16", "1"], ["1", "#121310", "1"]]),
+    grad("radialGradient", "gk-mm-under", { cx: ".5", cy: ".5", r: ".5" }, [["0", "#d5ef8a", ".55"], ["1", "#d5ef8a", "0"]]),
+    grad("radialGradient", "gk-mm-led", { cx: ".5", cy: ".5", r: ".5" }, [["0", "#eaffb0", "1"], [".35", "#d5ef8a", ".8"], ["1", "#d5ef8a", "0"]]),
+  );
+  svg.append(
+    defs,
+    svgElement("ellipse", { class: "gk-glow", cx: "60", cy: "77", rx: "54", ry: "6", fill: "url(#gk-mm-under)" }),
+    svgElement("ellipse", { cx: "60", cy: "75.5", rx: "50", ry: "2.6", fill: "rgba(0,0,0,.55)" }),
+    svgElement("path", { d: "M8.5 36 H111.5 V65 Q111.5 74 102 74 H18 Q8.5 74 8.5 65 Z", fill: "url(#gk-mm-front)", stroke: MINI_STROKE, "stroke-width": "1.3", "stroke-linejoin": "round" }),
+    svgElement("path", { d: "M17 23 Q18 18 26 18 H94 Q102 18 103 23 L111 32 Q113 36.5 107 36.5 H13 Q7 36.5 9 32 Z", fill: "url(#gk-mm-top)", stroke: MINI_STROKE, "stroke-width": "1.3", "stroke-linejoin": "round" }),
+    svgElement("path", { d: "M13 36 H107", stroke: "rgba(240,240,232,.12)", "stroke-width": "1" }),
+    svgElement("rect", { x: "23", y: "53", width: "3.6", height: "10", rx: "1.8", stroke: PORT_STROKE, "stroke-width": "1.1" }),
+    svgElement("rect", { x: "31", y: "53", width: "3.6", height: "10", rx: "1.8", stroke: PORT_STROKE, "stroke-width": "1.1" }),
+    svgElement("circle", { cx: "96", cy: "58", r: "2.3", stroke: PORT_STROKE, "stroke-width": "1.1" }),
+    svgElement("circle", { class: "gk-glow", cx: "86", cy: "58", r: "5", fill: "url(#gk-mm-led)" }),
+    svgElement("circle", { cx: "86", cy: "58", r: ".9", fill: "rgba(240,240,232,.5)" }),
+  );
+  return el("div", { class: "gk-mac" }, [el("div", { class: "gk-halo" }), svg]);
+}
+
+/** One row as its latest result reads; the beam scans while any row is out. */
+function paintRow(index) {
+  const g = gatekeeper;
+  const { state: rowState, reason } = rowView(g.results[index]);
+  const row = g.view.rows[index];
+  row.node.className = `gk-row ${rowState}${g.open.has(index) ? " open" : ""}`;
+  row.pill.setAttribute("aria-expanded", String(g.open.has(index)));
+  const word = verdictWord(rowState);
+  row.end.textContent = rowState === "ok" ? "✓" : rowState === "no" ? "✕" : rowState === "checking" ? word : "";
+  row.word.textContent = word;
+  row.reason.textContent = reason ? ` — ${reason}` : "";
+  // Restart the flare so a re-review flashes again.
+  const flare = el("span", { class: "gk-flare" });
+  row.flare.replaceWith(flare);
+  row.flare = flare;
+  g.view.field.classList.toggle("reviewing", g.results.some((result) => !result));
+}
+
+function lightMac(view) {
+  view.mac.classList.remove("lit");
+  void view.mac.offsetWidth;
+  view.mac.classList.add("lit");
+  setTimeout(() => view.mac.classList.remove("lit"), 260);
+}
+
+/** Every row back to checking, for `text`; an open row stays open to watch its
+ * re-review. Answers still out for older text land on a stale generation and
+ * are dropped. */
+function invalidate(g, text) {
+  g.lastText = text.trim();
+  g.results = g.results.map(() => null);
+  g.results.forEach((_, i) => paintRow(i));
+  return ++g.gen;
+}
+
+/** Review every row of the current deck against the text in the field. A newer
+ * run supersedes an older one; its late answers are dropped, not cancelled. */
+function runPreview() {
+  const g = gatekeeper;
+  if (!g?.view) return;
+  // A pending debounce is for text this run already covers (or a deck it replaced).
+  clearTimeout(g.timer);
+  const text = g.text;
+  const gen = invalidate(g, text);
+  g.results.forEach((_, i) => {
+    window.domo.gatekeeperPreview(g.deck, i, text)
+      .catch(() => ({ verdict: "ask", reason: "", cause: "unavailable" }))
+      .then((result) => {
+        if (gatekeeper !== g || g.gen !== gen) return;
+        g.results[i] = result;
+        paintRow(i);
+        if (result.verdict === "allow") setTimeout(() => lightMac(g.view), 420);
+      });
+  });
+}
+
+function schedulePreview() {
+  clearTimeout(gatekeeper.timer);
+  gatekeeper.timer = setTimeout(() => runPreview(), PREVIEW_PAUSE_MS);
+}
+
+function choosePreset(key) {
+  const g = gatekeeper;
+  g.deck = lastDeck = key;
+  g.text = gatekeeperPresets[key].text;
+  g.results = gatekeeperPresets[key].rows.map(() => null);
+  g.open.clear();
+  g.view = null; // render() rebuilds a screen with no view
+  render();
+  runPreview();
+}
+
+function gatekeeperScreen() {
+  const head = el("div", { class: "head-center" }, [
+    el("h1", { text: "Meet the Plow Gatekeeper" }),
+    el("p", { class: "subhead" }, [
+      document.createTextNode(
+        "Plow's adversarial reviewer protects your data from malicious queries, while allowing your agents to get useful work done. ",
+      ),
+      el("strong", { text: "What access should it allow to your Mac?" }),
+    ]),
+  ]);
+  const g = gatekeeper;
+  if (!g || !gatekeeperPresets) return el("div", { class: "step-inner gatekeeper-screen" }, [head, note(state)]);
+
+  // Each default replaces the text with its preset; it is an action, not a state.
+  const defaults = el("div", { class: "gk-defaults" }, [
+    el("span", { text: "Use a default:" }),
+    button("Personal assistant", "gk-default", () => choosePreset("home")),
+    button("Executive assistant", "gk-default", () => choosePreset("work")),
+  ]);
+
+  const field = el("textarea", {
+    class: "gk-text",
+    attrs: { rows: "3", spellcheck: "false", "aria-label": "What access should it allow to your Mac?" },
+  });
+  field.value = g.text;
+  field.addEventListener("input", () => {
+    g.text = field.value;
+    // An edit retires the shown verdicts at once; only the review waits for a pause.
+    if (g.text.trim() === g.lastText) return;
+    invalidate(g, g.text);
+    schedulePreview();
+  });
+
+  const rows = gatekeeperPresets[g.deck].rows.map(({ label, icon: glyph, command }, index) => {
+    const end = el("span", { class: "gk-end" });
+    const pill = el("button", { class: "gk-pill", attrs: { type: "button" } }, [
+      icon(glyph, { strokeWidth: "1.7" }),
+      el("span", { class: "gk-label", text: label }),
+      end,
+    ]);
+    const flare = el("span", { class: "gk-flare" });
+    const word = el("span", { class: "gk-word" });
+    const reason = el("span");
+    // The capability lines the reviewer reads, then what it made of them.
+    const why = el("div", { class: "gk-why" }, [
+      el("div", { class: "gk-detail" }, [
+        el("div", { class: "gk-command" }, command.map((line) => el("div", { text: line }))),
+        el("p", { class: "gk-verdict" }, [el("strong", { text: "Gatekeeper Verdict: " }), word, reason]),
+      ]),
+    ]);
+    const node = el("div", { class: "gk-row" }, [el("div", { class: "gk-lane" }, [pill, flare]), why]);
+    pill.addEventListener("click", () => {
+      if (g.open.has(index)) g.open.delete(index);
+      else g.open.add(index);
+      node.classList.toggle("open", g.open.has(index));
+      pill.setAttribute("aria-expanded", String(g.open.has(index)));
+    });
+    return { node, pill, end, word, reason, flare };
+  });
+
+  const mac = macMini();
+  const beamField = el("div", { class: "gk-field" }, [
+    mac,
+    el("div", { class: "gk-beam", attrs: { "aria-hidden": "true" } }),
+    el("div", { class: "gk-list" }, rows.map((r) => r.node)),
+  ]);
+  g.view = { field: beamField, rows, mac };
+  rows.forEach((_, i) => paintRow(i));
+
+  return el("div", { class: "step-inner gatekeeper-screen" }, [
+    head,
+    defaults,
+    field,
+    beamField,
+    note(state),
+  ]);
+}
+
+async function enterGatekeeper() {
+  gatekeeperPresets ??= await window.domo.gatekeeperPresets();
+  if (state?.step !== "gatekeeper" || !gatekeeperPresets) return;
+  const deck = lastDeck = presetFor(state.purpose, gatekeeperPresets) ?? lastDeck ?? "home";
+  gatekeeper = {
+    deck,
+    text: state.purpose,
+    gen: 0,
+    lastText: null,
+    timer: null,
+    view: null,
+    open: new Set(),
+    results: gatekeeperPresets[deck].rows.map(() => null),
+  };
+  render();
+  runPreview();
+}
+
+function continueFromGatekeeper() {
+  return update(() => window.domo.onboardingAdvance(gatekeeper?.text ?? state.purpose));
 }
 
 function copyButton(value) {
@@ -245,19 +472,17 @@ function startActivationCountdown(node, until) {
 
 function verifyScreen() {
   const activation = state.activation;
-  const verified = state.step === "verified";
-  const idle = !activation && !verified
+  const idle = !activation
     ? verifyIdlePresentation({ busy: state.busy, message: state.message })
     : null;
-  const heading = [el("h1", { text: "Verify your phone to connect this Mac" })];
-  if (activation || !verified) {
-    heading.push(el("p", {
-      class: "subhead",
-      text: "Send the message below from the phone number you want to use with Plow.",
-    }));
-  }
   const parts = [
-    el("div", { class: "head-center" }, heading),
+    el("div", { class: "head-center" }, [
+      el("h1", { text: "Verify your phone to connect this Mac" }),
+      el("p", {
+        class: "subhead",
+        text: "Send the message below from the phone number you want to use with Plow.",
+      }),
+    ]),
   ];
 
   if (activation) {
@@ -284,57 +509,38 @@ function verifyScreen() {
     parts.push(el("p", { class: "state-note", text: idle.text, attrs: { role: "status" } }));
   }
 
-  if (activation || verified) {
-    const status = el("div", { class: `waiting-status${verified ? " verified" : ""}` }, [
-      ...(verified
-        ? [icon("checkmark", { class: "verified-check", strokeWidth: "1.7" })]
-        : state.activationStale
-          ? []
-          : [el("span", { class: "waiting-spinner" })]),
+  if (activation) {
+    parts.push(el("div", { class: "waiting-status" }, [
+      ...(state.activationStale ? [] : [el("span", { class: "waiting-spinner" })]),
       el("span", {
         class: "status-text",
-        text: verified
-          ? "Verified. This Mac is linked."
-          : state.activationStale
-            ? "Still not signed in"
-            : "Waiting for your text…",
+        text: state.activationStale ? "Still not signed in" : "Waiting for your text…",
       }),
-    ]);
-    parts.push(status);
+    ]));
 
-    if (activation && !verified) {
-      const countdown = el("p", { class: "countdown", attrs: { "aria-live": "off" } });
-      if (!state.activationStale) startActivationCountdown(countdown, activation.pollUntil);
-      parts.push(countdown);
-    }
+    const countdown = el("p", { class: "countdown", attrs: { "aria-live": "off" } });
+    if (!state.activationStale) startActivationCountdown(countdown, activation.pollUntil);
+    parts.push(countdown);
 
-    if (state.activationStale && !verified) {
+    if (state.activationStale) {
       parts.push(el("div", { class: "inline-actions" }, [
         button("Try again", "link-button", () => update(() => window.domo.onboardingNewCode())),
       ]));
     }
 
-    if (activation) {
-      const activate = button(
-        "",
-        `verify-activate${verified ? " done" : ""}`,
-        verified
-          ? null
-          : async () => {
-              activate.disabled = true;
-              activate.classList.add("sending");
-              await update(() => window.domo.onboardingOpenMessages());
-            },
-      );
+    {
+      const activate = button("", "verify-activate", async () => {
+        activate.disabled = true;
+        activate.classList.add("sending");
+        await update(() => window.domo.onboardingOpenMessages());
+      });
       activate.append(
         icon("messages", { strokeWidth: "1.7" }),
         document.createTextNode("Open Messages to activate"),
       );
-      activate.disabled = verified;
-      activate.setAttribute("aria-disabled", String(activate.disabled));
 
       const actions = [activate];
-      if (!verified && !state.activationStale) {
+      if (!state.activationStale) {
         actions.push(el("p", { class: "alternate" }, [
           button("Still waiting? Send it again", "link-button", () =>
             update(() => window.domo.onboardingNewCode()),
@@ -360,33 +566,54 @@ function verifyScreen() {
   return el("div", { class: "step-inner" }, parts);
 }
 
-async function refreshFullDiskAccess(force = false) {
-  if (!force && fullDiskAccess !== null) return;
-  if (fullDiskProbe) return fullDiskProbe;
-  fullDiskProbe = window.domo.capabilitiesGet()
-    .then((capabilities) => {
-      fullDiskAccess = capabilities?.fullDiskAccess === true;
-    })
-    .catch(() => {
-      fullDiskAccess = false;
-    })
-    .finally(() => {
-      fullDiskProbe = null;
-      if (state?.step === "data") render();
-    });
-  return fullDiskProbe;
+const onPluginStep = () => state?.step === "plugins" || state?.step === "access";
+
+/** Every plugins answer — a refresh, a switch, a grant's act — lands here.
+ * One older than an answer already shown is dropped (a focus refresh must not
+ * undo a switch), and so is one that lands after setup left both steps. */
+const showPlugins = latestOnly((next) => {
+  if (!onPluginStep()) return;
+  missed = clearMissed(missed, next.grants);
+  pluginsState = next;
+  render();
+});
+
+async function refreshPlugins() {
+  await showPlugins(() => window.domo.pluginsGet());
 }
 
-async function requestFullDiskAccess() {
-  fullDiskRequestBusy = true;
+/** Access's one button: the list's flows in order; a grant that did not land
+ * stops the run on its row. The renderer's shared single-flight gate owns
+ * every requirement action, including met-row repeats. */
+const actRequirement = singleFlight(() => running !== null);
+
+function runRequirement(id) {
+  return actRequirement(async () => {
+    running = id;
+    render();
+    try {
+      return await whenAnswered(window.domo.requirementsAct(id), showPlugins);
+    } finally {
+      running = null;
+      render();
+    }
+  });
+}
+
+async function startGrants() {
+  missed = null; // the run's first redraw must not still show the last miss
+  missed = await runGrants({
+    act: runRequirement,
+    getState: () => pluginsState,
+    stillHere: () => state?.step === "access",
+  }, skipped);
   render();
-  try {
-    await window.domo.fullDiskGrantFlow();
-  } finally {
-    await refreshFullDiskAccess(true);
-    fullDiskRequestBusy = false;
-    if (state?.step === "data") render();
-  }
+}
+
+/** A met requirement can offer another action without restarting Access's
+ * open-grant runner. Its id and label both come from the model. */
+async function repeatGrant(id) {
+  await runRequirement(id).catch(() => null);
 }
 
 async function refreshAvailability() {
@@ -410,11 +637,7 @@ function toggleRow(box, strong, detail, extra = []) {
       ]),
       ...extra,
     ]),
-    el("label", { class: "switch" }, [
-      box,
-      el("span", { class: "track", attrs: { "aria-hidden": "true" } }),
-      el("span", { class: "knob", attrs: { "aria-hidden": "true" } }),
-    ]),
+    switchEl(box),
   ]);
 }
 
@@ -449,16 +672,16 @@ function availabilityScreen() {
   syncAvailability = sync;
   sync();
 
-  return el("div", { class: "data-screen availability-screen" }, [
+  return el("div", { class: "form-screen availability-screen" }, [
     el("div", { class: "step-inner" }, [
       el("div", { class: "head-center" }, [
         el("h1", { text: "Keep this Mac reachable" }),
         el("p", {
           class: "subhead",
-          text: "Your agents work through this Mac. When it's off, asleep, or Plow Latch isn't running, they can't reach your email, calendar, messages, or browser — they'll wait until it's back.",
+          text: "Your agents work through this Mac. When it's off, asleep, or Plow Latch isn't running, they can't reach your email, calendar, messages, or browser.",
         }),
       ]),
-      el("div", { class: "data-consent" }, [
+      el("div", { class: "form-block" }, [
         toggleRow(
           launchBox,
           "Open Plow Latch when you log in. ",
@@ -471,15 +694,36 @@ function availabilityScreen() {
           "Prevents idle and display sleep on power. On battery it sleeps normally, and closing the lid still sleeps it.",
         ),
       ]),
-      el("p", {
-        class: "subhead availability-note",
-        text: "Once setup is done, Plow Latch lives in your menu bar and closing its window doesn't quit it. Change either of these anytime in Settings → Availability.",
-      }),
     ]),
   ]);
 }
 
-function dataScreen() {
+function pluginRow(row) {
+  const box = el("input", { attrs: { id: `plugin-${row.name}`, type: "checkbox", "aria-label": `Use ${row.title}` } });
+  box.checked = row.status !== "off";
+  box.addEventListener("change", async () => {
+    restoreFocus = box.id;
+    await showPlugins(() => window.domo.pluginsSetEnabled(row.name, box.checked));
+  });
+  const tags = row.status === "off"
+    ? []
+    : row.requirements
+      .filter((req) => req.status !== "met")
+      .map((req) => el("span", { class: "item-tag required", text: `Required: ${req.title}` }));
+  return el("div", { class: `item-row${row.status === "off" ? " off" : ""}` }, [
+    el("span", { class: "item-icon" }, [
+      icon(row.kind === "Browser" ? "browser" : "command", { strokeWidth: "1.7" }),
+    ]),
+    el("span", { class: "item-copy" }, [
+      el("span", { class: "item-name", text: row.title }),
+      row.summary ? el("span", { class: "item-detail", text: row.summary }) : null,
+      tags.length ? el("span", { class: "item-tags" }, tags) : null,
+    ]),
+    switchEl(box),
+  ]);
+}
+
+function pluginsScreen() {
   const telemetry = el("input", {
     attrs: {
       id: "telemetry-toggle",
@@ -489,121 +733,149 @@ function dataScreen() {
   });
   telemetry.checked = state.telemetryEnabled === true;
   telemetry.addEventListener("change", () => {
-    restoreTelemetryFocus = true;
+    restoreFocus = telemetry.id;
     void update(() => window.domo.onboardingSetTelemetry(telemetry.checked));
   });
 
-  let permissionControl;
-  if (fullDiskAccess === true) {
-    permissionControl = button("", "req-btn granted", null);
-    permissionControl.append(
-      icon("checkmark", { strokeWidth: "1.7" }),
-      document.createTextNode("Granted"),
+  const examples = (pluginsState?.rows ?? []).filter((row) => row.example);
+  const parts = [
+    el("div", { class: "head-center" }, [
+      el("h1", { text: "Give your agents superpowers" }),
+      el("p", {
+        class: "subhead",
+        text: "Plugins teach your agent how to reliably use your Mac",
+      }),
+      examples.length ? el("div", { class: "plugin-examples", attrs: { "aria-label": "Things you can ask" } },
+        examples.map((row) => el("span", { class: "plugin-example" }, [
+          el("small", { text: row.title }),
+          el("span", { text: `“${row.example}”` }),
+        ]))) : null,
+    ]),
+  ];
+  if (pluginsState) {
+    parts.push(
+      el("div", { class: "item-rows" }, pluginsState.rows.map(pluginRow)),
     );
-    permissionControl.disabled = true;
-  } else {
-    permissionControl = button(
-      fullDiskRequestBusy || fullDiskAccess === null ? "Checking…" : "Request…",
-      "req-btn",
-      fullDiskRequestBusy || fullDiskAccess === null ? null : requestFullDiskAccess,
-    );
-    permissionControl.disabled = fullDiskRequestBusy || fullDiskAccess === null;
   }
+  parts.push(toggleRow(
+    telemetry,
+    "Share usage data so we can improve Plow. ",
+    "Never your messages or your data.",
+  ));
+  // A local read failing has nothing busy about it — "Talking to Plow…" would
+  // be wrong here, so only an actual error renders.
+  if (state.message) parts.push(note(state));
+  return el("div", { class: "form-screen" }, [el("div", { class: "step-inner" }, parts)]);
+}
 
-  return el("div", { class: "data-screen" }, [
+function statusLine(tone, text, lead = null) {
+  return el("span", { class: `item-status ${tone}` }, [lead, el("span", { text })]);
+}
+
+/** One grant's row. Its words all come from the model — the renderer never
+ * tells grants apart by id. A running flow has no Skip: the grant panel has
+ * its own close, and closing it is a miss, which does. */
+function grantRow(grant) {
+  let tone = "";
+  let line = null;
+  let control = null;
+  if (grant.status === "met") {
+    const repeat = grant.repeatAction
+      ? button(grant.repeatAction, "link-button", () => void repeatGrant(grant.id))
+      : null;
+    if (repeat) repeat.disabled = running !== null;
+    control = el("span", { class: "item-chip" }, [
+      icon("checkmark", { strokeWidth: "1.7" }),
+      document.createTextNode(grant.done),
+      repeat,
+    ]);
+    if (grant.notice) line = statusLine(grant.notice.noteKind, grant.notice.message);
+  } else if (grant.status === "relaunch") {
+    line = statusLine("done", "Granted: relaunch to finish");
+  } else if (running === grant.id) {
+    tone = " running";
+    line = statusLine("live", grant.waiting, el("span", { class: "waiting-spinner" }));
+  } else if (missed?.id === grant.id) {
+    line = statusLine("error", missed.error || "That didn't finish, so nothing changed.");
+    control = button("Skip", "link-button", () => {
+      skipped.add(grant.id);
+      void startGrants();
+    });
+  } else if (skipped.has(grant.id)) {
+    line = statusLine("skipped", "Skipped. Finish anytime in Settings\u00a0›\u00a0Plugins.");
+    control = button("Set up", "link-button", () => {
+      skipped.delete(grant.id);
+      render();
+    });
+  }
+  return el("div", { class: `item-row${tone}` }, [
+    el("span", { class: "item-icon" }, [icon("access", { strokeWidth: "1.7" })]),
+    el("span", { class: "item-copy" }, [
+      el("span", { class: "item-name", text: grant.title }),
+      el("span", { class: "item-for", text: `For ${grant.plugins.join(" · ")}` }),
+      el("span", { class: "item-detail", text: grant.detail }),
+      line,
+    ]),
+    control ? el("span", { class: "item-control" }, [control]) : null,
+  ]);
+}
+
+function accessScreen() {
+  return el("div", { class: "form-screen" }, [
     el("div", { class: "step-inner" }, [
       el("div", { class: "head-center" }, [
-        el("h1", { text: "Your data & permissions" }),
-        el("p", { class: "subhead", text: "You can change any of these anytime in Settings." }),
+        el("h1", { text: "Grant access" }),
+        el("p", {
+          class: "subhead",
+          text: "One at a time. Skip anything and it'll wait for you in Settings\u00a0›\u00a0Plugins.",
+        }),
       ]),
-      el("div", { class: "data-consent" }, [
-        el("div", { class: "section-heading", text: "Help make Plow better?" }),
-        toggleRow(
-          telemetry,
-          "Share usage data so we can improve Plow. ",
-          "Never your messages or your data.",
-        ),
-      ]),
-      el("div", { class: "data-divider" }),
-      el("div", { class: "section-label permission-label", text: "Permissions" }),
-      el("div", { class: "permission-rows" }, [
-        el("div", { class: "permission-row" }, [
-          el("span", { class: "permission-icon" }, [
-            icon("hardDrive", { strokeWidth: "1.7" }),
-          ]),
-          el("span", { class: "permission-copy" }, [
-            el("span", { class: "permission-name" }, [
-              document.createTextNode("Full Disk Access "),
-              el("span", { class: "optional-label", text: "Optional" }),
-            ]),
-            el("span", {
-              class: "permission-detail",
-              text: "Plow Latch reads your Messages right on your Mac, so you never miss the texts that matter. Apple keeps Messages behind this permission. Only what you approve an agent to read is ever sent to it.",
-            }),
-          ]),
-          el("span", { class: "permission-control" }, [permissionControl]),
-        ]),
-      ]),
+      el("div", { class: "item-rows" }, (pluginsState?.grants ?? []).map(grantRow)),
     ]),
   ]);
 }
 
-function connectScreen() {
-  const current = connectorState ?? {
-    busy: true,
-    message: "",
-    noteKind: "error",
-    loading: true,
-    google: { accounts: [], connecting: false },
-  };
-  const actions = {
-    connect: () => updateConnectors(() => window.domo.connectorsConnect()),
-    disconnect: (account) => updateConnectors(
-      () => window.domo.connectorsDisconnect(account),
-    ),
-    setDefault: (account) => updateConnectors(
-      () => window.domo.connectorsSetDefault(account),
-    ),
-  };
-  const parts = [
-    el("div", { class: "head-center" }, [
-      el("h1", { text: "Connect your accounts" }),
-      el("p", {
-        class: "subhead",
-        text: "Connect Plow Latch to your most helpful accounts.",
-      }),
-    ]),
-    el("div", { class: "provider-groups" }, [
-      googleConnectorCard(current, actions),
-    ]),
-  ];
-  if (current.message) {
-    parts.push(el("p", {
-      class: `state-note ${current.noteKind} connector-note`,
-      text: current.message,
-      attrs: { role: "status" },
-    }));
-  }
-  return el("div", { class: "connect-screen step-inner" }, parts);
-}
-
 function doneScreen() {
-  const actions = [];
+  const loadingBrowser = doneBrowserEnabled === null;
+  const enablingBrowser = doneBrowserEnabled === false;
+  const importPasswords = button(
+    enablingBrowser ? "Enable Browser & import passwords" : "Import passwords",
+    "nav-next",
+    () => update(() => window.domo.onboardingFinish(
+      enablingBrowser ? "enable-browser-and-import" : "import",
+    )),
+  );
+  importPasswords.setAttribute("autofocus", "");
+  importPasswords.disabled = loadingBrowser;
+  const actions = [importPasswords];
   if (doneAgent) {
-    actions.push(button(`Text ${doneAgent.name}`, "nav-next", async () => {
+    actions.push(button(`Text ${doneAgent.name}`, "done-tertiary", async () => {
       await window.domo.cloudOpenMessages(doneAgent.agentId);
     }));
   }
   actions.push(button(
-    "Explore the app",
-    doneAgent ? "nav-back done-explore" : "nav-next",
+    "Not now",
+    "done-tertiary",
     () => update(() => window.domo.onboardingFinish()),
   ));
-  return el("div", { class: "done-wrap" }, [
-    el("div", { class: "done-badge" }, [
-      icon("checkmark", { strokeWidth: "2.4" }),
-    ]),
-    el("h1", { text: "You're all set" }),
+  const outcomes = [
+    ["banking", "Reconcile bank deposits and catch payment problems."],
+    ["shopping", "Negotiate and verify an Amazon credit."],
+    ["healthcare", "Arrange follow-up care through Kaiser."],
+    ["travel", "Cancel Hipcamp bookings before their refund deadlines."],
+  ];
+  return el("div", { class: "done-wrap password-finish" }, [
+    el("span", { class: "done-key" }, [icon("key", { strokeWidth: "1.8" })]),
+    el("h1", { text: "Put your passwords to work" }),
+    el("p", {
+      class: "subhead",
+      text: "Import passwords so your agents can securely sign in and get things done in your browser.",
+    }),
+    el("div", { class: "browser-outcomes" }, outcomes.map(([label, text]) =>
+      el("div", { class: "browser-outcome" }, [
+        el("span", { class: "outcome-dot", attrs: { "aria-hidden": "true" } }),
+        el("span", {}, [el("small", { text: label }), el("span", { text })]),
+      ]))),
     el("div", { class: "done-actions" }, actions),
   ]);
 }
@@ -611,18 +883,18 @@ function doneScreen() {
 function screenForStep() {
   if (state.step === "welcome") return welcomeScreen();
   if (state.step === "privacy") return privacyScreen();
-  if (state.step === "activate" || state.step === "waiting" || state.step === "verified") {
-    return verifyScreen();
-  }
-  if (state.step === "data") return dataScreen();
+  if (state.step === "gatekeeper") return gatekeeperScreen();
+  if (state.step === "activate" || state.step === "waiting") return verifyScreen();
+  if (state.step === "plugins") return pluginsScreen();
+  if (state.step === "access") return accessScreen();
   if (state.step === "availability") return availabilityScreen();
-  if (state.step === "connect") return connectScreen();
   if (state.step === "done") return doneScreen();
   return el("p", { class: "state-note error", text: "This setup step is unavailable." });
 }
 
 function footerForStep() {
   const step = state.step;
+  const advance = () => update(() => window.domo.onboardingAdvance());
   if (step === "done") return { hidden: true };
   if (step === "welcome") {
     return {
@@ -630,56 +902,51 @@ function footerForStep() {
       dot: null,
       label: "Get started",
       arrow: false,
-      action: () => update(() => window.domo.onboardingAdvance()),
+      action: advance,
     };
+  }
+  if (step === "activate" || step === "waiting") {
+    return { back: true, dot: 0, label: "Continue", arrow: true, disabled: true, action: null };
   }
   if (step === "privacy") {
     return {
-      back: true,
-      dot: 0,
-      label: "Continue",
-      arrow: true,
-      action: () => update(() => window.domo.onboardingAdvance()),
-    };
-  }
-  if (step === "activate" || step === "waiting" || step === "verified") {
-    const verified = step === "verified";
-    return {
-      back: !verified,
+      back: false,
       dot: 1,
       label: "Continue",
       arrow: true,
-      disabled: !verified,
-      action: verified
-        ? () => update(() => window.domo.onboardingAdvance())
-        : null,
+      action: advance,
+    };
+  }
+  if (step === "gatekeeper") {
+    return { back: false, dot: 2, label: "Continue", arrow: true, action: continueFromGatekeeper };
+  }
+  if (step === "access") {
+    const { label, kind } = accessPrimary({ grants: pluginsState?.grants ?? [], skipped, running, missed });
+    const actions = { run: startGrants, relaunch: () => window.domo.appRelaunch(), advance };
+    return {
+      back: true,
+      dot: 4,
+      label,
+      arrow: kind !== null,
+      disabled: kind === null || pluginsState === null,
+      action: actions[kind] ?? null,
     };
   }
   if (step === "availability") {
     return {
       back: true,
-      dot: 3,
+      dot: 5,
       label: "Continue",
       arrow: true,
-      action: () => update(() => window.domo.onboardingAdvance()),
-    };
-  }
-  if (step === "connect") {
-    return {
-      back: true,
-      dot: 4,
-      label: connectorState?.google.accounts.length > 0 ? "Done" : "Skip",
-      arrow: false,
-      disabled: connectorState === null,
-      action: () => update(() => window.domo.onboardingAdvance()),
+      action: advance,
     };
   }
   return {
-    back: false,
-    dot: 2,
+    back: true,
+    dot: 3,
     label: "Continue",
     arrow: true,
-    action: () => update(() => window.domo.onboardingAdvance()),
+    action: advance,
   };
 }
 
@@ -701,8 +968,9 @@ function playWelcomeEntrance() {
   });
 }
 
-function refreshWelcomeNote() {
-  const wrap = screen.querySelector(".welcome-wrap");
+/** Redraw only the note of a screen that must not be rebuilt under the owner. */
+function refreshNote(selector) {
+  const wrap = screen.querySelector(selector);
   if (!wrap) return;
   wrap.querySelector(".state-note")?.remove();
   const next = note(state);
@@ -713,16 +981,23 @@ function render() {
   if (!state) return;
   clearInterval(expiryTimer);
   expiryTimer = null;
-  if (state.step !== "data") restoreTelemetryFocus = false;
+  if (state.step !== "plugins") restoreFocus = null;
   if (state.step !== "availability") syncAvailability = null;
 
   const continuingWelcome = state.step === "welcome" && screen.classList.contains("is-welcome");
+  // The Gatekeeper is rebuilt only when it has no view (entering, a new deck):
+  // a redraw would take the caret from the owner and replay every row.
+  const continuingGatekeeper = state.step === "gatekeeper" && !!gatekeeper?.view;
   if (continuingWelcome) {
-    refreshWelcomeNote();
+    refreshNote(".welcome-wrap");
+  } else if (continuingGatekeeper) {
+    refreshNote(".gatekeeper-screen");
   } else {
+    // A redraw of the same step (a switch, a grant landing) keeps its scroll.
+    const stepChanged = !screen.classList.contains(`is-${state.step}`);
     screen.className = `wizard-screen is-${state.step}`;
     screen.replaceChildren(screenForStep());
-    body.scrollTop = 0;
+    if (stepChanged) body.scrollTop = 0;
     document.body.classList.remove("welcome-full");
   }
   document.body.classList.toggle("on-welcome", state.step === "welcome");
@@ -739,7 +1014,7 @@ function render() {
     });
     primaryLabel.textContent = config.label;
     primaryArrow.toggleAttribute("hidden", !config.arrow);
-    primaryButton.disabled = !!config.disabled || (!!state.busy && state.step !== "verified");
+    primaryButton.disabled = !!config.disabled || !!state.busy;
     primaryAction = config.action;
   } else {
     primaryAction = null;
@@ -748,21 +1023,15 @@ function render() {
   if (state.step === "welcome" && !continuingWelcome) {
     playWelcomeEntrance();
   }
-  if (state.step === "data") void refreshFullDiskAccess();
 
-  const telemetryFocus = restoreTelemetryFocus
-    ? screen.querySelector("#telemetry-toggle")
-    : null;
-  const focus = telemetryFocus ?? screen.querySelector("input[autofocus]")
+  const kept = restoreFocus ? document.getElementById(restoreFocus) : null;
+  const focus = kept ?? screen.querySelector("[autofocus]")
     ?? (primaryButton.disabled ? screen.querySelector(".verify-activate:not(:disabled)") : null)
-    ?? (state.step === "connect"
-      ? screen.querySelector(".provider-connect:not(:disabled), .add-another:not(:disabled)")
-      : null)
     ?? (!footer.hidden ? primaryButton : null);
-  if (focus && !state.busy) {
+  if (focus && !state.busy && !continuingGatekeeper) {
     requestAnimationFrame(() => {
       focus.focus({ preventScroll: true, focusVisible: false });
-      if (focus === telemetryFocus) restoreTelemetryFocus = false;
+      if (focus === kept) restoreFocus = null;
     });
   }
   root.hidden = false;
@@ -771,33 +1040,43 @@ function render() {
 async function apply(next) {
   const previousStep = state?.step;
   state = resolveOnboardingState(state, next);
-  if (state?.step !== "done") doneAgent = null;
-  if (state?.step !== "connect") connectorState = null;
+  if (state?.step !== "gatekeeper" && gatekeeper) {
+    clearTimeout(gatekeeper.timer);
+    gatekeeper = null;
+  }
+  if (state?.step !== "done") {
+    doneAgent = null;
+    doneBrowserEnabled = null;
+  }
+  if (!onPluginStep()) pluginsState = null;
+  if (state?.step !== previousStep) missed = null;
+  if (!onPluginStep() && state?.step !== "availability") skipped.clear();
   if (state?.step !== "availability") availability = null;
   render();
-  if (state?.step === "connect" && previousStep !== "connect") {
-    applyConnectors(await window.domo.connectorsRefresh());
-  }
+  if (state?.step === "gatekeeper" && previousStep !== "gatekeeper") void enterGatekeeper();
+  if (onPluginStep() && previousStep !== state.step) void refreshPlugins();
   if (state?.step === "availability" && previousStep !== "availability") {
     void refreshAvailability();
   }
   if (state?.step === "done" && previousStep !== "done") {
-    const loaded = await loadDoneAgent(() => window.domo.cloudAgents());
+    const [loaded, plugins] = await Promise.all([
+      loadDoneAgent(() => window.domo.cloudAgents()),
+      window.domo.pluginsGet().catch(() => null),
+    ]);
     if (state?.step !== "done") return;
     doneAgent = loaded;
+    const browser = plugins?.rows?.find((row) => row.kind === "Browser");
+    // A failed status read must never leave an action that can import while
+    // Browser remains off. Enabling is idempotent, so unknown takes the
+    // explicit enable-and-import path once the read settles.
+    doneBrowserEnabled = browser ? browser.status !== "off" : false;
     render();
   }
 }
 
-function applyConnectors(next) {
-  if (!next) return;
-  connectorState = next;
-  if (state?.step === "connect") render();
-}
-
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.defaultPrevented || footer.hidden || primaryButton.disabled) return;
-  if (event.target instanceof HTMLButtonElement) return;
+  if (event.target instanceof HTMLButtonElement || event.target instanceof HTMLTextAreaElement) return;
   event.preventDefault();
   primaryButton.click();
 });
@@ -809,13 +1088,14 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 window.addEventListener("focus", () => {
-  if (state?.step === "data") void refreshFullDiskAccess(true);
+  if (onPluginStep()) void refreshPlugins();
   if (state?.step === "availability") void refreshAvailability();
-  if (state?.step === "connect" && connectorState?.busy !== true) {
-    void updateConnectors(() => window.domo.connectorsRefresh());
-  }
 });
 
 window.domo.onOnboardingChanged(async () => apply(await window.domo.onboardingGet()));
-window.domo.onConnectorsChanged(applyConnectors);
+// Main's connector poll can land after the screen first loaded (a re-setup
+// with Google already connected): redraw from the fresh accounts.
+window.domo.onConnectorsChanged(() => {
+  if (onPluginStep()) void refreshPlugins();
+});
 void window.domo.onboardingGet().then(apply);

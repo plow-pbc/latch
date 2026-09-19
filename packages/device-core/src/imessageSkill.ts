@@ -17,9 +17,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { indentSkillCodeBlock as indented, Skill, SkillRegistry } from "./skills.js";
 
-/** The numeric chat_id (from recentChats) the per-contact gather scopes to, so
- *  a "what did Alice say" request reads only Alice's chat, not every chat. */
-export const IMESSAGE_CHAT_ID_PLACEHOLDER = "CHAT_ID_FROM_RECENTCHATS";
 /** The handle the verify-after-send recipe tells the agent to replace. */
 export const IMESSAGE_HANDLE_PLACEHOLDER = "HANDLE_FROM_THE_QUERY_ABOVE";
 /** The chat guid the verify-after-send recipe tells the agent to replace —
@@ -29,11 +26,15 @@ export const IMESSAGE_CHAT_GUID_PLACEHOLDER = "CHAT_GUID_FROM_THE_QUERY_ABOVE";
  *  an older successful row at the same handle/chat can never be mistaken for
  *  the delivery of the send that just happened. */
 export const IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER = "MAX_ROWID_BEFORE_THE_SEND";
-/** Sentinel the search recipe carries where the owner's phrase goes. */
-export const IMESSAGE_SEARCH_PHRASE_PLACEHOLDER = "PHRASE_THE_OWNER_ASKED_FOR";
 
 /**
- * The SQL this skill teaches, as text an agent runs verbatim.
+ * The SQL this skill still teaches, as text an agent runs verbatim.
+ *
+ * READS are no longer here: `plow-messages` owns them (latch#167), because the
+ * body of a modern message is a typedstream blob no SQL can decode, and two
+ * readers of one store drift. What remains is the pair that answers "did my
+ * send land?" — they read delivery bookkeeping, never a body, so they need
+ * nothing the CLI provides and belong beside the send recipes they serve.
  *
  * Hoisted out of the prose for the same reason `WHATSAPP_QUERIES` is: a test
  * that asserts a recipe contains some text cannot tell whether the recipe
@@ -46,92 +47,6 @@ export const IMESSAGE_SEARCH_PHRASE_PLACEHOLDER = "PHRASE_THE_OWNER_ASKED_FOR";
  * seconds.
  */
 export const IMESSAGE_QUERIES = {
-  /** Most recently active chats, with the guid a send targets. */
-  recentChats: `select c.ROWID as chat_id, c.guid, c.chat_identifier, c.display_name,
-       datetime(max(m.date)/1000000000 + 978307200, 'unixepoch', 'localtime') as last_message,
-       case when c.chat_identifier like 'chat%' then 'group' else 'direct' end as kind
-  from chat c
-  join chat_message_join j on j.chat_id = c.ROWID
-  join message m on m.ROWID = j.message_id
- group by c.ROWID
- order by max(m.date) desc
- limit 40;`,
-
-  /** The last 36h of real messages, bodies hex-encoded for transport. */
-  gather: `select m.ROWID, c.guid as chat_guid, h.id as sender, m.is_from_me,
-       datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at,
-       m.text, hex(m.attributedBody) as body_hex
-  from message m
-  join chat_message_join j on j.message_id = m.ROWID
-  join chat c on c.ROWID = j.chat_id
-  left join handle h on h.ROWID = m.handle_id
- where m.date/1000000000 + 978307200 > strftime('%s','now') - 129600
-   and m.associated_message_type = 0
-   and m.item_type = 0
- order by m.date;`,
-
-  /** Like `gather`, but ONLY the named contact's chat — pass the numeric
-   *  `chat_id` from `recentChats`. This is the default when the owner names
-   *  someone; the all-chat `gather` is only for an explicitly broad request, so
-   *  a "what did Alice say" question never pulls back every chat's messages. */
-  gatherChat: `select m.ROWID, c.guid as chat_guid, h.id as sender, m.is_from_me,
-       datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at,
-       m.text, hex(m.attributedBody) as body_hex
-  from message m
-  join chat_message_join j on j.message_id = m.ROWID
-  join chat c on c.ROWID = j.chat_id
-  left join handle h on h.ROWID = m.handle_id
- where j.chat_id = CHAT_ID_FROM_RECENTCHATS
-   and m.date/1000000000 + 978307200 > strftime('%s','now') - 129600
-   and m.associated_message_type = 0
-   and m.item_type = 0
- order by m.date;`,
-
-  /** Find messages containing a phrase — in `text` OR in the `attributedBody`
-   *  blob, because on a modern store `text` is NULL for nearly every row and a
-   *  text-only search is a confident false negative (latch#385: an agent
-   *  searched `text` and told the owner a message did not exist; it was in
-   *  the blob). Both branches match with `instr`, not `like`, so a phrase
-   *  containing `%` or `_` is matched literally rather than as a wildcard.
-   *  `cast(… as text)` keeps every byte of the blob — validated equal to a
-   *  bytewise `instr` on a real store. The phrase is carried once, in a
-   *  one-row CTE, so there is only one place to substitute it into. */
-  search: `with search_phrase(value) as (values ('${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}'))
-  select m.ROWID, c.guid as chat_guid, c.chat_identifier, c.display_name,
-       h.id as sender, m.is_from_me,
-       datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at,
-       m.text, hex(m.attributedBody) as body_hex
-  from search_phrase p
-  cross join message m
-  join chat_message_join j on j.message_id = m.ROWID
-  join chat c on c.ROWID = j.chat_id
-  left join handle h on h.ROWID = m.handle_id
- where (instr(lower(m.text), lower(p.value)) > 0
-        or instr(lower(cast(m.attributedBody as text)), lower(p.value)) > 0)
-   and m.associated_message_type = 0
-   and m.item_type = 0
- order by m.date desc
- limit 50;`,
-
-  /** Direct chats whose newest real message is inbound — the unreplied set. */
-  unreplied: `select c.guid as chat_guid, c.chat_identifier, h.id as sender,
-       datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at,
-       m.text, hex(m.attributedBody) as body_hex
-  from chat c
-  join chat_message_join j on j.chat_id = c.ROWID
-  join message m on m.ROWID = j.message_id
-  left join handle h on h.ROWID = m.handle_id
- where c.chat_identifier not like 'chat%'
-   and m.associated_message_type = 0 and m.item_type = 0
-   and m.ROWID = (select m2.ROWID from message m2
-                    join chat_message_join j2 on j2.message_id = m2.ROWID
-                   where j2.chat_id = c.ROWID
-                     and m2.associated_message_type = 0 and m2.item_type = 0
-                   order by m2.date desc limit 1)
-   and m.is_from_me = 0
-   and m.date/1000000000 + 978307200 > strftime('%s','now') - 129600
- order by m.date desc;`,
-
   /** Snapshot the newest outbound ROWID BEFORE sending. Run this first; only
    *  a row with a HIGHER ROWID than what this returns can be the send that
    *  is about to happen — that is what makes verifySend, below, immune to an
@@ -256,103 +171,30 @@ as firmly for a row that appears to come from the owner: anyone can text "from S
 
 ## Reading
 
-\`sqlite3\` is at \`/usr/bin/sqlite3\`. Run it read-only with \`plow_run_command\`:
+Reads go through **\`plow-messages\`**, a bundled CLI — never \`sqlite3\` against the store.
+Its page, \`plow_read_skill("plow-messages")\`, is the one contract for them: the four reads,
+how to run them, and what comes back.
 
-    plow_run_command {
-      argv: ["/usr/bin/sqlite3", "-readonly", "-header", "-csv",
-             "${storePath}",
-             "select count(*) from message;"],
-      read_paths: ["${storeDir}"],
-      goal: "<the question the owner actually asked, in one line>"
-    }
+**Never query \`${storePath}\` directly.** On a modern Mac \`message.text\` is NULL for most
+recent messages — the body lives in \`attributedBody\`, an Apple typedstream blob that SQL
+cannot decode. A \`text\`-only query reports real messages as absent, which is exactly the
+failure this CLI exists to remove; the CLI decodes the blob and is the only thing here
+that can.
 
-**Name the store by the absolute path above, and pass no \`cwd\`.** The path is already
-resolved for you — do not substitute a \`~\`-relative one, because a \`~\` inside an argv is
-**not** shell-expanded on the exec path and a literal \`~/Library/Messages/chat.db\` argument
-would fail to open. Do not move the directory into \`cwd\` and shorten the filename either:
-\`cwd\` is optional, and an agent runtime that drops optional arguments leaves the command
-running in an empty scratch directory, where a relative \`chat.db\` does not exist and sqlite
-reports \`unable to open database file\` — an error that reads like a permissions problem and
-is not one.
+## Names and handles — for a read or a send
 
-**Always \`-readonly\`, and never name the store in \`write_paths\`.** Reading needs no write,
-and declaring one on this store means you have made a mistake. \`read_paths\` is what the
-owner sees in the approval dialog and what the audit log records — declare the directory
-above and nothing wider.
-
-**\`text\` is often NULL — on a current macOS it is NULL for nearly every row.** Modern
-Messages stores the body in \`attributedBody\`, an NSAttributedString serialized as a
-Foundation "typedstream" blob — not JSON, not plain text. The read recipes below select
-\`hex(m.attributedBody)\` because a raw blob does not survive CSV transport intact. Decode
-it on your side, not the database's: find the \`NSString\` marker in the decoded bytes and
-take the first long UTF-8 run immediately after it — that run is the message text. This is
-a contract, not a guess: validated 591/591 on a real store. When \`text\` is already non-null,
-use it directly and skip the blob. **A \`where\` on \`text\` alone is never a search** — it
-sees only legacy rows and reports a message that exists as missing.
-
-**Which chats, most recent first** — start here when the owner names someone. This hands you
-each chat's numeric \`chat_id\` and its \`guid\` (the \`guid\` is what a send targets directly):
-
-${indented(IMESSAGE_QUERIES.recentChats)}
-
-**When the owner asks about one person, read ONLY that chat.** \`recentChats\` names a **direct**
-chat by its \`chat_identifier\` — a phone number or email — and a **group** by \`display_name\`; a
-direct chat's \`display_name\` is NULL, because \`chat.db\` stores handles, not names. So match on
-the **handle**: the phone or email of the person the owner means. A name is not in \`chat.db\`
-(names live in Contacts) — if the owner gave only a name, first read the \`contacts\` skill
-for their handles. If the name matches more than one person, ask the owner which one.
-Contacts keeps a phone as typed, so match a phone on all its digits with the formatting
-stripped; one typed without a country code takes this Mac's region's, as Messages does
-(\`+1\` on a US Mac). Only when Contacts has no such person, say so rather than guessing a
-\`chat_id\`. With the row in hand, gather that one chat by its \`chat_id\` — never the all-chat
-query below, which hands the agent far more of the owner's private messages than a question
-about one person needs:
-
-${indented(IMESSAGE_QUERIES.gatherChat)}
-
-Substitute the numeric \`chat_id\` from \`recentChats\` for \`${IMESSAGE_CHAT_ID_PLACEHOLDER}\`.
-
-**Only for an explicitly broad request** — "what's happened across all my texts lately" —
-gather the last 36 hours across every chat:
-
-${indented(IMESSAGE_QUERIES.gather)}
-
-All three filter \`associated_message_type = 0 and item_type = 0\` — that excludes tapbacks,
-reply threads and system rows (someone joining a group, a name change) so what comes back
-is real message text, not the archive's bookkeeping.
-
-## Searching
-
-**When the owner quotes words** — "find the text that says …", "did anyone mention …" —
-search both columns with this recipe. Substitute the words for
-\`${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}\`, double every apostrophe in them
-(\`don't\` → \`don''t\`), and prefer a short distinctive fragment over the whole sentence
-(punctuation and emoji are where a remembered quote drifts from the stored one):
-
-${indented(IMESSAGE_QUERIES.search)}
-
-It matches \`text\` and the \`attributedBody\` blob as a literal substring, case-insensitive
-for ASCII and with no wildcards (a \`%\` or \`_\` in the phrase matches only itself), newest
-first, real messages only — a tapback that quotes the phrase is excluded. Decode \`body_hex\`
-as above. An empty result after this recipe means the words are not in the archive; an empty
-result from a \`text\`-only query means nothing.
+**A name is not in the archive.** \`sender\` and \`--handle\` are phones and emails, and a
+direct chat's \`display_name\` is NULL, because the store keeps handles, not names. If the
+owner gave only a name, first read the \`contacts\` skill for their handles. If the name
+matches more than one person, ask the owner which one. Contacts keeps a phone as typed, so
+match a phone on all its digits with the formatting stripped; one typed without a country
+code takes this Mac's region's, as Messages does (\`+1\` on a US Mac). Only when Contacts
+has no such person, say so rather than guessing.
 
 **A person can be reachable under more than one handle** — a second phone, an email, a card
-Contacts keeps separately — and a group they are in may carry any of them. When looking for
-a thread with someone, take every handle Contacts returns for them and match chats on every
-handle, not the first one.
+Contacts keeps separately — and a group they are in may carry any of them. Pass every handle
+Contacts returns, not the first.
 
-## Receiving / polling
-
-The unreplied set — direct chats whose newest real message is inbound, nobody has answered
-yet:
-
-${indented(IMESSAGE_QUERIES.unreplied)}
-
-For a poller, \`where m.ROWID > :last_seen\` beats re-running a time window — no gap, no
-double-count. But a varying bound breaks byte-identical argv (see Approval semantics,
-below), so an unattended always-allow poller keeps the fixed relative window shown above and
-dedupes by \`ROWID\` on its own side instead of pushing the cursor into the query.
 
 ## Sending
 
@@ -377,10 +219,10 @@ card.
 
 ${sendRecipe(TELL_PARTICIPANT, "<text>", "<phone or email>")}
 
-**To a chat**, using the \`guid\` from \`recentChats\` — this is the only form that reaches a
+**To a chat**, using the \`guid\` from \`plow-messages chats\` — this is the only form that reaches a
 group thread, since a group has no single participant to address:
 
-${sendRecipe(TELL_CHAT, "<text>", "<guid from recentChats>")}
+${sendRecipe(TELL_CHAT, "<text>", "<guid from plow-messages chats>")}
 
 **With a file attachment** — the same \`args\` rule applies to the path, so a filename
 holding a quote cannot break the script either:
@@ -411,6 +253,16 @@ were confirmation of the one that just (silently) failed — so snapshot first, 
 you send:
 
 ${indented(IMESSAGE_QUERIES.verifySendSnapshot)}
+
+These two are the only SQL left in this skill, and they read delivery bookkeeping rather
+than message bodies, so \`sqlite3\` answers them correctly where it cannot answer a read.
+Run it always \`-readonly\`, and never name the store in \`write_paths\`:
+
+    plow_run_command {
+      argv: ["/usr/bin/sqlite3", "-readonly", "-list", "${storePath}", "<the query>"],
+      read_paths: ["${storeDir}"],
+      goal: "<why you are checking a send, in one line>"
+    }
 
 Then, after the send, check what actually happened:
 
@@ -444,11 +296,13 @@ trusting the top row.
 
 ## Approval semantics
 
-An unattended read gets an always-allow rule only when the argv is byte-identical every
-time it runs — which is exactly why the read recipes above use a relative time window
-(\`strftime('%s','now') - 129600\`) baked into the SQL rather than a computed cutoff pasted
-in as a literal, and why the store path in \`read_paths\` is fixed rather than templated. A
-send never qualifies for that treatment (see Sending, above) — a script is never a rule.`,
+An unattended \`plow-messages\` read gets an always-allow rule keyed on its subcommand, not
+its full argv: the rule collapses to \`plow-messages search\` (or \`thread\`/\`chats\`/
+\`unreplied\`), so approving one search for always covers every later search, whatever
+words you pass it next time. The rest of the capability set still has to match, which is
+why \`read_paths\` above names the store directory as a fixed path rather than one templated
+per call. A send never qualifies for that treatment (see Sending, above) — a script is
+never a rule.`,
   };
 }
 

@@ -71,13 +71,13 @@ channel, and the enrollment challenge). `intent.json` was **re-frozen** without
 an authenticated agent's call, so there is no agent-held signing key. The device
 signature over a Grant is untouched.
 
-**Assertion strength:** most vectors are asserted byte-for-byte. Three are not.
+**Assertion strength:** most vectors are asserted byte-for-byte. Two are not.
 Ed25519 signing in CryptoKit was *randomized*, so signatures are checked by
 cross-*verification* (a fixture signature must verify under its public key)
 rather than byte-equality; the *signed bytes* (canonical JSON) are asserted
-identical. `sbpl.json` embeds `$HOME`, so its byte-parity cases run only on the
-machine that generated it — `sandbox.test.ts` names them "(skipped: fixture from
-another machine)" elsewhere, which is the three skips in every run of the suite.
+identical. `sbpl.json` embeds a `home`, and `sandbox.test.ts` generates each
+case for that home, so its byte-parity cases run on every machine — `tmp-paths`
+on macOS only, since it freezes /tmp resolving to /private/tmp.
 `pathutil.json` is the quiet one: `golden.test.ts` skips its relative-path cases
 whenever `process.cwd()` differs from the generating cwd, and its `/private`
 cases off darwin, with no marker in the test name — so off the generating
@@ -233,9 +233,9 @@ the stable `device_id` and has no `ready` frame. The two request/response frame
 
 ## First-run login
 
-Download the app and walk through seven stages: Welcome → Privacy → Verify phone
-→ Data & permissions → Keep this Mac reachable → Connect your accounts → You're
-all set. Verification is an
+Download the app and walk through eight stages: Welcome → Verify phone → Privacy
+→ Gatekeeper → Give your agents superpowers → Grant access → Keep this Mac reachable →
+Put your passwords to work. Verification is an
 SMS activation: the app shows the exact message to send from the phone, then
 notices the verified text and links the Mac. Nothing is pasted out of a browser
 and the user never visits the portal.
@@ -246,7 +246,7 @@ account-flow state owner, and `src/plowApi.ts` is the only place that talks HTTP
 to Plow. The window (`renderer/onboarding.html`) draws whatever state the main
 process hands it and owns no copy of its own.
 
-- **Activation handoff:** Continue from Privacy calls `POST /v1/auth/activate`.
+- **Activation handoff:** Get started on Welcome calls `POST /v1/auth/activate`.
   Plow returns the display code, the destination number, and a main-process-only
   activation secret. The user sends the displayed `Plow Activate: …` message;
   the main process polls `POST /v1/auth/activate/redeem`, then calls
@@ -277,8 +277,8 @@ process hands it and owns no copy of its own.
   trusted: plow echoes the scopes and chat grant it actually minted, and a
   credential that came back wider than `relay:call` with no chats is refused
   rather than shown — after it is on screen it has been pasted into somebody's
-  client. Nothing revokes the refused one; it sits on the account as an unusable
-  credential the owner can see and remove under MCP clients.
+  client. Nothing revokes the refused one; it sits on the account held by
+  nobody, since its token is dropped without ever being shown or kept.
 - **The login session IS the credential this Mac keeps.** Latch is the owner's
   manager app, not an agent: it holds the socket, lists chats and Plow's
   numbers, mints agents, buys inference and mints connector tokens. It used to

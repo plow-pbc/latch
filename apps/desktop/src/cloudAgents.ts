@@ -1,4 +1,4 @@
-import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS, decodeAgentCreateReceipt, echoesCredential } from "./plowApi.js";
+import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS, echoesCredential } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
@@ -20,12 +20,6 @@ export interface CloudAgentResource {
   status: CloudAgentStatus | null;
   failureCode: string | null;
   createdAt: string;
-}
-
-export interface CreateCloudAgentRequest {
-  lineUid: string;
-  name: string;
-  provider: string;
 }
 
 export type CloudAgentLineErrorCode =
@@ -72,31 +66,7 @@ export class CloudAgentsClient {
   constructor(
     private readonly api: PlowApi,
     private readonly wait: Wait = defaultWait,
-    private readonly onToken: (token: string, owner: string) => void = () => {},
-    private readonly beforeMutation: (credential: string) => void = () => {},
   ) {}
-
-  async create(
-    deviceCredential: string,
-    request: CreateCloudAgentRequest,
-  ): Promise<CloudAgentResource> {
-    this.beforeMutation(deviceCredential);
-    const response = await this.api.request("POST", "/v1/agents", {
-      token: deviceCredential,
-      body: {
-        line_uid: request.lineUid,
-        provider: request.provider,
-        ...(request.name.trim() ? { name: request.name } : {}),
-      },
-    });
-    if (!response.ok) {
-      await throwCloudCallError(response);
-    }
-    const decoded = decodeAgentCreateReceipt(await decodeJson(response), deviceCredential);
-    const agent = parseResource(decoded.agent, deviceCredential, response.status);
-    if (typeof decoded.token === "string") this.onToken(decoded.token, deviceCredential);
-    return agent;
-  }
 
   async changeLine(
     deviceCredential: string,
@@ -126,7 +96,6 @@ export class CloudAgentsClient {
   }
 
   async delete(deviceCredential: string, agentId: string): Promise<void> {
-    this.beforeMutation(deviceCredential);
     const response = await this.api.request(
       "DELETE",
       `/v1/agents/${encodeURIComponent(agentId)}`,

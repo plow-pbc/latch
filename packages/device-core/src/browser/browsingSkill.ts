@@ -25,6 +25,14 @@ export const LIVE_WEB_ROUTING =
   "refuse, it renders JavaScript, and it starts on a copy of their own profile, so it is " +
   "already signed in wherever they are";
 
+/**
+ * Where a hard block goes, in ONE place: the browser tool, the script tool
+ * and the skill all route it, and three wordings of one policy drift.
+ */
+export const SAFARI_HARD_BLOCK_ROUTING =
+  "the owner's own Safari usually loads what this browser is refused — drive it through " +
+  "plow_run_applescript, and report the site blocked only after Safari fails too";
+
 export const INTERACTIVE_VERIFICATION =
   "When a site presents an interactive verification step during a user-requested browser task, " +
   "including a CAPTCHA or “confirm you are human” step, you are operating the owner's browser " +
@@ -126,6 +134,59 @@ url, title, links, forms, tables, pages.
   intercepts pointer events") — and no click gets through it, because a person's would not
   either. Screenshot, then click the banner's or modal's own button: a real click on
   whatever is on top lands.
+
+## A hard block: the owner's own Safari
+
+Some sites refuse this browser outright — "You have been blocked", "Access denied", a
+Cloudflare page that never finishes. Screenshot and look: a challenge has something to click
+or type (a CAPTCHA, "confirm you are human", a code prompt) and you complete it; a hard block
+does not, and it often arrives as a plain 200 with no \`failed_requests\`. Neither a retry of
+the same URL in this session, nor waiting, nor a public web search answers a question about
+the OWNER's own account ("did my review post?") — ${SAFARI_HARD_BLOCK_ROUTING}; the owner
+approves each script. A script is bound to no origin by the approval — it is the script's
+text and nothing else — so every script below binds itself: it addresses only the window it
+opened, by id, and refuses unless that window is on the origin you name. A value the owner
+keeps (a code, a card number, a password) is not yours to read out of a page.
+
+Everything runs through Safari's own \`do JavaScript\`, which addresses a tab by Safari's
+window id and needs one Safari setting, "Allow JavaScript from Apple Events". It is off by
+default, so the first read fails with "You must enable 'Allow JavaScript from Apple
+Events'" — that is not a dead end: the owner turns it on with one click in this app's
+Plugins tab, on the **Browser use** row (click "Enable in Safari"; a note beside it says
+Safari relaunches). Tell them that, then
+retry. Do not fall back to System Events UI scripting: it addresses windows by position,
+which the owner's next click can change under you, and macOS gives no way to tie one to the
+window you opened.
+
+1. **Open the page, and keep the window's id.** The URL rides in \`args\`, never pasted into
+   the script; the script returns the id of the window it opened, and every later script
+   addresses that window by that id — never a page found by URL or title, which can match a
+   page the owner has open elsewhere:
+   \`plow_run_applescript {app: "Safari", args: ["<url>"], script: 'on run argv\\ntell application "Safari"\\n  activate\\n  make new document with properties {URL:item 1 of argv}\\n  return id of window 1\\nend tell\\nend run'}\`
+   \`activate\` brings Safari to the front of the owner's screen; say so if they are at the Mac.
+2. **Read or act — one fixed script; the id, the host and the expression ride in \`args\`.**
+   The script pastes nothing into its source: the window id, the site's host and the
+   JavaScript expression are its three args, so the owner reads one script and the values
+   beside it. The expression runs behind an origin check in the SAME document, so the
+   check and the effect target one page — a tab the owner switched to between events is
+   never what runs — and the refusal is a fixed message. The host goes into that
+   expression, so the script first refuses any character outside a hostname's alphabet:
+   \`plow_run_applescript {app: "Safari", args: ["<id>", "www.example.com", "document.body.innerText"], script: 'on run argv\\nset h to item 2 of argv\\nrepeat with c in characters of h\\n  if "abcdefghijklmnopqrstuvwxyz0123456789.-" does not contain (c as text) then error "host is not a host"\\nend repeat\\ntell application "Safari"\\n  do JavaScript ("if (location.origin !== \\"https://" & h & "\\") throw new Error(\\"window is not on the expected origin\\"); " & item 3 of argv) in current tab of (window id ((item 1 of argv) as integer))\\nend tell\\nend run'}\`
+   Read what you need with the expression: \`document.title\`, a selector's \`innerText\`, the
+   confirmation text — never \`location.href\` or \`location.search\`, which can carry a token
+   the page was given.
+3. **Act, when you must — the same call, an acting expression.** Click with
+   \`document.querySelector("input[name=email]").click()\`. Text you type goes into the
+   expression as \`decodeURIComponent("<text>")\` with the text percent-encoded by
+   \`encodeURIComponent\`, inside a DOUBLE-quoted literal — \`encodeURIComponent\` leaves an
+   apostrophe alone, so a single-quoted one would not hold. A React-controlled field ignores
+   a plain \`value =\` — set it through the native setter and fire \`input\`:
+   \`const el = document.querySelector("<selector>"); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, decodeURIComponent("<text>")); el.dispatchEvent(new Event("input", {bubbles: true}))\`.
+   Dismiss a cookie banner's own button before anything under it. Verify the way you would
+   in this browser: read the title and the confirmation text back.
+4. **Consent.** The first Safari script raises a macOS Automation dialog that asks the
+   owner; the call sits 'running' with a diagnosis until they click. Leave it running and
+   tell them. Report the site as blocked only after Safari itself fails to load the page — not after a JavaScript read fails.
 
 ## Credentials (logins, cards, identities) — the value is never handed back to you
 

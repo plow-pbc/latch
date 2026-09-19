@@ -33,7 +33,15 @@ export type PlowGogPlan =
    * narrows the fan-out to the ones `--account a@x,b@y` named, or is null
    * for all of them.
    */
-  | { kind: "fanout"; gogArgv: string[]; sort: PlowGogSort; accounts: string[] | null }
+  | {
+      kind: "fanout";
+      gogArgv: string[];
+      sort: PlowGogSort;
+      accounts: string[] | null;
+      /** A calendar event list the agent did not project itself: its merged
+       * items go through `compactCalendarEvents`. */
+      compact?: true;
+    }
   /**
    * Everything else: ONE run, on ONE account. Which account is the runtime's
    * question — with more than one connected, `account` is required there —
@@ -95,6 +103,14 @@ const NOTIFYING: ReadonlySet<string> = new Set([
 
 /** The `--max` a calendar event list gets when the agent names none — per account. */
 export const CALENDAR_EVENTS_MAX = "100";
+
+/**
+ * The owner's time zone — this Mac's. Calendar days and times are reported in
+ * it, whatever zone each event was created in.
+ */
+export function ownerTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
 
 /** The value of `--<name> v` / `--<name>=v` in an argv, or null. Last wins,
  * matching gog's own flag resolution. */
@@ -170,7 +186,7 @@ export function gogExitReason(exitCode: number | null): string {
   }
 }
 
-export function planPlowGog(argv: readonly string[]): PlowGogPlan {
+export function planPlowGog(argv: readonly string[], timeZone: string = ownerTimeZone()): PlowGogPlan {
   // Strip plow-gog's own flags first: they are this Mac's to interpret, and a
   // spelling that reached gog would collide with gog's own `--account` — which
   // is inert under a supplied token, but only when nothing forwards it.
@@ -226,6 +242,11 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
   // and a fan-out's --results-only drops the page token that would say so, so
   // a cut-off calendar read as free time.
   if (sort === "cal-start" && flagValue(stripped, "max") === null) gogArgv.push("--max", CALENDAR_EVENTS_MAX);
+  // gog labels each event's day and local time (`startDayOfWeek`,
+  // `startLocal`, `endLocal`) in that EVENT's zone unless told otherwise, so a
+  // 9pm meeting set in São Paulo came back as the next day for an owner in
+  // California.
+  if (sort === "cal-start" && flagValue(stripped, "timezone") === null) gogArgv.push("--timezone", timeZone);
   if (sort !== undefined && account === null) {
     // Every account asked, or the several named. A calendar id under that
     // has no owner to send it to — forwarded, it reached every account, the
@@ -242,7 +263,17 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
     const extras: string[] = [];
     if (!stripped.includes("--json") && !stripped.includes("-j")) extras.push("--json");
     if (!stripped.includes("--results-only")) extras.push("--results-only");
-    return { kind: "fanout", gogArgv: [...gogArgv, ...extras], sort, accounts: accounts.length > 1 ? accounts : null };
+    // A --select or --fields is the agent's own projection; everything else
+    // comes back compact, because a busy week of raw events outgrows the
+    // agent's tool output and the fields it needed are lost with the overflow.
+    const projected = stripped.some((arg) => /^--(select|fields)(=|$)/.test(arg));
+    return {
+      kind: "fanout",
+      gogArgv: [...gogArgv, ...extras],
+      sort,
+      accounts: accounts.length > 1 ? accounts : null,
+      ...(sort === "cal-start" && !projected ? { compact: true as const } : {}),
+    };
   }
   if (accounts.length > 1) {
     return { kind: "refused", reason: "this command runs on one account: --account takes one email here" };
@@ -316,6 +347,92 @@ function startOf(item: Record<string, unknown>, sort: PlowGogSort): number {
   // may not return.
   if (Number.isNaN(parsed)) return -9e15;
   return sort === "gmail-date" ? parsed : -parsed;
+}
+
+/**
+ * Where a compacted calendar read stops, in serialized characters. The agent's
+ * tool output is cut off near 50,000; this leaves room for the envelope and
+ * the degraded list.
+ */
+export const CALENDAR_ITEMS_BUDGET = 40_000;
+
+/**
+ * A merged calendar event list, cut down to what scheduling needs.
+ *
+ * Raw Google events run 2-5 KB each, so a busy week across a few accounts
+ * overflowed the agent's tool output — and an agent re-reading an overflow
+ * keeps what it thinks matters, not the day name. The day and local times are
+ * gog's own, already in the zone the planner asked for, and travel beside
+ * each other.
+ *
+ * Items arrive sorted by start. Past `budget` the rest are dropped and
+ * `truncated` says how many, and `after`: the earliest start among them — a
+ * local time, or a bare date when that is an all-day event, which covers the
+ * whole of its day. The merge sorts an all-day date as UTC midnight, so one
+ * can follow a timed event on its own local day; `after` still reaches back
+ * to cover it, and the time from it on is never read as free.
+ */
+export function compactCalendarEvents(
+  items: readonly Record<string, unknown>[],
+  budget: number = CALENDAR_ITEMS_BUDGET,
+): { items: Record<string, unknown>[]; truncated: { omitted: number; after: string | null } | null } {
+  const kept: Record<string, unknown>[] = [];
+  let used = 0;
+  for (const item of items) {
+    const event = compactEvent(item);
+    used += JSON.stringify(event).length + 1;
+    if (used > budget) {
+      const omitted = items.slice(kept.length);
+      const earliest = omitted.reduce<Record<string, unknown> | null>(
+        (a, b) => (typeof b.startLocal === "string" && (a === null || startsBefore(b, a)) ? b : a),
+        null,
+      );
+      return { items: kept, truncated: { omitted: omitted.length, after: (earliest?.startLocal as string) ?? null } };
+    }
+    kept.push(event);
+  }
+  return { items: kept, truncated: null };
+}
+
+/** Whether raw item `a` starts before `b`, both carrying a `startLocal`: by
+ * local day, an all-day date first (it covers that day from midnight), then
+ * by instant. */
+function startsBefore(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const dayA = (a.startLocal as string).slice(0, 10);
+  const dayB = (b.startLocal as string).slice(0, 10);
+  if (dayA !== dayB) return dayA < dayB;
+  if (isAllDay(a) !== isAllDay(b)) return isAllDay(a);
+  return instantOf(a) < instantOf(b);
+}
+
+function isAllDay(item: Record<string, unknown>): boolean {
+  return typeof (item.start as Record<string, unknown> | undefined)?.date === "string";
+}
+
+function instantOf(item: Record<string, unknown>): number {
+  const parsed = Date.parse(String((item.start as Record<string, unknown> | undefined)?.dateTime));
+  return Number.isNaN(parsed) ? Infinity : parsed;
+}
+
+function compactEvent(item: Record<string, unknown>): Record<string, unknown> {
+  const event: Record<string, unknown> = {
+    summary: item.summary ?? null,
+    startDayOfWeek: item.startDayOfWeek ?? null,
+    startLocal: item.startLocal ?? null,
+    endLocal: item.endLocal ?? null,
+  };
+  if (isAllDay(item)) event.allDay = true;
+  const attendees = Array.isArray(item.attendees) ? (item.attendees as Record<string, unknown>[]) : [];
+  // Who else is in it, by the address mail and messages know them by. A
+  // count said a meeting had people without saying who.
+  const others = attendees.filter((a) => a.self !== true && a.resource !== true && a.responseStatus !== "declined");
+  if (others.length > 0) event.attendees = others.map((a) => a.email);
+  // The two ways an event on the calendar leaves the owner free.
+  if (item.transparency === "transparent") event.transparency = "transparent";
+  if (attendees.find((a) => a.self === true)?.responseStatus === "declined") event.declined = true;
+  event.id = item.id ?? null;
+  event.account = item.account;
+  return event;
 }
 
 /**

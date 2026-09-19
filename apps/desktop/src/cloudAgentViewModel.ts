@@ -1,6 +1,7 @@
 /** Pure cloud-agent presentation decisions, shared with the sandboxed renderer. */
 
 import type { CloudAgentProvider } from "./plowApi.js";
+import type { AgentIndex, AgentIndexEntry } from "./agentIndex.js";
 
 const CLOUD_HTTP_REASONS = new Set([
   "bad request",
@@ -60,4 +61,60 @@ export function cloudProviderPickerViewModel(
     };
   }
   return { mode: "ready", heading: null, message: null };
+}
+
+/** One card in the deploy modal. Strings are third-party; render as text. */
+export interface DeployCard {
+  id: string;
+  name: string;
+  initial: string;
+  logo: string | null;
+  blurb: string | null;
+  byline: string;
+}
+
+/** Below this many people a success rate is noise: 1 of 1 reads 100%. */
+export const SUCCESS_RATE_MIN_USERS = 5;
+
+/** The deploy modal's grid: two rows of three. */
+export const DEPLOY_CARD_LIMIT = 6;
+
+/**
+ * The deploy modal's cards: the Agent Index's top verified agents, in its own
+ * rank. With none verified — the Index is down or not read yet — every provider
+ * by name, so a deploy never waits on the Index.
+ */
+export function deployCards(providers: CloudAgentProvider[], index: AgentIndex): DeployCard[] {
+  const described = (id: string): AgentIndexEntry | null => (Object.hasOwn(index, id) ? index[id]! : null);
+  const all = providers.map((provider) => ({ provider, entry: described(provider.id) }));
+  const verified = all
+    .filter(({ entry }) => entry?.verified)
+    .sort((a, b) => a.entry!.rank - b.entry!.rank)
+    .slice(0, DEPLOY_CARD_LIMIT);
+  const shown = verified.length ? verified : all.sort((a, b) => a.provider.name.localeCompare(b.provider.name));
+  return shown
+    .map(({ provider, entry }) => ({
+      id: provider.id,
+      name: provider.name,
+      initial: ([...provider.name.trim()][0] ?? "?").toUpperCase(),
+      logo: entry?.logo ?? null,
+      blurb: entry?.blurb ?? null,
+      byline: entry ? byline(entry) : "No description yet",
+    }));
+}
+
+/** The one provider `/v1/signup` never lists, named as Plow's full catalog names it. */
+const SELF_HOSTED: CloudAgentProvider = { id: "self_hosted", name: "Self-hosted", phrase: null };
+
+/** What kind of agent this is — its provider's name, e.g. "Life Assistant" — or null for a provider Plow no longer offers. */
+export function agentKind(provider: string, providers: CloudAgentProvider[]): string | null {
+  return [...providers, SELF_HOSTED].find(({ id }) => id === provider)?.name.trim() || null;
+}
+
+function byline({ builder, users, successRate }: AgentIndexEntry): string {
+  return [
+    builder ? `by ${builder}` : null,
+    users > 0 ? `${users} ${users === 1 ? "person" : "people"}` : null,
+    users >= SUCCESS_RATE_MIN_USERS && successRate !== null ? `${successRate}% set up` : null,
+  ].filter(Boolean).join(" · ");
 }

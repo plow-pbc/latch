@@ -39,11 +39,12 @@ const PANEL_HEIGHT = 100;
 const MIN_PANEL_HEIGHT = 80;
 const MAX_PANEL_HEIGHT = 240;
 const FALLBACK_PANEL_WIDTH = 420;
-const PROBE_INTERVAL_MS = 2000;
-const FLOW_TIMEOUT_MS = 3 * 60 * 1000;
+/** Exported for the test's own timer math — not consumed elsewhere. */
+export const PROBE_INTERVAL_MS = 2000;
+export const FLOW_TIMEOUT_MS = 3 * 60 * 1000;
 // Long enough for the panel's own 1.5s status poll to paint the granted
 // header, and for a human to read it, before the panel goes away.
-const GRANTED_LINGER_MS = 2500;
+export const GRANTED_LINGER_MS = 2500;
 
 /** One switch the panel can float beside. */
 export interface GrantTarget {
@@ -66,8 +67,6 @@ export interface FdaGrantFlowDeps {
   preloadPath: string;
   /** The compiled tracker, or a path that may not exist (flow degrades). */
   helperPath: string;
-  /** The default target: Full Disk Access, with the device's own probe. */
-  fullDisk: GrantTarget;
   /** Opens a System Settings pane by deep link. */
   openSettings: (pane: string) => Promise<void>;
 }
@@ -91,12 +90,20 @@ export class FdaGrantFlow {
   // never pin the panel open forever.
   private holdVisible = false;
   private holdTimer: NodeJS.Timeout | null = null;
+  /** The granted-linger delay armed by scheduleProbe(); stop() must cancel it
+   *  or a flow started inside that window inherits the old flow's stop(). */
+  private lingerTimer: NodeJS.Timeout | null = null;
   /** The switch the panel is currently pointing at. */
   private target: GrantTarget | null = null;
   /** The height the panel's content needs, as the renderer last measured it. */
   private height = PANEL_HEIGHT;
   /** Where System Settings last was, so a height change can re-snap. */
   private lastSettingsFrame: Rect | null = null;
+  /** Ends the current flow's promise; stop() is the only place that calls it. */
+  private settle: (() => void) | null = null;
+  /** The flow in flight, if any: the promise every caller for its switch
+   *  awaits, and the token a continuation checks to know it still owns it. */
+  private outcome: Promise<void> | null = null;
 
   constructor(private readonly deps: FdaGrantFlowDeps) {}
 
@@ -106,26 +113,59 @@ export class FdaGrantFlow {
   }
 
   /**
-   * Begin (or re-front) the flow for one switch — Full Disk Access when none
-   * is named. Idempotent on purpose: a second click while the panel is up
-   * re-opens the pane and keeps the one panel — PermissionFlow keeps a single
-   * floating panel for the same reason. A click for a DIFFERENT switch while
-   * one is up ends that flow and starts this one: one panel, one switch.
+   * Begin (or re-front) the flow for one switch. Idempotent on purpose: a
+   * second click while the panel is up re-opens the pane and keeps the one
+   * panel — PermissionFlow keeps a single floating panel for the same reason.
+   * A click for a DIFFERENT switch while one is up ends that flow and starts
+   * this one: one panel, one switch.
+   *
+   * Resolves when the flow ENDS: the grant landed (or was already there), or
+   * the flow was dismissed, timed out, or replaced by a different switch. A
+   * same-switch call while its flow is in flight, panel built or not, gets
+   * that same promise rather than starting a competing one — which is why
+   * start() is not `async`: that would wrap it in a fresh promise.
    */
-  async start(target: GrantTarget = this.deps.fullDisk): Promise<void> {
-    if (this.panel && this.target && this.target.key !== target.key) this.stop();
+  start(target: GrantTarget): Promise<void> {
+    if (this.outcome && this.target?.key !== target.key) this.stop();
     this.target = target;
     // The deep link (re-)fronts System Settings; with a tracker running that
     // is also what brings an existing panel back on screen.
     void this.deps.openSettings(target.pane);
-    if (this.panel) return;
-    // Already granted: nothing to guide. The pane still opens — that's where
-    // the grant is viewed or revoked — but a panel asking for what is already
-    // given would only confuse. (Re-checked after the await: a second click
-    // may have built the panel while the probe ran.)
-    if (await target.probe()) return;
-    if (this.panel) return;
+    if (this.outcome) return this.outcome;
+    const outcome = new Promise<void>((resolve) => {
+      this.settle = resolve;
+    });
+    this.outcome = outcome;
+    void this.pursue(target, outcome);
+    return outcome;
+  }
 
+  /**
+   * start()'s continuation: probe for an existing grant, then build the
+   * panel. `outcome` is the flow this call belongs to — a stop(), or a
+   * different switch's start(), during the probe replaces this.outcome, and a
+   * continuation that finds it replaced builds nothing.
+   */
+  private async pursue(target: GrantTarget, outcome: Promise<void>): Promise<void> {
+    try {
+      // Already granted: nothing to guide. The pane still opens — that's
+      // where the grant is viewed or revoked — but a panel asking for what
+      // is already given would only confuse.
+      const granted = await target.probe();
+      if (this.outcome !== outcome) return;
+      if (granted) this.stop();
+      else this.openPanel(target);
+    } catch (err) {
+      // A throwing probe, or a panel that fails partway through setup: end
+      // the flow rather than leave its caller waiting forever. stop() tears
+      // down whatever got built, and settles.
+      console.error("FdaGrantFlow: flow failed", err);
+      if (this.outcome === outcome) this.stop();
+    }
+  }
+
+  /** The floating panel beside the pane, and the probe that watches for the grant. */
+  private openPanel(target: GrantTarget): void {
     const workArea = screen.getPrimaryDisplay().workArea;
     this.height = PANEL_HEIGHT;
     this.lastSettingsFrame = null;
@@ -174,9 +214,9 @@ export class FdaGrantFlow {
     // the panel loses nothing by skipping it.
     panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     panel.on("closed", () => {
-      // Closed from outside (or by the person somehow): tear the rest down.
-      this.panel = null;
-      this.stop();
+      // Closed from outside (or by the person somehow): tear the rest down —
+      // unless this is a replaced panel, whose flow already ended.
+      if (this.panel === panel) this.stop();
     });
     void panel.loadFile(path.join(this.deps.rendererDir, "fdapanel.html"));
     this.startTracker();
@@ -189,23 +229,28 @@ export class FdaGrantFlow {
       this.applyVisibility();
     });
 
-    this.probeTimer = setInterval(() => void this.checkGranted(), PROBE_INTERVAL_MS);
+    this.scheduleProbe();
     this.timeoutTimer = setTimeout(() => this.stop(), FLOW_TIMEOUT_MS);
   }
 
   stop(): void {
-    if (this.probeTimer) clearInterval(this.probeTimer);
+    if (this.probeTimer) clearTimeout(this.probeTimer);
     if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
     if (this.holdTimer) clearTimeout(this.holdTimer);
+    if (this.lingerTimer) clearTimeout(this.lingerTimer);
     this.probeTimer = null;
     this.timeoutTimer = null;
     this.holdTimer = null;
+    this.lingerTimer = null;
     this.holdVisible = false;
     this.helper?.kill();
     this.helper = null;
     const panel = this.panel;
     this.panel = null;
     if (panel && !panel.isDestroyed()) panel.destroy();
+    this.settle?.();
+    this.settle = null;
+    this.outcome = null;
   }
 
   /**
@@ -220,6 +265,9 @@ export class FdaGrantFlow {
     // readline frames the stream — the same seam the browser host uses for
     // child NDJSON; decodeFrameLine only decodes.
     readline.createInterface({ input: helper.stdout! }).on("line", (line) => {
+      // A killed helper's buffered lines still arrive; only the current
+      // helper speaks for the current flow — the same guard as degrade().
+      if (this.helper !== helper) return;
       const decoded = decodeFrameLine(line);
       if (decoded === null) return;
       if (decoded === "gone") {
@@ -298,12 +346,24 @@ export class FdaGrantFlow {
     }
   }
 
-  private async checkGranted(): Promise<void> {
+  /**
+   * One probe at a time: the next is scheduled only once this one answers,
+   * so a slow probe never overlaps the next and one linger is ever armed.
+   * The flow token is captured before the await — a stop() or a different
+   * switch's start() while this probe is in flight replaces it, and a stale
+   * "granted" must not touch whichever flow is current by then.
+   */
+  private scheduleProbe(): void {
     const target = this.target;
-    if (!target || !(await target.probe())) return;
-    // Let the panel's own poll paint the granted state, then leave.
-    if (this.probeTimer) clearInterval(this.probeTimer);
-    this.probeTimer = null;
-    setTimeout(() => this.stop(), GRANTED_LINGER_MS);
+    const outcome = this.outcome;
+    this.probeTimer = setTimeout(async () => {
+      // A probe that fails says "not yet", and the next one still runs.
+      const granted = target !== null && (await target.probe().catch(() => false));
+      if (this.outcome !== outcome) return;
+      if (!granted) return this.scheduleProbe();
+      this.probeTimer = null;
+      // Let the panel's own poll paint the granted state, then leave.
+      this.lingerTimer = setTimeout(() => this.stop(), GRANTED_LINGER_MS);
+    }, PROBE_INTERVAL_MS);
   }
 }

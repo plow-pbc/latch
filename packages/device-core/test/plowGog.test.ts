@@ -5,7 +5,16 @@
  * seam.
  */
 import { describe, expect, it } from "vitest";
-import { gogExitReason, mergeFanout, planPlowGog, type PlowGogPlan } from "../src/providers/plowGog.js";
+import { GOG_SKILL } from "../src/providers/gogSkill.js";
+import {
+  compactCalendarEvents,
+  gogExitReason,
+  mergeFanout,
+  planPlowGog,
+  type PlowGogPlan,
+} from "../src/providers/plowGog.js";
+
+const PACIFIC = "America/Los_Angeles";
 
 describe("planPlowGog", () => {
   // One row per behavior. `expected` is the WHOLE plan — a partial match would
@@ -109,13 +118,41 @@ describe("planPlowGog", () => {
     {
       // gog's own default is 10 per account, which cut an owner's calendar
       // off mid-week and read the rest as free.
-      why: "fans calendar events out, sorted by start, 100 deep by default",
+      why: "fans calendar events out, sorted by start, 100 deep by default, in the owner's zone, compacted",
       argv: ["plow-gog", "calendar", "events", "primary"],
       expected: {
         kind: "fanout",
-        gogArgv: ["plow-gog", "calendar", "events", "primary", "--max", "100", "--json", "--results-only"],
+        gogArgv: [
+          "plow-gog", "calendar", "events", "primary", "--max", "100", "--timezone", PACIFIC, "--json", "--results-only",
+        ],
         sort: "cal-start",
         accounts: null,
+        compact: true,
+      },
+    },
+    {
+      why: "keeps the agent's own --timezone and --select on a calendar list, uncompacted",
+      argv: ["plow-gog", "calendar", "events", "--timezone=UTC", "--select", "summary,startDayOfWeek"],
+      expected: {
+        kind: "fanout",
+        gogArgv: [
+          "plow-gog", "calendar", "events", "--timezone=UTC", "--select", "summary,startDayOfWeek",
+          "--max", "100", "--json", "--results-only",
+        ],
+        sort: "cal-start",
+        accounts: null,
+      },
+    },
+    {
+      // The zone the agent asked gog for is the one the days are named in.
+      why: "keeps the agent's own --timezone on a compacted list",
+      argv: ["plow-gog", "calendar", "events", "--timezone", "Asia/Tokyo"],
+      expected: {
+        kind: "fanout",
+        gogArgv: ["plow-gog", "calendar", "events", "--timezone", "Asia/Tokyo", "--max", "100", "--json", "--results-only"],
+        sort: "cal-start",
+        accounts: null,
+        compact: true,
       },
     },
     {
@@ -123,9 +160,10 @@ describe("planPlowGog", () => {
       argv: ["plow-gog", "cal", "ls", "--max=5"],
       expected: {
         kind: "fanout",
-        gogArgv: ["plow-gog", "cal", "ls", "--max=5", "--json", "--results-only"],
+        gogArgv: ["plow-gog", "cal", "ls", "--max=5", "--timezone", PACIFIC, "--json", "--results-only"],
         sort: "cal-start",
         accounts: null,
+        compact: true,
       },
     },
     {
@@ -187,7 +225,7 @@ describe("planPlowGog", () => {
       argv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b", "--account", "a@example.com"],
       expected: {
         kind: "single",
-        gogArgv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b", "--max", "100"],
+        gogArgv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b", "--max", "100", "--timezone", PACIFIC],
         account: "a@example.com",
         confirmConflict: false,
         conflictCheck: null,
@@ -354,7 +392,7 @@ describe("planPlowGog", () => {
       expected: { kind: "help", gogArgv: ["plow-gog", "--help"] },
     },
   ])("$why", ({ argv, expected }) => {
-    expect(planPlowGog(argv)).toEqual(expected);
+    expect(planPlowGog(argv, PACIFIC)).toEqual(expected);
   });
 
   // The refusals, with the same sentences the gog provider uses — these reach
@@ -420,7 +458,7 @@ describe("planPlowGog", () => {
       reason: "one email",
     },
   ])("$why", ({ argv, reason }) => {
-    const plan = planPlowGog(argv);
+    const plan = planPlowGog(argv, PACIFIC);
     expect(plan.kind).toBe("refused");
     if (plan.kind !== "refused") return;
     expect(plan.reason).toContain(reason);
@@ -526,5 +564,145 @@ describe("gog exit reasons", () => {
     { why: "a signalled child has no code at all", code: null, reason: "gog exited -1" },
   ])("$why", ({ code, reason }) => {
     expect(gogExitReason(code)).toBe(reason);
+  });
+});
+
+describe("compactCalendarEvents", () => {
+  const ACCOUNTS = ["a@example.com", "b@example.com", "c@example.com"];
+  const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+  // A raw event as gog prints it under --timezone: Google's own fields,
+  // padded the way real ones are (description, attendees, conference data)
+  // to the 2-5 KB each that overflowed, plus gog's localized fields.
+  const rawEvent = (i: number) => {
+    const day = 14 + (i % 5);
+    const local = `2026-09-${day}T${String(8 + (i % 9)).padStart(2, "0")}:00:00-07:00`;
+    return {
+      kind: "calendar#event",
+      id: `evt-${i}`,
+      status: "confirmed",
+      htmlLink: `https://www.google.com/calendar/event?eid=${"x".repeat(60)}${i}`,
+      summary: `Meeting ${i}`,
+      description: "Agenda. ".repeat(80),
+      start: { dateTime: local, timeZone: "America/Sao_Paulo" },
+      end: { dateTime: local, timeZone: "America/Sao_Paulo" },
+      attendees: Array.from({ length: 8 }, (_, n) => ({ email: `person${n}@example.com`, responseStatus: "accepted" })),
+      conferenceData: { entryPoints: [{ uri: `https://meet.google.com/${"abc-".repeat(20)}` }] },
+      startDayOfWeek: DAYS[i % 5],
+      startLocal: local,
+      endDayOfWeek: DAYS[i % 5],
+      endLocal: local,
+      timezone: PACIFIC,
+      account: ACCOUNTS[i % ACCOUNTS.length],
+    };
+  };
+
+  it("renders a 63-event, 3-account week under the tool output limit, each with its own weekday", () => {
+    const items = Array.from({ length: 63 }, (_, i) => rawEvent(i));
+    expect(JSON.stringify(items).length).toBeGreaterThan(100_000);
+
+    const { items: compact, truncated } = compactCalendarEvents(items);
+
+    expect(truncated).toBeNull();
+    expect(compact).toHaveLength(63);
+    expect(JSON.stringify({ status: "completed", items: compact, degraded: [] }).length).toBeLessThan(50_000);
+    compact.forEach((event, i) => {
+      expect(event.startDayOfWeek).toBe(DAYS[i % 5]);
+      expect(event.account).toBe(ACCOUNTS[i % ACCOUNTS.length]);
+    });
+    expect(compact[0]).toEqual({
+      summary: "Meeting 0",
+      startDayOfWeek: "Monday",
+      startLocal: "2026-09-14T08:00:00-07:00",
+      endLocal: "2026-09-14T08:00:00-07:00",
+      attendees: Array.from({ length: 8 }, (_, n) => `person${n}@example.com`),
+      id: "evt-0",
+      account: "a@example.com",
+    });
+  });
+
+  it("keeps an all-day date as its own day, names who else is in it, and marks the ways an event leaves the owner free", () => {
+    const { items } = compactCalendarEvents([
+      {
+        summary: "holiday",
+        start: { date: "2026-09-16" },
+        end: { date: "2026-09-17" },
+        startDayOfWeek: "Wednesday",
+        startLocal: "2026-09-16",
+        endLocal: "2026-09-17",
+        transparency: "transparent",
+        attendees: [
+          { email: "me@example.com", self: true, responseStatus: "declined" },
+          { email: "room@resource.calendar.google.com", resource: true, responseStatus: "accepted" },
+          { email: "gone@example.com", responseStatus: "declined" },
+          { email: "dana@example.com", responseStatus: "needsAction" },
+        ],
+        account: "a",
+      },
+    ]);
+    expect(items[0]).toEqual({
+      summary: "holiday",
+      startDayOfWeek: "Wednesday",
+      startLocal: "2026-09-16",
+      endLocal: "2026-09-17",
+      allDay: true,
+      attendees: ["dana@example.com"],
+      transparency: "transparent",
+      declined: true,
+      id: null,
+      account: "a",
+    });
+  });
+
+  const timed = (local: string, summary = "x".repeat(200)) => ({
+    summary,
+    start: { dateTime: local },
+    startLocal: local,
+    account: "a",
+  });
+
+  it("cuts by size, saying how many were dropped and from which start", () => {
+    const items = Array.from({ length: 10 }, (_, i) =>
+      timed(`2026-09-16T${String(8 + i).padStart(2, "0")}:00:00-07:00`),
+    );
+    const { items: kept, truncated } = compactCalendarEvents(items, 1_000);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(10);
+    expect(JSON.stringify(kept).length).toBeLessThanOrEqual(1_000);
+    expect(truncated).toEqual({
+      omitted: 10 - kept.length,
+      after: `2026-09-16T${String(8 + kept.length).padStart(2, "0")}:00:00-07:00`,
+    });
+  });
+
+  it("reaches back to cover an all-day event that sorted after a timed one on its day", () => {
+    // In Auckland the merge's UTC-midnight reading of an all-day 2026-09-16
+    // falls at noon, after a 09:00 meeting that day — but the all-day event
+    // covers the morning too.
+    const items = [
+      timed("2026-09-16T08:00:00+12:00"),
+      timed("2026-09-16T09:00:00+12:00"),
+      { summary: "offsite", start: { date: "2026-09-16" }, startLocal: "2026-09-16", account: "b" },
+      timed("2026-09-16T13:00:00+12:00"),
+    ];
+    const { items: kept, truncated } = compactCalendarEvents(items, 700);
+    expect(kept.map((k) => k.startLocal)).toEqual(["2026-09-16T08:00:00+12:00", "2026-09-16T09:00:00+12:00"]);
+    expect(truncated).toEqual({ omitted: 2, after: "2026-09-16" });
+  });
+});
+
+describe("the Google Workspace skill", () => {
+  it("says day names come from startDayOfWeek, and names the compact fields", () => {
+    expect(GOG_SKILL.body).toContain("Take every day name you write from `startDayOfWeek`");
+    expect(GOG_SKILL.body).toContain("To get the raw events,\npass `--select` or `--fields`");
+    expect(GOG_SKILL.body).toContain("never work\nit out from the date yourself, and never from memory");
+    for (const field of ["startDayOfWeek", "startLocal", "endLocal", "truncated: {omitted, after}"]) {
+      expect(GOG_SKILL.body).toContain(field);
+    }
+  });
+
+  it("reads a search row as a thread, not with the single-message get", () => {
+    expect(GOG_SKILL.body).toContain("A `gmail search` row is a THREAD, not a message.");
+    expect(GOG_SKILL.body).toContain('["plow-gog","gmail","thread","get","<the row\'s id>"');
   });
 });

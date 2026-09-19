@@ -146,7 +146,12 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   capability bounds, and the owner's own `agentPurpose` text, which rides in
   the system message. Nothing else does — no goal text, and no audit history:
   `reviewPolicy.ts` passes `history: []` deliberately, and `buildPrompt`
-  explains why. WHETHER it runs is decided in precedence order by
+  explains why. Setup's Gatekeeper step posts the same shape for five fixed
+  example requests with the owner's DRAFT instructions as the purpose, to
+  preview verdicts; their example paths use a fixed placeholder home, so no
+  local account name leaves the Mac. A preview is not an operation and records
+  nothing — no audit line, no telemetry, no rule.
+  WHETHER the reviewer runs is decided in precedence order by
   `packages/device-core/src/policyEngine.ts`: a stored always-allow rule
   short-circuits Ask and Approve, while global AI Reviewer and Deny modes decide
   every request. What *is*
@@ -393,7 +398,7 @@ touches another application's data.
 
 Full Disk Access and the folder gates have no request API and no query API;
 the first access *is* the request. So the grants are asked for **while the
-owner is at the Mac**. Setup's "Data & permissions" step offers Full Disk
+owner is at the Mac**. Setup's "Grant access" step offers Full Disk
 Access through the drag-to-grant flow; after that the **Permissions section**
 (`apps/desktop/src/capabilitiesModel.ts`) is the one home for every switch:
 Full Disk Access (and, until it is granted AND a sandboxed child inherits
@@ -753,9 +758,11 @@ inventory, so a new skill cannot make it drift. A skill naming a capability this
 Mac lacks is a guaranteed denial, so its absence is the honest answer instead. Every probe runs once, in
 the `DeviceAgent` constructor — installing WhatsApp, or staging a plugin,
 after launch needs a restart to publish the skill. The one live exception is
-the owner's plugin off switch: `syncPluginSkills` owns that lifecycle,
+whether a plugin is on — the owner's off switch, and a connected account for
+each one its manifest `requires`: `syncPluginSkills` owns that lifecycle,
 publishing each staged plugin's skill while it is on and loading the owner's
-own `device/skills` files last, at launch and on every toggle. A provider carries its skill
+own `device/skills` files last, at launch, on every toggle and on every change
+to the connected accounts. A provider carries its skill
 on its registry row rather than being registered under a literal elsewhere, so
 the provider's name has one spelling and a rename cannot silently unpublish it.
 `whatsapp-history` is also why the registry takes a *built* skill and not only
@@ -1056,12 +1063,12 @@ bit, no settings mirror) and Keep Mac Awake (`keepAwake.ts`, a `caffeinate`
 hold while on AC only — the lid still sleeps it). The tray keeps the app
 resident when its window closes.
 
-First-run setup tells the user this on its own screen, "Keep this Mac
-reachable", between Data and Connect, and turns both on for them when they
-reach it (`Onboarding.advance()` → the injected `applyAvailabilityDefault`).
-`Settings.launchAtLoginDefaulted` records that the one-time default ran, and
-survives sign-out, so a user who turned a switch off stays off (a from-source
-run has its own home, so it never spends a packaged install's first run).
+Setup tells the user this on its own screen, "Keep this Mac reachable",
+after Grant access, and turns both on for them at sign-in
+(`Onboarding.finishWithSession()` → the injected `applyAvailabilityDefault`),
+which every setup passes exactly once — a re-setup after sign-out included —
+so the screen always opens with both on, and a switch turned off there stays
+off across Back and a relaunch mid-setup.
 Agent-side, the per-turn prefix says the Mac has to be awake
 (plow-pbc/hermes-plugin-plow#75); this screen is where the owner can act on it.
 

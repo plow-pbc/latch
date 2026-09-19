@@ -121,6 +121,40 @@ export const PERMISSION_TITLES: Record<string, string> = {
   screen_recording: "Screen & System Audio Recording",
 };
 
+/** A switch's name as the owner reads it: an Automation pair names its app. */
+export function permissionTitle(key: string): string {
+  const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
+  return app ? `Automation for ${app.name}` : (PERMISSION_TITLES[key] ?? key);
+}
+
+/** Full Disk Access as a plugin's sandboxed run sees it. */
+export type FullDiskState = "off" | "granted" | "relaunch" | "broken";
+
+/**
+ * Full Disk Access over one run of the app. A grant the app gains while it
+ * runs (fresh, or a remove-and-re-add) reaches its children only after a
+ * relaunch; one it has held all run that a child still cannot use (a
+ * signature change) needs the Settings row's remove-and-re-add. Telling the
+ * two apart takes remembering whether the app has seen it off this run —
+ * which is all this holds.
+ */
+export class FullDiskWatch {
+  private seenOff: boolean;
+
+  constructor(onAtLaunch: boolean) {
+    this.seenOff = !onAtLaunch;
+  }
+
+  observe(appGranted: boolean, inherited: boolean): FullDiskState {
+    if (!appGranted) {
+      this.seenOff = true;
+      return "off";
+    }
+    if (inherited) return "granted";
+    return this.seenOff ? "relaunch" : "broken";
+  }
+}
+
 /**
  * Where each switch lives, as the deep link System Settings answers. The
  * panel flow opens the pane and floats beside it; whether the pane also
@@ -289,6 +323,9 @@ export interface CapabilitiesInput {
   /** Whether Contacts and Calendars can be asked for in process (the addon
    *  is loaded). Without it their button is honest and points at the pane. */
   canRequestInProcess?: boolean;
+  /** Full Disk Access over this run (FullDiskWatch), when main is watching:
+   *  it alone tells a re-added grant waiting on a relaunch from a broken one. */
+  fullDisk?: FullDiskState;
 }
 
 const FOLDERS: readonly ("files_desktop" | "files_documents" | "files_downloads")[] = [
@@ -371,7 +408,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       // Granted-but-not-inherited reads "denied" deliberately — a plugin may
       // require this switch directly, so the status is a readiness answer, and
       // a grant a child cannot use is not access.
-      fda === true && !inherited
+      (input.fullDisk ? input.fullDisk === "broken" : fda === true && !inherited)
         ? "Granted to this app, but a sandboxed run cannot inherit it — remove Plow Latch from the list and add it again."
         : "Quit and reopen after granting.",
     ),

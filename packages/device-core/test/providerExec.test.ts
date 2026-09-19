@@ -10,9 +10,12 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { JSONValue, jv, makeIntent } from "@domo/protocol";
 
 import {
+  BROWSER_PLUGIN,
+  BrowserSessions,
   DeviceAgent,
   HeadlessPolicy,
   impliesNetwork,
@@ -24,7 +27,10 @@ import {
   type Provider,
   type StagedPlugin,
 } from "@domo/device-core";
+import { ownerTimeZone } from "../src/providers/plowGog.js";
 import { fakePlugin } from "./pluginFixtures.js";
+
+const FAKE_SERVER = fileURLToPath(new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url));
 
 /**
  * Only the tests that SPAWN need macOS — /usr/bin/sandbox-exec exists nowhere
@@ -73,7 +79,8 @@ function tmp(): string {
  * digest are placeholders — nothing here downloads anything.
  */
 const GOG_MANIFEST = {
-  name: "gog", version: "test", command: "gog",
+  name: "gog", version: "test", command: "plow-gog",
+  requires: { accounts: ["google"] },
   runtime: {
     binaries: [{
       name: "gog", version: "test",
@@ -97,8 +104,9 @@ function gogPlugin(): StagedPlugin[] {
   return stagedGog('#!/bin/sh\necho "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*"\n');
 }
 
+/** A device with a Google account connected, as a paired Mac with one is. */
 function device(minter: Minter | null, plugins: StagedPlugin[], home: string = tmp()): DeviceAgent {
-  return new DeviceAgent(
+  const d = new DeviceAgent(
     home,
     "Test Mac",
     new HeadlessPolicy({ intent: "allow_once" }),
@@ -107,8 +115,23 @@ function device(minter: Minter | null, plugins: StagedPlugin[], home: string = t
     minter,
     plugins,
   );
+  d.setConnectedAccounts(["google"]);
+  return d;
 }
 
+/**
+ * A device with a browser runtime resolved — same shape deviceCore.test.ts's
+ * fingerprint-pinning test constructs, trimmed to what this file needs.
+ */
+function makeDeviceWithBrowser(): DeviceAgent {
+  return new DeviceAgent(tmp(), "Test Mac", new HeadlessPolicy({ intent: "allow_once" }), {
+    serverCommand: ["node", "/x/server.js"],
+    credentialBrokerCommand: null,
+    mergeCookiesCommand: ["node", "/x/mergeCookies.js"],
+    env: {},
+    executablePath: "/x/camoufox",
+  });
+}
 
 /**
  * Refused, recorded as refused, and never started.
@@ -900,6 +923,19 @@ esac
     expect(JSON.stringify(response)).not.toContain("--account");
   });
 
+  itSpawns("returns a fanned-out calendar read compact, asked for in the owner's zone", async () => {
+    const d = device(accountsMinter(AB), plowGogPlugin());
+    const response = await run(d, ["plow-gog", "calendar", "events", "list"]);
+    expect(response).toMatchObject({ status: "completed", degraded: [] });
+    const items = (response as { items: Record<string, unknown>[] }).items;
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(Object.keys(item)).toEqual(["summary", "startDayOfWeek", "startLocal", "endLocal", "id", "account"]);
+      // The fake echoes its argv into the summary.
+      expect(item.summary).toContain(`--timezone ${ownerTimeZone()}`);
+    }
+  });
+
   itSpawns("carries a named-but-degraded account as degraded, and queries only the healthy one", async () => {
     const d = device(accountsMinter([AB[0]!], [{ account: "b@example.com", reason: "needs_reauth" }]), plowGogPlugin());
     const response = await run(d, ["plow-gog", "calendar", "events", "list", "--account=a@example.com,b@example.com"]);
@@ -1132,32 +1168,47 @@ esac
 });
 
 /**
- * The owner's off switch (`setDisabledPlugins`), which the Plugins tab drives.
+ * A plugin that is off: the owner's switch (`setDisabledPlugins`), which the
+ * Plugins tab drives, or an account its manifest requires that is not
+ * connected (`setConnectedAccounts`).
  *
  * Off is asserted where it has to hold rather than on the setter: the skill is
  * withdrawn from what `plow_list_skills` advertises, and the command is
  * refused at the pre-intent chokepoint with nothing spawned — the same two
  * consequences a plugin that was never staged has.
  */
-describe("a plugin the owner turned off", () => {
+describe("a plugin that is off", () => {
   const GOG_SKILL = providerFor(["plow-gog"])!.skill.name;
   const publishes = (d: DeviceAgent): boolean => d.skills.manifest().some((s) => s.name === GOG_SKILL);
 
-  it("unpublishes the skill and refuses the command, and both come back when it is turned on", async () => {
+  it.each([
+    {
+      when: "the owner turns it off",
+      off: (d: DeviceAgent) => d.setDisabledPlugins(["gog"]),
+      on: (d: DeviceAgent) => d.setDisabledPlugins([]),
+      reason: "plow-gog is turned off on this Mac",
+    },
+    {
+      when: "no account it requires is connected",
+      off: (d: DeviceAgent) => d.setConnectedAccounts([]),
+      on: (d: DeviceAgent) => d.setConnectedAccounts(["google"]),
+      reason: "plow-gog needs a connected google account — the owner connects one in Plow Latch's Plugins tab",
+    },
+  ])("unpublishes the skill and refuses the command when $when, and both come back after", async ({ off, on, reason }) => {
     const d = device(okMinter(), gogPlugin());
     expect(publishes(d)).toBe(true);
 
-    d.setDisabledPlugins(["gog"]);
+    void off(d);
     expect(publishes(d)).toBe(false);
     // Unpublished, but the row that offers to turn it back on is not blank.
     expect(d.pluginDescription("gog")).toBe(providerFor(["plow-gog"])!.skill.description);
     // Refused by name before any card, and again at the executor.
-    expect(d.pluginRefusal(["plow-gog", "gmail", "search", "q"])).toBe("plow-gog is turned off on this Mac");
+    expect(d.pluginRefusal(["plow-gog", "gmail", "search", "q"])).toBe(reason);
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
-    expect(jv(response).get("error").str).toBe("plow-gog is turned off on this Mac");
+    expect(jv(response).get("error").str).toBe(reason);
     expectNeverSpawned(d);
 
-    d.setDisabledPlugins([]);
+    void on(d);
     expect(publishes(d)).toBe(true);
   });
 
@@ -1216,5 +1267,51 @@ describe("a plugin the owner turned off", () => {
     expect(advertised()).toBe("The owner's own notes.");
     expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
     expect(d.skills.skill(GOG_SKILL)?.body).toBe("Drive it this way.");
+  });
+
+  it("turning the browser off unpublishes camoufox-browsing and refuses a browser command", async () => {
+    const d = makeDeviceWithBrowser();
+    expect(d.skills.manifest().map((s) => s.name)).toContain("camoufox-browsing");
+    d.setDisabledPlugins([BROWSER_PLUGIN]);
+    expect(d.skills.manifest().map((s) => s.name)).not.toContain("camoufox-browsing");
+    expect(d.browserRefusal()).toBe("browser use is turned off on this Mac");
+    const r = jv(await d.browserCommand("any-session", { action: "url" }));
+    expect(r.get("status").str).toBe("error");
+    expect(r.get("error").str).toMatch(/turned off/);
+    d.setDisabledPlugins([]);
+    expect(d.skills.manifest().map((s) => s.name)).toContain("camoufox-browsing");
+    expect(d.browserRefusal()).toBeNull();
+  });
+
+  // makeDeviceWithBrowser's server command names a file that does not exist —
+  // fine for the refusal test above, which never opens one, but a session
+  // that must actually close needs a browser that actually starts.
+  it("closes every open session the moment the switch flips, and lets a fresh one open once it flips back", async () => {
+    const home = tmp();
+    const d = device(null, [], home);
+    const browsers = {
+      command: ["node", FAKE_SERVER],
+      profileDir: path.join(home, "profiles"),
+      audit: (event: string, fields: { [k: string]: JSONValue }) => d.audit.record(event, fields),
+    };
+    const sessions = new BrowserSessions(browsers, null, (event, fields) => d.audit.record(event, fields));
+    // The same substitution deviceCore.test.ts's shutdown test uses: a real
+    // BrowserSessions the runtime never had to be resolved for.
+    Object.assign(d, { browserSessions: sessions });
+
+    const opened = jv(await sessions.open("int-1", "agent-1", ["pizza.example"]));
+    expect(opened.get("status").str).toBe("completed");
+
+    await d.setDisabledPlugins([BROWSER_PLUGIN]);
+    const closed = d.audit.entries().find((e) => jv(e).get("event").str === "browser_session_closed");
+    expect(closed).toBeDefined();
+    expect(jv(closed).get("reason").str).toBe("turned_off");
+
+    // Not closeAll: the switch flipping back on must open a fresh browser,
+    // not find the runtime latched shut behind it.
+    await d.setDisabledPlugins([]);
+    const reopened = jv(await sessions.open("int-2", "agent-1", ["pizza.example"]));
+    expect(reopened.get("status").str).toBe("completed");
+    await sessions.closeAll("test");
   });
 });

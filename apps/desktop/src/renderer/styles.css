@@ -33,6 +33,17 @@
   --volt: #d5ef8a;
   --volt-glow: rgba(213, 239, 138, 0.28);
   --midnight: #01000a;
+  /* The shared switch (switch.css) in this window's colors: the primary
+     button's fill when on — blue here, volt in the dark theme, which keeps
+     switch.css's own look. */
+  --switch-track: var(--hover);
+  --switch-border: var(--border-strong);
+  --switch-knob: var(--faint);
+  --switch-on-track: var(--blue-fg);
+  --switch-on-border: var(--blue-fg);
+  --switch-on-knob: #fff;
+  --switch-on-shadow: none;
+  --switch-focus: var(--focus);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -50,6 +61,9 @@
     --zinc-bg: #1c1c20; --zinc-fg: #b7b7c0; --zinc-bd: #27272a;
     --focus: #93c5fd;
     --dot-off: #e47278;
+    /* `initial` unsets a custom property, so switch.css's volt fallbacks win. */
+    --switch-on-track: initial; --switch-on-border: initial; --switch-on-knob: initial;
+    --switch-on-shadow: initial;
   }
 }
 
@@ -476,6 +490,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cap-default-pill { font-weight: 500; }
 .cap-account-email { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cap-account-menu-btn { padding: 5px 9px; font-size: 9px; letter-spacing: 1px; line-height: 1; }
+/* The connector's status line under Connected Accounts. */
+.settings-connectors + .connector-note { margin: 12px 0 0; color: var(--muted); }
+.settings-connectors + .connector-note.error { color: var(--red-fg); }
 
 /* A small popup menu (openMenu in main.js): a card floated over the page. */
 .menu {
@@ -508,7 +525,6 @@ textarea.text { min-height: 70px; resize: vertical; }
 .plugin-row { grid-template-columns: 8px 1fr auto auto; }
 .plugin-req { grid-template-columns: 8px 1fr auto; }
 .plugin-name { display: flex; align-items: center; gap: 8px; }
-.plugin-switch { margin-top: 0; }
 /* Settings holds the permission inventory in a container of its own so it can
    be drawn and refreshed as one thing; `contents` keeps its cards in the
    pane's own column, and the last one keeps the gap before what follows. */
@@ -796,6 +812,8 @@ pre.script {
   border-radius: 8px; background: var(--sel); color: var(--blue-fg);
   font-weight: 700;
 }
+.entity-mark.logo { overflow: hidden; background: #fff; }
+.entity-mark.logo img { width: 100%; height: 100%; object-fit: cover; }
 .entity-mark.client {
   font-family: var(--mono); background: var(--bg); color: var(--muted);
   border: 1px solid var(--border); font-size: 11px;
@@ -838,11 +856,6 @@ pre.script {
 }
 .status-setting .cloud-spinner { margin: 0; }
 .status-removing { color: var(--muted); }
-.signout-warning { color: var(--amber-fg); }
-.revoked-summary {
-  min-height: 26px; color: var(--muted); font-size: 11.5px;
-  padding: 4px 10px; border-top: 1px solid var(--border);
-}
 .entity-empty { padding: 16px 10px; text-align: left; }
 .roster-notices { margin-bottom: 10px; }
 .roster-notices .cloud-callout + .cloud-callout { margin-top: 8px; }
@@ -878,17 +891,48 @@ pre.script {
 .cloud-error .cloud-callout-title { color: var(--red-fg); }
 .cloud-modal-actions { margin-top: 18px; }
 .cloud-modal .field + .field { margin-top: 14px; }
-.cloud-agent-name { margin-top: 0; }
-.cloud-agent-line { margin-top: 14px; }
-.cloud-confirmed {
-  margin-top: 18px; color: var(--green-fg); font-size: 16px; font-weight: 600;
+/* ---------- Deploy an agent ---------- */
+.modal.deploy-modal { max-width: 780px; padding: 0; display: flex; flex-direction: column; }
+.deploy-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 16px 20px 12px; border-bottom: 1px solid var(--border);
 }
-.cloud-activation-code {
-  margin: 14px 0; padding: 14px;
-  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  background: var(--bg); font-size: 24px; font-weight: 600;
-  letter-spacing: 0.12em; text-align: center;
+.deploy-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+  align-items: start; padding: 14px 20px; overflow: auto;
 }
+.deploy-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 12px; text-align: left;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--card); color: var(--fg); font: inherit; cursor: pointer;
+}
+.deploy-card:hover { background: var(--hover); }
+.deploy-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.deploy-card.selected { border-color: var(--blue-fg); box-shadow: 0 0 0 2px var(--blue-bd); }
+.deploy-card-top { display: flex; align-items: center; gap: 8px; }
+.deploy-card-name { font-weight: 600; }
+.deploy-card-blurb {
+  color: var(--muted); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.deploy-card.selected .deploy-card-blurb { display: block; -webkit-line-clamp: unset; }
+.deploy-card-byline { color: var(--faint); font-size: 12px; }
+.deploy-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 20px; border-top: 1px solid var(--border);
+}
+.deploy-note { flex: 1; }
+.deploy-note.error { color: var(--red-fg); }
+.deploy-wait {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 36px 30px; text-align: center;
+}
+.deploy-wait .cloud-spinner { width: 22px; height: 22px; border-width: 3px; }
+.deploy-wait-title { font-size: 16px; font-weight: 600; }
+.deploy-wait p { max-width: 440px; margin: 0; }
+.cloud-agent-new { animation: cloud-agent-new 2.5s ease-out; }
+@keyframes cloud-agent-new { from { background: var(--sel); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .cloud-agent-new { animation: none; } }
 .cloud-detail-meta {
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
   margin-top: 14px;
@@ -912,8 +956,6 @@ pre.script {
   color: var(--muted); text-decoration: underline; cursor: pointer;
 }
 .linkbtn:hover { color: var(--fg); }
-
-.roster-confirm-loud { border-color: var(--red-bd); }
 
 /* ---------- Static-credential modal ----------
    Plain DOM over the pane, which is `inert` while this is up. The panel reuses
