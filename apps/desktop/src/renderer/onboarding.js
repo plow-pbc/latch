@@ -71,7 +71,8 @@ function arrowIcon(direction) {
 const titlebar = el("div", { class: "wizard-titlebar", attrs: { "aria-hidden": "true" } });
 const screen = el("section", { class: "wizard-screen", attrs: { "aria-live": "polite" } });
 const body = el("div", { class: "wizard-body" }, [screen]);
-const backButton = button("", "nav-back", () => update(() => window.domo.onboardingBack()));
+const backButton = button("", "nav-back", () =>
+  update(() => window.domo.onboardingBack(state?.step === "gatekeeper" ? gatekeeper?.text : undefined)));
 backButton.append(arrowIcon("back"), document.createTextNode("Back"));
 const dots = [0, 1, 2, 3, 4, 5].map(() => el("i", { class: "foot-dot" }));
 const dotRow = el("span", { class: "foot-dots", attrs: { "aria-hidden": "true" } }, dots);

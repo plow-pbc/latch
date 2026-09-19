@@ -201,6 +201,8 @@ export class Onboarding {
   private pendingMint: Promise<OnboardingState> | null = null;
   private pendingMintId = 0;
   private mints = 0;
+  /** Privacy applies plugin defaults only on its first exit in this setup session. */
+  private pluginDefaultsApplied = false;
   private telemetryEnabled: boolean;
   private purpose: string;
 
@@ -251,12 +253,17 @@ export class Onboarding {
       return this.newActivationCode();
     }
     if (this.step === "privacy") {
+      if (this.pluginDefaultsApplied) {
+        this.step = "gatekeeper";
+        return this.publish();
+      }
       // run() keeps a throw readable on Privacy and retries the default
       // rather than skipping it; the step moves only once it has applied.
       return this.run(async () => {
         await this.deps.applyPluginDefault();
         // A reset() (sign-out) can land during this await; don't overwrite it.
         if (this.step !== "privacy") return;
+        this.pluginDefaultsApplied = true;
         this.step = "gatekeeper";
       });
     }
@@ -299,10 +306,11 @@ export class Onboarding {
   }
 
   /** Return through the steps that have a Back affordance. */
-  async back(): Promise<OnboardingState> {
+  async back(draft?: unknown): Promise<OnboardingState> {
     if (this.busy) return this.state();
     const previous = previousOnboardingStep(this.step);
     if (previous === null) return this.state();
+    if (this.step === "gatekeeper" && typeof draft === "string") this.purpose = draft;
     if (this.step === "access") this.clearResumeStep();
     this.step = previous;
     return this.publish();
@@ -598,6 +606,7 @@ export class Onboarding {
     this.busy = false;
     const settings = this.settings();
     this.clearResumeStep(settings);
+    this.pluginDefaultsApplied = false;
     this.telemetryEnabled = settings.telemetryEnabled;
     this.purpose = this.storedPurpose(settings);
     this.step = this.initialStep(settings);

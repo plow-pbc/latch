@@ -178,7 +178,7 @@ contextBridge.exposeInMainWorld("domo", {
   onboardingGet: () => ipcRenderer.invoke("onboarding:get"),
   onboardingBegin: () => ipcRenderer.invoke("onboarding:begin"),
   onboardingAdvance: (draft?: string) => ipcRenderer.invoke("onboarding:advance", draft),
-  onboardingBack: () => ipcRenderer.invoke("onboarding:back"),
+  onboardingBack: (draft?: string) => ipcRenderer.invoke("onboarding:back", draft),
   onboardingSetTelemetry: (on: boolean) => ipcRenderer.invoke("onboarding:setTelemetry", on),
   gatekeeperPresets: () => ipcRenderer.invoke("onboarding:gatekeeperPresets"),
   gatekeeperPreview: (preset: string, index: number, draft: string) =>
