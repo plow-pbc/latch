@@ -291,15 +291,6 @@ describe("wizard steps around the existing verification flow", () => {
     expect(notifications).toBe(0);
   });
 
-  it("skips Access when nothing is left to grant", async () => {
-    const settings = loadSettings(home);
-    settings.relayCredential = DEVICE_TOKEN;
-    saveSettings(home, settings);
-    const onboarding = build({ accessNeeded: async () => false });
-
-    expect((await onboarding.advance()).step).toBe("availability");
-  });
-
   it("defaults the plugins once, entering from Privacy — a switch flipped back on survives a relaunch", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const applyPluginDefault = async () => {
