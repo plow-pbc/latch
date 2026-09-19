@@ -352,17 +352,24 @@ describe("wizard steps around the existing verification flow", () => {
 
   it.each<{
     name: string;
+    /** Runs before build() — settings a fresh Onboarding must open onto. */
+    before?: () => void;
     deps: (pending: Promise<void>) => Partial<OnboardingDeps>;
     enter: (onboarding: Onboarding) => Promise<void>;
     after?: () => void;
   }>([
     {
       name: "accessNeeded",
-      deps: (pending) => ({ accessNeeded: async () => { await pending; return true; } }),
-      enter: async (onboarding) => {
+      before: () => {
         const settings = loadSettings(home);
         settings.relayCredential = DEVICE_TOKEN;
         saveSettings(home, settings);
+      },
+      deps: (pending) => ({ accessNeeded: async () => { await pending; return true; } }),
+      enter: async (onboarding) => {
+        // Guards against going vacuous again: if this isn't "plugins", advance()
+        // below takes a different branch entirely and never touches accessNeeded.
+        expect(onboarding.state().step).toBe("plugins");
         onboarding.setTelemetryEnabled(false);
       },
       after: () => {
@@ -380,7 +387,8 @@ describe("wizard steps around the existing verification flow", () => {
         expect(onboarding.state().step).toBe("privacy");
       },
     },
-  ])("does not resume past reset() lands during $name", async ({ deps, enter, after }) => {
+  ])("does not resume past reset() lands during $name", async ({ before, deps, enter, after }) => {
+    before?.();
     let release: () => void = () => {};
     const pending = new Promise<void>((resolve) => {
       release = resolve;
