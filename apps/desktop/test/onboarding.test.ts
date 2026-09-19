@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PRESET_TEXT } from "../src/gatekeeperPreview.js";
 import {
   ACTIVATION_POLL_INTERVAL_MS,
   ACTIVATION_POLL_WINDOW_MS,
@@ -249,7 +250,7 @@ describe("wizard steps around the existing verification flow", () => {
     onboarding.reset();
   });
 
-  it("offers Back from Access and Availability but not from Verified, Plugins or Done", async () => {
+  it("offers Back from Plugins, Access and Availability but not from Verified, the Gatekeeper or Done", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     let notifications = 0;
     const onboarding = build({
@@ -266,11 +267,18 @@ describe("wizard steps around the existing verification flow", () => {
     expect((await onboarding.back()).step).toBe("privacy");
     expect(notifications).toBe(0);
 
-    expect((await onboarding.advance()).step).toBe("plugins");
+    expect((await onboarding.advance()).step).toBe("gatekeeper");
     notifications = 0;
-    expect((await onboarding.back()).step).toBe("plugins");
+    expect((await onboarding.back()).step).toBe("gatekeeper");
     expect(notifications).toBe(0);
 
+    expect((await onboarding.advance()).step).toBe("plugins");
+    notifications = 0;
+    expect((await onboarding.back()).step).toBe("gatekeeper");
+    expect(notifications).toBe(1);
+
+    // Re-enter Plugins to continue the walk.
+    expect((await onboarding.advance()).step).toBe("plugins");
     expect((await onboarding.advance()).step).toBe("access");
     notifications = 0;
     expect((await onboarding.back()).step).toBe("plugins");
@@ -304,7 +312,7 @@ describe("wizard steps around the existing verification flow", () => {
     await settle();
     expect(onboarding.state().step).toBe("privacy");
 
-    expect((await onboarding.advance()).step).toBe("plugins");
+    expect((await onboarding.advance()).step).toBe("gatekeeper");
     expect(loadSettings(home).disabledPlugins).toEqual(["cant-work-yet"]);
 
     // The owner turns the defaulted-off plugin back on.
@@ -339,7 +347,7 @@ describe("wizard steps around the existing verification flow", () => {
     expect(applied).toBe(1);
 
     const retried = await onboarding.advance();
-    expect(retried.step).toBe("plugins");
+    expect(retried.step).toBe("gatekeeper");
     expect(applied).toBe(2);
   });
 
@@ -418,7 +426,7 @@ describe("wizard steps around the existing verification flow", () => {
     expect(notifications).toBe(0);
   });
 
-  it("holds a redeemed login on Privacy until Continue moves to plugins", async () => {
+  it("holds a redeemed login on Privacy until Continue moves to the gatekeeper", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
     await onboarding.advance();
@@ -429,7 +437,7 @@ describe("wizard steps around the existing verification flow", () => {
     expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     expect(loadSettings(home).setupComplete).toBe(false);
 
-    expect((await onboarding.advance()).step).toBe("plugins");
+    expect((await onboarding.advance()).step).toBe("gatekeeper");
   });
 
   it("writes telemetry on leaving plugins and completion only on leaving availability", async () => {
@@ -471,6 +479,7 @@ describe("wizard steps around the existing verification flow", () => {
     expect(onboarding.state().step).toBe("privacy");
     expect(applied).toBe(1);
     await onboarding.advance();
+    await onboarding.advance();
     onboarding.setTelemetryEnabled(false);
     expect((await onboarding.advance()).step).toBe("availability");
     expect(loadSettings(home)).toMatchObject({ keepAwakeWhileRunning: true, telemetryEnabled: false });
@@ -492,6 +501,71 @@ describe("wizard steps around the existing verification flow", () => {
     expect(applied).toBe(2);
   });
 
+});
+
+describe("the gatekeeper's instructions", () => {
+  async function toGatekeeper(extra: Partial<OnboardingDeps> = {}) {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build(extra);
+    await onboarding.advance();
+    await settle();
+    expect(onboarding.state().step).toBe("privacy");
+    expect((await onboarding.advance()).step).toBe("gatekeeper");
+    return onboarding;
+  }
+
+  it("starts a first setup from the Home instructions and saves them only on Continue", async () => {
+    const onboarding = await toGatekeeper();
+    expect(onboarding.state().purpose).toBe(PRESET_TEXT.home);
+    expect(loadSettings(home).agentPurpose).toBe("");
+
+    expect((await onboarding.advance()).step).toBe("plugins");
+    expect(loadSettings(home).agentPurpose).toBe(PRESET_TEXT.home);
+  });
+
+  it("saves what the owner wrote, trimmed, without redrawing while they type", async () => {
+    let notifications = 0;
+    const onboarding = await toGatekeeper({ onChange: () => { notifications += 1; } });
+    notifications = 0;
+
+    const typed = onboarding.setPurpose("  Allow my assistant to read my calendar.  ");
+    expect(typed.purpose).toBe("  Allow my assistant to read my calendar.  ");
+    expect(notifications).toBe(0);
+    expect(loadSettings(home).agentPurpose).toBe("");
+
+    await onboarding.advance();
+    expect(loadSettings(home).agentPurpose).toBe("Allow my assistant to read my calendar.");
+  });
+
+  it("keeps an emptied field empty — no instructions is a choice", async () => {
+    const onboarding = await toGatekeeper();
+    onboarding.setPurpose("   ");
+    await onboarding.advance();
+    expect(loadSettings(home).agentPurpose).toBe("");
+  });
+
+  it("ignores instructions sent from any other step, or that are not text", async () => {
+    const onboarding = await toGatekeeper();
+    expect(onboarding.setPurpose(42).purpose).toBe(PRESET_TEXT.home);
+    await onboarding.advance();
+    expect(onboarding.setPurpose("late").purpose).toBe(PRESET_TEXT.home);
+  });
+
+  it("brings back what was saved when the owner steps back from Plugins", async () => {
+    const onboarding = await toGatekeeper();
+    onboarding.setPurpose("Allow my assistant to manage my calendar.");
+    await onboarding.advance();
+    expect((await onboarding.back()).step).toBe("gatekeeper");
+    expect(onboarding.state().purpose).toBe("Allow my assistant to manage my calendar.");
+  });
+
+  it("opens a re-setup on the instructions already stored", async () => {
+    const settings = loadSettings(home);
+    settings.agentPurpose = "Allow my assistant to handle my inbox.";
+    saveSettings(home, settings);
+    const onboarding = await toGatekeeper();
+    expect(onboarding.state().purpose).toBe("Allow my assistant to handle my inbox.");
+  });
 });
 
 describe("activation — the path a brand-new user takes", () => {
@@ -523,7 +597,7 @@ describe("activation — the path a brand-new user takes", () => {
       { token: SESSION_TOKEN, deviceId: "device-1", hostname: "test-mac" },
     ]);
     expect(loadSettings(home).mcpUrl).toBe(DEVICE_MCP_URL);
-    expect((await onboarding.advance()).step).toBe("plugins");
+    expect((await onboarding.advance()).step).toBe("gatekeeper");
   });
 
   it("polls without waiting to be told to — a hand-typed message still gets in", async () => {
@@ -1003,6 +1077,8 @@ describe("signing out", () => {
     await settle();
     expect(onboarding.state().step).toBe("privacy");
     await onboarding.advance();
+    expect(onboarding.state().step).toBe("gatekeeper");
+    await onboarding.advance();
     expect(onboarding.state().step).toBe("plugins");
     // Any activation minted from here on is a fresh code nobody has texted yet.
     plow.redeems = [{ status: "pending" }];
@@ -1113,8 +1189,8 @@ describe("while startRelay is dialling", () => {
     release();
     await settle();
 
-    expect(advanced.step).toBe("plugins");
-    expect(onboarding.state().step).toBe("plugins");
+    expect(advanced.step).toBe("gatekeeper");
+    expect(onboarding.state().step).toBe("gatekeeper");
   });
 
   it("is not overwritten by the post-login state", async () => {
