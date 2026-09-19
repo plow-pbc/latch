@@ -359,7 +359,8 @@ export class FdaGrantFlow {
     const target = this.target;
     const outcome = this.outcome;
     this.probeTimer = setTimeout(async () => {
-      const granted = target !== null && (await target.probe());
+      // A probe that fails says "not yet", and the next one still runs.
+      const granted = target !== null && (await target.probe().catch(() => false));
       if (this.outcome !== outcome) return;
       if (!granted) return this.scheduleProbe();
       this.probeTimer = null;

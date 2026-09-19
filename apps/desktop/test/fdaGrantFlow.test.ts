@@ -138,6 +138,20 @@ describe("FdaGrantFlow.start", () => {
     expect(live()).toHaveLength(0);
   });
 
+  it("keeps polling past a probe that fails, and ends when the grant lands", async () => {
+    // Opening probe: not yet. First poll: fails. Second poll: granted.
+    const answers = [Promise.resolve(false), Promise.reject(new Error("probe failed")), Promise.resolve(true)];
+    answers[1].catch(() => {});
+    const target: GrantTarget = { ...makeTarget("fullDiskAccess", () => false), probe: () => answers.shift()! };
+    const f = track(makeFlow().start(target));
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(2 * PROBE_INTERVAL_MS + GRANTED_LINGER_MS);
+
+    expect(f.ended).toBe(true);
+    expect(live()).toHaveLength(0);
+  });
+
   it("ends the replaced flow when a different switch takes over, and leaves the new panel up until it ends", async () => {
     const flow = makeFlow();
     const a = track(flow.start(makeTarget("a", () => false)));
