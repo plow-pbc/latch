@@ -1237,8 +1237,8 @@ body.dev-preview {
   color: var(--muted-2); animation: gk-bump 0.45s 0.45s ease-out; }
 .gk-row.no .gk-pill .ico, .gk-row.no .gk-end, .gk-row.no .gk-word { color: var(--clay-soft); }
 .gk-row.unavailable .gk-pill { color: var(--muted-2); }
-/* The row's detail: opaque and above the beam, so the beam never runs through the text. */
-.gk-why { position: relative; z-index: 5; overflow: hidden; max-height: 0; opacity: 0; visibility: hidden;
+/* The row's detail keeps to the pills' column, clear of the beam and the Mac. */
+.gk-why { width: calc(100% - var(--beam-x) - 24px); overflow: hidden; max-height: 0; opacity: 0; visibility: hidden;
   transition: max-height 0.3s, opacity 0.3s, margin 0.3s, visibility 0s 0.3s; }
 .gk-row.open .gk-why { max-height: 260px; opacity: 1; visibility: visible; margin: -2px 0 8px; transition-delay: 0s; }
 .gk-detail { padding: 10px 12px; border: 1px solid var(--border-2); border-radius: 11px; background: #161614;
