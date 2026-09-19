@@ -24,6 +24,9 @@ export interface Requirement {
    *  when nothing the app can do for the owner here (e.g. a missing browser
    *  runtime — that is a from-source fact, not a setting to flip). */
   action: string | null;
+  /** The line setup's Access row shows while this requirement's flow runs:
+   *  where the owner is needed. Empty for one setup never runs. */
+  waiting: string;
   met: boolean;
   /** Granted, but only a relaunch lets this app's children inherit it: the
    *  button relaunches rather than acting. */
@@ -66,8 +69,9 @@ export const accountRequirementId = (id: string): string => `account:${id}`;
 
 function permissionRequirement(key: string, met: boolean, relaunch: boolean): Requirement {
   const title = permissionTitle(key);
+  const waiting = "Waiting for you in System Settings…";
   if (relaunch) {
-    return { id: key, title, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", met: false, relaunch: true };
+    return { id: key, title, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting, met: false, relaunch: true };
   }
   return {
     id: key,
@@ -76,6 +80,7 @@ function permissionRequirement(key: string, met: boolean, relaunch: boolean): Re
       ? "Drag Plow Latch into the list in System Settings."
       : "Allow it when macOS asks, or in System Settings.",
     action: `Grant ${title}`,
+    waiting,
     met,
   };
 }
@@ -88,6 +93,7 @@ function accountRequirement(id: string, met: boolean): Requirement {
     title: "Google account",
     detail: "Sign in with Google in your browser.",
     action: "Connect Google",
+    waiting: "Finish signing in with Google in your browser.",
     met,
   };
 }
@@ -147,10 +153,11 @@ export function browserPluginRow(input: {
     title: "Safari",
     detail: "Allow JavaScript from Apple Events — Safari relaunches",
     action: "Enable in Safari",
+    waiting: "Turning it on. Safari relaunches.",
     met: input.safariJavaScript,
   });
   if (!input.runtimePresent) {
-    requirements.push({ id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null, met: false });
+    requirements.push({ id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null, waiting: "", met: false });
   }
   return {
     name: BROWSER_PLUGIN,

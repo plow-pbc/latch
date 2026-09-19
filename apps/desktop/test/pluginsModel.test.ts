@@ -28,6 +28,14 @@ const manifest = (requires: object, name = "wiki", title?: string): PluginManife
 
 const none = {};
 
+const google = {
+  id: "account:google",
+  title: "Google account",
+  detail: "Sign in with Google in your browser.",
+  action: "Connect Google",
+  waiting: "Finish signing in with Google in your browser.",
+};
+
 /** The shorthand the table rows carry, as one `pluginRows` input. */
 function build(o: { requires: object; enabled: boolean; connected?: string[]; granted?: string[]; pending?: string[] }): PluginsInput {
   return {
@@ -56,18 +64,14 @@ describe("pluginRows status", () => {
 it("names an unmet account requirement with the action that fixes it, and flips met once connected — still listed", () => {
   const requirements = (connected: string[]) =>
     pluginRows(build({ requires: { accounts: ["google"] }, enabled: true, connected }))[0]!.requirements;
-  expect(requirements([])).toEqual([
-    { id: "account:google", title: "Google account", detail: "Sign in with Google in your browser.", action: "Connect Google", met: false },
-  ]);
-  expect(requirements(["google"])).toEqual([
-    { id: "account:google", title: "Google account", detail: "Sign in with Google in your browser.", action: "Connect Google", met: true },
-  ]);
+  expect(requirements([])).toEqual([{ ...google, met: false }]);
+  expect(requirements(["google"])).toEqual([{ ...google, met: true }]);
 });
 
 it.each([
-  ["full_disk_access", { title: "Full Disk Access", detail: "Drag Plow Latch into the list in System Settings.", action: "Grant Full Disk Access" }],
+  ["full_disk_access", { title: "Full Disk Access", detail: "Drag Plow Latch into the list in System Settings.", action: "Grant Full Disk Access", waiting: "Waiting for you in System Settings…" }],
   // An Automation pair names its app — the same words the grant panel shows.
-  ["automation:com.apple.MobileSMS", { title: "Automation for Messages", detail: "Allow it when macOS asks, or in System Settings.", action: "Grant Automation for Messages" }],
+  ["automation:com.apple.MobileSMS", { title: "Automation for Messages", detail: "Allow it when macOS asks, or in System Settings.", action: "Grant Automation for Messages", waiting: "Waiting for you in System Settings…" }],
 ])("names an unmet %s requirement, and flips met once granted", (key, words) => {
   const requirements = (granted: string[]) =>
     pluginRows(build({ requires: { permissions: [key] }, enabled: true, granted }))[0]!.requirements;
@@ -80,7 +84,7 @@ it.each([
 // relaunch, and setup's list keeps it.
 it("reads a permission waiting on a relaunch as unmet, with the relaunch as its action — still on setup's list", () => {
   const rows = pluginRows(build({ requires: { permissions: ["full_disk_access"] }, enabled: true, pending: ["full_disk_access"] }));
-  const relaunch = { id: "full_disk_access", title: "Full Disk Access", detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", met: false, relaunch: true };
+  const relaunch = { id: "full_disk_access", title: "Full Disk Access", detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "Waiting for you in System Settings…", met: false, relaunch: true };
   expect(rows[0]!.requirements).toEqual([relaunch]);
   expect(grantList(rows)).toEqual([{ ...relaunch, plugins: ["wiki"] }]);
 });
@@ -88,9 +92,7 @@ it("reads a permission waiting on a relaunch as unmet, with the relaunch as its 
 it("keeps a disabled plugin's status off, but still lists its requirements — hiding them is the tab's business", () => {
   const [row] = pluginRows(build({ requires: { accounts: ["google"] }, enabled: false }));
   expect(row!.status).toBe("off");
-  expect(row!.requirements).toEqual([
-    { id: "account:google", title: "Google account", detail: "Sign in with Google in your browser.", action: "Connect Google", met: false },
-  ]);
+  expect(row!.requirements).toEqual([{ ...google, met: false }]);
 });
 
 it("carries its skill's description", () => {
@@ -136,9 +138,10 @@ describe("the shipped plugins", () => {
 
 describe("browserPluginRow", () => {
   const base = { enabled: true, runtimePresent: true, safariJavaScript: true, fullDiskAccess: false, relaunchPending: [] as string[], description: "Browse websites…" };
-  const fda = { id: "full_disk_access", title: "Full Disk Access", detail: "Drag Plow Latch into the list in System Settings.", action: "Grant Full Disk Access" };
-  const safari = { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "Allow JavaScript from Apple Events — Safari relaunches", action: "Enable in Safari" };
-  const runtime = { id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null };
+  const fda = { id: "full_disk_access", title: "Full Disk Access", detail: "Drag Plow Latch into the list in System Settings.", action: "Grant Full Disk Access", waiting: "Waiting for you in System Settings…" };
+  const safari = { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "Allow JavaScript from Apple Events — Safari relaunches", action: "Enable in Safari", waiting: "Turning it on. Safari relaunches." };
+  // Never run by setup (no action), so no waiting line.
+  const runtime = { id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null, waiting: "" };
   it.each([
     ["ready when the runtime is present and Safari allows JavaScript", base, "ready", [{ ...safari, met: true }]],
     // Full Disk Access is only needed to WRITE Safari's setting, so it only
@@ -170,25 +173,25 @@ describe("grantList", () => {
   });
 
   it("dedupes a permission two switched-on plugins share, listing both titles once", () => {
-    const req = { id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", met: false };
+    const req = { id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", waiting: "w", met: false };
     const rows = [rowWith("Wiki", "needs-setup", [req]), rowWith("Messages", "needs-setup", [req])];
     expect(grantList(rows)).toEqual([{ ...req, plugins: ["Wiki", "Messages"] }]);
   });
 
   it("orders permissions, then Safari, then accounts; drops off plugins and action-less requirements; keeps met ones", () => {
     const rows: PluginRow[] = [
-      rowWith("Gog", "ready", [{ id: "account:google", title: "Google account", detail: "d", action: "Connect Google", met: true }]),
+      rowWith("Gog", "ready", [{ id: "account:google", title: "Google account", detail: "d", action: "Connect Google", waiting: "w", met: true }]),
       rowWith("Browser use", "needs-setup", [
-        { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "d", action: "Enable in Safari", met: false },
-        { id: BROWSER_RUNTIME, title: "Browser runtime", detail: "d", action: null, met: false },
+        { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "d", action: "Enable in Safari", waiting: "w", met: false },
+        { id: BROWSER_RUNTIME, title: "Browser runtime", detail: "d", action: null, waiting: "", met: false },
       ]),
-      rowWith("Messages", "needs-setup", [{ id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", met: false }]),
-      rowWith("Off plugin", "off", [{ id: "account:google", title: "Google account", detail: "d", action: "Connect Google", met: false }]),
+      rowWith("Messages", "needs-setup", [{ id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", waiting: "w", met: false }]),
+      rowWith("Off plugin", "off", [{ id: "account:google", title: "Google account", detail: "d", action: "Connect Google", waiting: "w", met: false }]),
     ];
     expect(grantList(rows)).toEqual([
-      { id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", met: false, plugins: ["Messages"] },
-      { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "d", action: "Enable in Safari", met: false, plugins: ["Browser use"] },
-      { id: "account:google", title: "Google account", detail: "d", action: "Connect Google", met: true, plugins: ["Gog"] },
+      { id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", waiting: "w", met: false, plugins: ["Messages"] },
+      { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "d", action: "Enable in Safari", waiting: "w", met: false, plugins: ["Browser use"] },
+      { id: "account:google", title: "Google account", detail: "d", action: "Connect Google", waiting: "w", met: true, plugins: ["Gog"] },
     ]);
   });
 });
