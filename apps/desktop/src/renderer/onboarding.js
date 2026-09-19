@@ -803,6 +803,7 @@ function accessScreen() {
 }
 
 function doneScreen() {
+  const loadingBrowser = doneBrowserEnabled === null;
   const enablingBrowser = doneBrowserEnabled === false;
   const importPasswords = button(
     enablingBrowser ? "Enable Browser & import passwords" : "Import passwords",
@@ -812,6 +813,7 @@ function doneScreen() {
     )),
   );
   importPasswords.setAttribute("autofocus", "");
+  importPasswords.disabled = loadingBrowser;
   const actions = [importPasswords];
   if (doneAgent) {
     actions.push(button(`Text ${doneAgent.name}`, "done-tertiary", async () => {
@@ -1031,7 +1033,10 @@ async function apply(next) {
     if (state?.step !== "done") return;
     doneAgent = loaded;
     const browser = plugins?.rows?.find((row) => row.kind === "Browser");
-    doneBrowserEnabled = browser ? browser.status !== "off" : null;
+    // A failed status read must never leave an action that can import while
+    // Browser remains off. Enabling is idempotent, so unknown takes the
+    // explicit enable-and-import path once the read settles.
+    doneBrowserEnabled = browser ? browser.status !== "off" : false;
     render();
   }
 }

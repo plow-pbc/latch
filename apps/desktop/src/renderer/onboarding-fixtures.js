@@ -569,5 +569,13 @@ export function onboardingFixtures(now) {
       expect: ["Put your passwords to work", "Enable Browser & import passwords", "Not now"],
       reject: ["Text Elm"],
     },
+    {
+      name: "done-browser-loading",
+      state: { ...base, step: "done" },
+      cloud: noAgents,
+      pluginsPending: true,
+      expect: ["Put your passwords to work", "Import passwords", "Not now"],
+      reject: ["Text Elm", "Enable Browser & import passwords"],
+    },
   ];
 }

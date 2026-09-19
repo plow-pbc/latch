@@ -94,7 +94,10 @@ ipcMain.handle("power:setKeepAwake", async (_event, on) => {
   currentAwake = { enabled: on === true };
   return currentAwake;
 });
-ipcMain.handle("plugins:get", async () => currentFixture.plugins);
+ipcMain.handle("plugins:get", async () => {
+  if (currentFixture.pluginsPending) return new Promise(() => {});
+  return currentFixture.plugins;
+});
 ipcMain.handle("plugins:setEnabled", async () => currentFixture.plugins);
 ipcMain.handle("requirements:act", async () => ({ ...currentFixture.plugins, error: null }));
 ipcMain.handle("app:relaunch", async () => {});
@@ -175,6 +178,14 @@ doneBrowserOffFixture.prepare = async (win) => {
   if (finishDestination !== "enable-browser-and-import") {
     throw new Error(`Browser-off import handed off to ${String(finishDestination)}`);
   }
+};
+
+const doneBrowserLoadingFixture = SCREENS.find((fixture) => fixture.name === "done-browser-loading");
+doneBrowserLoadingFixture.prepare = async (win) => {
+  const disabled = await win.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll("button")).find((button) => button.textContent.trim() === "Import passwords")?.disabled`,
+  );
+  if (disabled !== true) throw new Error("Import passwords was enabled before Browser status resolved");
 };
 
 failLoudly();
