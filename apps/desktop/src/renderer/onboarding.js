@@ -889,7 +889,6 @@ function footerForStep() {
   if (step === "done") return { hidden: true };
   if (step === "welcome") {
     return {
-      back: false,
       dot: null,
       label: "Get started",
       arrow: false,
@@ -897,11 +896,10 @@ function footerForStep() {
     };
   }
   if (step === "activate" || step === "waiting") {
-    return { back: true, dot: 0, label: "Continue", arrow: true, disabled: true, action: null };
+    return { dot: 0, label: "Continue", arrow: true, disabled: true, action: null };
   }
   if (step === "privacy") {
     return {
-      back: false,
       dot: 1,
       label: "Continue",
       arrow: true,
@@ -909,13 +907,12 @@ function footerForStep() {
     };
   }
   if (step === "gatekeeper") {
-    return { back: false, dot: 2, label: "Continue", arrow: true, action: continueFromGatekeeper };
+    return { dot: 2, label: "Continue", arrow: true, action: continueFromGatekeeper };
   }
   if (step === "access") {
     const { label, kind } = accessPrimary({ grants: pluginsState?.grants ?? [], skipped, running, missed });
     const actions = { run: startGrants, relaunch: () => window.domo.appRelaunch(), advance };
     return {
-      back: true,
       dot: 4,
       label,
       arrow: kind !== null,
@@ -925,7 +922,6 @@ function footerForStep() {
   }
   if (step === "availability") {
     return {
-      back: true,
       dot: 5,
       label: "Continue",
       arrow: true,
@@ -933,7 +929,6 @@ function footerForStep() {
     };
   }
   return {
-    back: true,
     dot: 3,
     label: "Continue",
     arrow: true,
@@ -996,7 +991,7 @@ function render() {
   const config = footerForStep();
   footer.hidden = !!config.hidden;
   if (!config.hidden) {
-    backButton.hidden = !config.back;
+    backButton.hidden = state.canGoBack !== true;
     backButton.disabled = !!state.busy;
     dotRow.hidden = config.dot === null;
     dots.forEach((dot, index) => {

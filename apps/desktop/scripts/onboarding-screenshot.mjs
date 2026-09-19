@@ -19,7 +19,16 @@ const outDir = process.env.OUT_DIR ?? "/tmp";
 const REARM_NOTE =
   "That code still works — send it exactly as shown and this screen will move on by itself.";
 
-const fixtureScreens = onboardingFixtures(Date.now());
+const BACK_STEPS = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
+const fixtureScreens = onboardingFixtures(Date.now()).map((fixture) => ({
+  ...fixture,
+  state: fixture.state && {
+    ...fixture.state,
+    canGoBack: BACK_STEPS.has(fixture.state.step),
+  },
+  expectFooter: fixture.state?.step !== "done",
+  expectBack: BACK_STEPS.has(fixture.state?.step),
+}));
 const welcomeFixture = fixtureScreens[0];
 const SCREENS = [
   ...fixtureScreens,
@@ -27,6 +36,8 @@ const SCREENS = [
     ...welcomeFixture,
     name: "boot-null",
     state: null,
+    expectFooter: true,
+    expectBack: false,
   },
   {
     ...welcomeFixture,

@@ -34,6 +34,15 @@ export type OnboardingStep =
   | "availability"
   | "done";
 
+/** The one source of truth for both the Back affordance and its destination. */
+function previousOnboardingStep(step: OnboardingStep): OnboardingStep | null {
+  if (step === "activate" || step === "waiting") return "welcome";
+  if (step === "gatekeeper") return "privacy";
+  if (step === "plugins") return "gatekeeper";
+  if (step === "access" || step === "availability") return "plugins";
+  return null;
+}
+
 /**
  * How long the screen counts down before it stalls and offers a fresh code.
  *
@@ -124,6 +133,8 @@ export function activationChatLabel(chat: ActivationChat): string {
 
 export interface OnboardingState {
   step: OnboardingStep;
+  /** Whether the shared setup footer should offer Back on this step. */
+  canGoBack: boolean;
   /** One honest line: what happened, or what we are waiting for. Never a bare
    * spinner — every failure below produces text here. */
   message: string;
@@ -206,6 +217,7 @@ export class Onboarding {
   state(): OnboardingState {
     return {
       step: this.step,
+      canGoBack: previousOnboardingStep(this.step) !== null,
       message: this.message,
       noteKind: this.noteKind,
       busy: this.busy,
@@ -280,10 +292,9 @@ export class Onboarding {
   /** Return through the steps that have a Back affordance. */
   async back(): Promise<OnboardingState> {
     if (this.busy) return this.state();
-    if (this.step === "activate" || this.step === "waiting") this.step = "welcome";
-    else if (this.step === "access" || this.step === "availability") this.step = "plugins";
-    else if (this.step === "plugins") this.step = "gatekeeper";
-    else return this.state();
+    const previous = previousOnboardingStep(this.step);
+    if (previous === null) return this.state();
+    this.step = previous;
     return this.publish();
   }
 
