@@ -615,13 +615,13 @@ describe("compactCalendarEvents", () => {
       startDayOfWeek: "Monday",
       startLocal: "2026-09-14T08:00:00-07:00",
       endLocal: "2026-09-14T08:00:00-07:00",
-      attendees: 8,
+      attendees: Array.from({ length: 8 }, (_, n) => `person${n}@example.com`),
       id: "evt-0",
       account: "a@example.com",
     });
   });
 
-  it("keeps an all-day date as its own day, and marks the ways an event leaves the owner free", () => {
+  it("keeps an all-day date as its own day, names who else is in it, and marks the ways an event leaves the owner free", () => {
     const { items } = compactCalendarEvents([
       {
         summary: "holiday",
@@ -631,7 +631,12 @@ describe("compactCalendarEvents", () => {
         startLocal: "2026-09-16",
         endLocal: "2026-09-17",
         transparency: "transparent",
-        attendees: [{ email: "me@example.com", self: true, responseStatus: "declined" }],
+        attendees: [
+          { email: "me@example.com", self: true, responseStatus: "declined" },
+          { email: "room@resource.calendar.google.com", resource: true, responseStatus: "accepted" },
+          { email: "gone@example.com", responseStatus: "declined" },
+          { email: "dana@example.com", responseStatus: "needsAction" },
+        ],
         account: "a",
       },
     ]);
@@ -641,7 +646,7 @@ describe("compactCalendarEvents", () => {
       startLocal: "2026-09-16",
       endLocal: "2026-09-17",
       allDay: true,
-      attendees: 1,
+      attendees: ["dana@example.com"],
       transparency: "transparent",
       declined: true,
       id: null,
