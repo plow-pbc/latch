@@ -75,7 +75,7 @@ describe("gatekeeper preview", () => {
     ["work", 1, "run: plow-gog gmail drafts create --to jordan@example.com --subject Re: Invoice #1042 --body Hi Jordan,\n\nThanks for flagging this — I've corrected the invoice and will resend it today.\n\nBest,\nAlex --json", true, []],
     ["work", 2, "run: plow-gog calendar events list --from=2026-09-21 --days=5 --json --results-only --sort=start --max=50", true, []],
     ["work", 3, "run: gh pr view 482 --repo acme/web --comments", true, []],
-    ["work", 4, `run: sqlite3 -readonly -json ${HOME}/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite SELECT ZFROMJID, ZTEXT, ZMESSAGEDATE FROM ZWAMESSAGE ORDER BY ZMESSAGEDATE DESC LIMIT 50`, false, [`${HOME}/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite`]],
+    ["work", 4, `run: /usr/bin/sqlite3 -readonly -header -csv ${HOME}/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite select ZFROMJID, ZTEXT, ZMESSAGEDATE from ZWAMESSAGE order by ZMESSAGEDATE desc limit 50;`, false, [`${HOME}/Library/Group Containers/group.net.whatsapp.WhatsApp.shared`]],
   ] as const)("shows the reviewer %s row %i as the production request it stands for", async (preset, index, request, network, reads) => {
     const { deps: d, sent } = deps();
     await previewRow(preset, index, "draft", d);

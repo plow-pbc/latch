@@ -85,7 +85,8 @@ const SEND_IMESSAGE =
   'on run argv\n  tell application "Messages" to send (item 1 of argv) to participant (item 2 of argv) ' +
   "of (first account whose service type = iMessage)\nend run";
 const INSTACART_LOGIN = "4f6c2a1e-8b3d-4c7a-9e21-7d5b0c3f9a64";
-const WHATSAPP_DB = "Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite";
+// The shipped whatsapp-history recipe's shape: the owner approves the group container, not one file.
+const WHATSAPP_DIR = "Library/Group Containers/group.net.whatsapp.WhatsApp.shared";
 
 const DECKS: Record<PresetKey, Row[]> = {
   home: [
@@ -162,8 +163,8 @@ const DECKS: Record<PresetKey, Row[]> = {
       label: "Read your personal WhatsApp",
       icon: "messages",
       op: ({ home }) => {
-        const db = `${home}/${WHATSAPP_DB}`;
-        return run(["sqlite3", "-readonly", "-json", db, "SELECT ZFROMJID, ZTEXT, ZMESSAGEDATE FROM ZWAMESSAGE ORDER BY ZMESSAGEDATE DESC LIMIT 50"], false, [db]);
+        const dir = `${home}/${WHATSAPP_DIR}`;
+        return run(["/usr/bin/sqlite3", "-readonly", "-header", "-csv", `${dir}/ChatStorage.sqlite`, "select ZFROMJID, ZTEXT, ZMESSAGEDATE from ZWAMESSAGE order by ZMESSAGEDATE desc limit 50;"], false, [dir]);
       },
     },
   ],
