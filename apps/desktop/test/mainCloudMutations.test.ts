@@ -1,30 +1,15 @@
-import fs from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import vm from "node:vm";
-import ts from "typescript";
 import { expect, it } from "vitest";
+import { compileMain, mainFunctions, mainHandler } from "./mainSource.js";
 
 // Exercise the registered handlers and their returned snapshot without booting Electron.
-const source = ts.createSourceFile("main.ts", fs.readFileSync(
-  new URL("../src/main.ts", import.meta.url), "utf8",
-), ts.ScriptTarget.Latest, true);
-const snapshot = source.statements.find((node) =>
-  ts.isFunctionDeclaration(node) && node.name?.text === "agentsTabState",
-)!;
+const withSnapshot = (channel: string) => compileMain(...mainFunctions("agentsTabState"), mainHandler(channel));
 
 it.each([
   ["cloud:changeLine", "move"],
 ] as const)("%s returns current free lines after %s", async (channel, action) => {
-  const registration = source.statements.find((node) =>
-    ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
-    && node.expression.expression.getText(source) === "ipcMain.handle"
-    && ts.isStringLiteral(node.expression.arguments[0])
-    && node.expression.arguments[0].text === channel,
-  )!;
-  const compiled = ts.transpileModule(
-    `${snapshot.getText(source)}\n${registration.getText(source)}`,
-    { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
-  ).outputText;
+  const compiled = withSnapshot(channel);
   let lines: { uid: string; agentUid: string | null }[] = [
     { uid: "line-new", agentUid: null },
     { uid: "line-old", agentUid: "agent-old" },
@@ -57,16 +42,7 @@ it.each([
 });
 
 it("connect:create refreshes the roster, so the new credential is listed and revocable", async () => {
-  const registration = source.statements.find((node) =>
-    ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
-    && node.expression.expression.getText(source) === "ipcMain.handle"
-    && ts.isStringLiteral(node.expression.arguments[0])
-    && node.expression.arguments[0].text === "connect:create",
-  )!;
-  const compiled = ts.transpileModule(
-    `${snapshot.getText(source)}\n${registration.getText(source)}`,
-    { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
-  ).outputText;
+  const compiled = withSnapshot("connect:create");
 
   // Refreshing the cloud agents instead left the new row off the screen — and
   // with it the Remove that revokes it — until something else re-read.

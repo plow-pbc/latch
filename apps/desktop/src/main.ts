@@ -69,6 +69,7 @@ import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safar
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
+import { applyPlowFolderIcon } from "./plowFolderIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
@@ -77,7 +78,7 @@ import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./
 import { resolveTelemetryConfig, SimulatedError, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
-import { Connectors } from "./connectors.js";
+import { CONNECTOR_SETUP_WAIT_MS, Connectors } from "./connectors.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
@@ -1670,6 +1671,19 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
   return { rows, grants: grantList(rows) };
 }
 
+/** Plugins → Continue: does a switched-on plugin still need a grant? A resumed
+ *  setup can get here before the relay's poll, so ask Plow for the accounts —
+ *  quietly and briefly: past the wait the cache answers, and a late reply
+ *  redraws Access. A slow Plow never holds Continue. */
+async function prepareSetupAccounts(): Promise<void> {
+  await Promise.race([connectors?.poll(), new Promise((done) => setTimeout(done, CONNECTOR_SETUP_WAIT_MS))]);
+}
+
+async function accessNeeded(): Promise<boolean> {
+  await prepareSetupAccounts();
+  return (await pluginsNow()).grants.some((g) => g.status !== "met");
+}
+
 ipcMain.handle("plugins:get", async () => pluginsNow());
 
 /** The owner's off switches: the disabled NAMES persist (a later plugin is on
@@ -2314,6 +2328,13 @@ app.whenReady().then(async () => {
     // degrades — the same contract as the Full Disk Access tracker.
     nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath, native: nativePermissions() }),
   );
+  // DeviceAgent has just ensured the owner's real ~/Plow exists. Decorating
+  // it is cosmetic and must not hold relay startup or weaken that ownership.
+  void applyPlowFolderIcon({
+    folderPath: plowFolderPath(os.homedir()),
+    helperPath: nativeHelperPath("plow-folder-icon"),
+    badgePath: nativeHelperPath("plow-badge.png"),
+  });
   // The owner's off switches, as they left them: one call, and the device
   // publishes exactly the skills it will honour commands for.
   device.setDisabledPlugins(loadSettings(home).disabledPlugins ?? []);
@@ -2443,19 +2464,13 @@ app.whenReady().then(async () => {
       const off = rows.filter((r) => r.status === "needs-setup").map((r) => r.name);
       if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
     },
-    // An incomplete restart without an Access checkpoint falls back to Plugins
-    // before the relay's connector poll: read the accounts first, or a
-    // connected Google needs connecting.
-    accessNeeded: async () => {
-      await connectors?.refresh();
-      return (await pluginsNow()).grants.some((g) => g.status !== "met");
-    },
-    prepareAccess: async () => {
-      await connectors?.refresh();
-    },
+    accessNeeded,
+    // A checkpointed relaunch skips Plugins, so give the same bounded account
+    // refresh a chance to land before Access becomes interactive.
+    prepareAccess: prepareSetupAccounts,
   });
   // A checkpointed relaunch skips the Plugins transition (and accessNeeded),
-  // so its account inventory must land before the window can make grants live.
+  // so give its account inventory the same bounded chance before the window.
   await onboarding.prepareInitialStep();
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   const cloudAgentsClient = new CloudAgentsClient(cloudApi);
