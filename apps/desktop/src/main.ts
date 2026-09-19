@@ -2387,8 +2387,11 @@ app.whenReady().then(async () => {
       setLaunchAtLogin(app.isPackaged, loginItems, true);
     },
     // The Plugins screen opens with on only what already works: every staged
-    // plugin still needing setup joins the owner's off switches.
+    // plugin still needing setup joins the owner's off switches. A re-setup
+    // can get here before main has read the connected accounts, so read them
+    // first — or a connected Google account still turns Gmail off.
     applyPluginDefault: async () => {
+      await connectors?.refresh();
       const { rows } = await pluginsNow();
       const off = rows.filter((r) => r.status === "needs-setup").map((r) => r.name);
       if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
