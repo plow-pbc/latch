@@ -31,6 +31,8 @@ describe("onboarding visual fixtures", () => {
       "gatekeeper-stopped",
       "gatekeeper-work",
     ]);
-    for (const f of withGatekeeper) expect(f.gatekeeper.presets, f.name).toEqual(gatekeeperPresets());
+    // A fixed Friday, so "next week" in the fixture doesn't drift with the calendar.
+    const presets = gatekeeperPresets(new Date(2026, 8, 18));
+    for (const f of withGatekeeper) expect(f.gatekeeper.presets, f.name).toEqual(presets);
   });
 });

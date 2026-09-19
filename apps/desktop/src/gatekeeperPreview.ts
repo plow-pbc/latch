@@ -5,7 +5,9 @@
  *
  * A preview is not an operation. The request is built here from fixed data and
  * handed to the reviewer that decides real ones, with the owner's DRAFT as the
- * purpose — then only the verdict comes back. Nothing is recorded: no audit
+ * purpose — then only the verdict comes back. The renderer is shown each row's
+ * capability lines, spelled as the reviewer reads them, but can't build or send
+ * a request: it names only a preset, an index and the draft. Nothing is recorded: no audit
  * line, no telemetry, no rule, no approval queue, no policy engine. The example
  * paths sit under a fixed placeholder home, so no local account name leaves the
  * Mac.
@@ -16,7 +18,7 @@
  * WORK ✓✓✓✓✕. Wording is load-bearing: "personal messages" once read as
  * including email and denied an inbox search.
  */
-import { Capability, makeIntent } from "@domo/protocol";
+import { Capability, capabilityDisplay, makeIntent } from "@domo/protocol";
 import { ReviewArgs, ReviewFailureCause, Verdict } from "./adversarialAgent.js";
 import { Settings } from "./settings.js";
 
@@ -34,7 +36,7 @@ export const PRESET_TEXT: Record<PresetKey, string> = {
 
 export interface PresetView {
   text: string;
-  rows: { label: string; icon: string }[];
+  rows: { label: string; icon: string; command: string[] }[];
 }
 
 export interface PreviewResult {
@@ -166,11 +168,15 @@ const DECKS: Record<PresetKey, Row[]> = {
   ],
 };
 
-/** What the screen draws: the preset text and each row's label and icon — never a request. */
-export function gatekeeperPresets(): Record<PresetKey, PresetView> {
+/**
+ * What the screen draws: the preset text and each row's label, icon and
+ * capability lines — `capabilityDisplay`, the reviewer's own bounds lines, so
+ * what's shown is exactly what's reviewed.
+ */
+export function gatekeeperPresets(now: Date = new Date()): Record<PresetKey, PresetView> {
   const view = (key: PresetKey): PresetView => ({
     text: PRESET_TEXT[key],
-    rows: DECKS[key].map(({ label, icon }) => ({ label, icon })),
+    rows: DECKS[key].map(({ label, icon, op }) => ({ label, icon, command: op(now).capabilities.map(capabilityDisplay) })),
   });
   return { home: view("home"), work: view("work") };
 }

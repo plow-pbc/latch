@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { capabilityDisplay } from "@domo/protocol";
 import { describe, expect, it } from "vitest";
 import type { ReviewArgs } from "../src/adversarialAgent.js";
 import {
@@ -59,9 +60,9 @@ describe("gatekeeper preview", () => {
       "Review a pull request on GitHub",
       "Read your personal WhatsApp",
     ]);
-    // The renderer is handed display data only — never a request or capability.
+    // The renderer is handed display lines only — never a request or capability.
     for (const preset of Object.values(presets)) {
-      for (const row of preset.rows) expect(Object.keys(row).sort()).toEqual(["icon", "label"]);
+      for (const row of preset.rows) expect(Object.keys(row).sort()).toEqual(["command", "icon", "label"]);
     }
   });
 
@@ -84,6 +85,8 @@ describe("gatekeeper preview", () => {
     const net = intent.capabilities.find((c) => c.kind === "network");
     expect(net?.allowed ?? null).toBe(network);
     expect(intent.capabilities.filter((c) => c.kind === "fs.read").flatMap((c) => c.paths)).toEqual(reads);
+    // What the row shows is what the reviewer was sent.
+    expect(gatekeeperPresets(FRIDAY)[preset].rows[index]!.command).toEqual(intent.capabilities.map(capabilityDisplay));
   });
 
   it("sends the draft to the reviewer that decides alone, with nothing earlier and no one to ask", async () => {
