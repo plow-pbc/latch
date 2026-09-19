@@ -350,10 +350,11 @@ export class FdaGrantFlow {
     // Captured before the await: a start() for a different switch (or a
     // stop()) while this probe is in flight replaces this.outcome, and a
     // stale "granted" from THIS probe must not arm the linger for whatever
-    // flow is current by the time it resolves.
+    // flow is current by the time it resolves. Nor may a second tick whose
+    // probe overlapped a slow one arm another: stop() cancels only one.
     const outcome = this.outcome;
     if (!target || !(await target.probe())) return;
-    if (this.outcome !== outcome) return;
+    if (this.outcome !== outcome || this.lingerTimer) return;
     // Let the panel's own poll paint the granted state, then leave.
     if (this.probeTimer) clearInterval(this.probeTimer);
     this.probeTimer = null;
