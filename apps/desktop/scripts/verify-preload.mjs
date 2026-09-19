@@ -104,6 +104,7 @@ const probePluginRows = () => ({
   rows: pluginRows({
     plugins: probeStaged.map((p) => ({ ...p, enabled: probePlugins[p.manifest.name] })),
     connectedAccounts: probeAccountsLoaded && connectorProbe.google.accounts.length ? ["google"] : [],
+    grantedPermissions: [],
   }),
 });
 ipcMain.handle("plugins:get", async () => probePluginRows());
@@ -1488,7 +1489,7 @@ app.whenReady().then(async () => {
     const req = document.querySelector(".plugin-req");
     return {
       saysNeedsSetup: (${gogRow})?.textContent.includes("Needs setup"),
-      namesRequirement: req?.querySelector(".cap-name")?.textContent === "Account",
+      namesRequirement: req?.querySelector(".cap-name")?.textContent === "Google account",
       offersTheFix: req?.querySelector("button.btn")?.textContent.trim() === "Connect Google",
     };
   })()`);

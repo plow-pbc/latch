@@ -1576,11 +1576,16 @@ async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; erro
       description: device?.pluginDescription(p.manifest.name) ?? null,
     })),
     connectedAccounts: connectedAccountIds(),
+    // Task 4 wires this to the real inventory; every requirement it gates
+    // reads unmet until then.
+    grantedPermissions: [],
   });
   rows.push(browserPluginRow({
     enabled: !disabled.has(BROWSER_PLUGIN),
     runtimePresent: device !== null && device.browserSessions !== null,
     safariJavaScript: process.platform === "darwin" ? await safariJavaScriptEnabled(unsandboxedRunner) : false,
+    // Task 4 wires this to the real inventory.
+    fullDiskAccess: false,
     description: device?.skills.skill(BROWSING_SKILL.name)?.description ?? BROWSING_SKILL.description,
   }));
   return { rows, error: null };

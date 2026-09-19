@@ -2377,9 +2377,13 @@ async function renderPlugins() {
       badge(s.tone, s.word),
       switchEl(box, { title: "Turn this plugin on or off" }),
     ]);
+    // Every requirement, met or not, is on the row now — off hides them all
+    // (the owner's problem again only once they turn the plugin back on);
+    // otherwise only the ones still outstanding show.
+    const unmet = r.status !== "off" ? r.requirements.filter((q) => !q.met) : [];
     return el("div", { class: "cap-group open" }, [
       head,
-      r.unmet.length ? el("div", { class: "cap-group-rows" }, r.unmet.map((u) => unmetRow(u, r))) : null,
+      unmet.length ? el("div", { class: "cap-group-rows" }, unmet.map((u) => unmetRow(u, r))) : null,
     ]);
   };
 
