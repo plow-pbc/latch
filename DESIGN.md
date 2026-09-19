@@ -144,13 +144,13 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   chat-completion endpoint (`apps/desktop/src/adversarialAgent.ts`): the
   agent's display name and id, the request composed on this Mac, the requested
   capability bounds, and the owner's own `agentPurpose` text, which rides in
-  the system message. Setup's Gatekeeper step posts the same shape for five
-  fixed example requests (built on this Mac, under the owner's home) with the
+  the system message. Nothing else does — no goal text, and no audit history:
+  `reviewPolicy.ts` passes `history: []` deliberately, and `buildPrompt`
+  explains why. Setup's Gatekeeper step posts the same shape for five fixed
+  example requests (built on this Mac, under the owner's home) with the
   owner's DRAFT instructions as the purpose, to preview verdicts; a preview is
   not an operation and records nothing — no audit line, no telemetry, no rule.
-  Nothing else does — no goal text, and no audit history:
-  `reviewPolicy.ts` passes `history: []` deliberately, and `buildPrompt`
-  explains why. WHETHER it runs is decided in precedence order by
+  WHETHER it runs is decided in precedence order by
   `packages/device-core/src/policyEngine.ts`: a stored always-allow rule
   short-circuits Ask and Approve, while global AI Reviewer and Deny modes decide
   every request. What *is*
