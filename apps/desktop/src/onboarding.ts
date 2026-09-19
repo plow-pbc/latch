@@ -21,7 +21,7 @@ import { loadSettings, saveSettings, Settings } from "./settings.js";
 /**
  * The verification sub-steps retain their existing mechanics. A successful
  * login moves straight to Privacy, which doubles as the confirmation screen
- * before the post-login plugin choice and the gatekeeper's instructions.
+ * before the gatekeeper's instructions and the post-login plugin choice.
  */
 export type OnboardingStep =
   | "welcome"
