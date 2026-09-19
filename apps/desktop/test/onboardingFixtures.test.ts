@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { gatekeeperPresets } from "../src/gatekeeperPreview.js";
 import { grantList } from "../src/pluginsModel.js";
 import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
 
@@ -19,5 +20,17 @@ describe("onboarding visual fixtures", () => {
     const withPlugins = fixtures.filter((f) => f.plugins);
     expect(withPlugins.length).toBeGreaterThan(0);
     for (const f of withPlugins) expect(f.plugins.grants, f.name).toEqual(grantList(f.plugins.rows));
+  });
+
+  it("draws the gatekeeper from the presets main serves", () => {
+    const withGatekeeper = fixtures.filter((f) => f.gatekeeper);
+    expect(withGatekeeper.map((f) => f.name).sort()).toEqual([
+      "gatekeeper-checking",
+      "gatekeeper-couldnt-check",
+      "gatekeeper-home",
+      "gatekeeper-stopped",
+      "gatekeeper-work",
+    ]);
+    for (const f of withGatekeeper) expect(f.gatekeeper.presets, f.name).toEqual(gatekeeperPresets());
   });
 });

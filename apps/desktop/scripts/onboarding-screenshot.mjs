@@ -71,6 +71,17 @@ ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
   current = { ...current, telemetryEnabled: enabled === true };
   return current;
 });
+ipcMain.handle("onboarding:setPurpose", async (_event, text) => {
+  current = { ...current, purpose: String(text) };
+  return current;
+});
+ipcMain.handle("onboarding:gatekeeperPresets", async () => currentFixture.gatekeeper?.presets ?? null);
+// "pending" holds every row on Checking.
+ipcMain.handle("onboarding:gatekeeperPreview", async (_event, _preset, index) => {
+  const results = currentFixture.gatekeeper?.results;
+  if (results === "pending" || !results) return new Promise(() => {});
+  return results[index];
+});
 ipcMain.handle("onboarding:finish", async () => {});
 let currentLaunch = { supported: true, openAtLogin: true };
 let currentAwake = { enabled: true };
@@ -112,6 +123,13 @@ verifyRearmFixture.prepare = async (win) => {
   }
   if (neutralNote !== REARM_NOTE) throw new Error("The re-arm note was not rendered neutrally");
 };
+// A fixture's `click` opens that row's reason, the way the owner would.
+for (const fixture of SCREENS.filter((f) => f.click)) {
+  fixture.prepare = async (win) => {
+    await clickText(win, fixture.click);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  };
+}
 
 failLoudly();
 
@@ -154,9 +172,10 @@ app.whenReady().then(async () => {
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
       // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
       // its resting state after the font and first-paint gate has also settled.
+      // The Gatekeeper's pills cross the beam and bump back within about 1.5s.
       const settleMs = fixture.state?.step === "welcome" || fixture.state === null
         ? FONT_WAIT_CEILING_MS + 2200
-        : 400;
+        : fixture.state?.step === "gatekeeper" ? 1800 : 400;
       await new Promise((resolve) => setTimeout(resolve, settleMs));
     },
   });

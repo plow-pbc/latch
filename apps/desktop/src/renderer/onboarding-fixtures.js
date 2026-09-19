@@ -16,6 +16,7 @@ export function onboardingFixtures(now) {
     activation: null,
     activationStale: false,
     telemetryEnabled: true,
+    purpose: "",
   };
   const noAgents = { cloudAgents: [], cloudAgentsError: null };
   const elm = {
@@ -80,6 +81,52 @@ export function onboardingFixtures(now) {
     rows: rows("needs-setup", "ready", fullDiskMet),
     grants: [{ ...fullDiskMet, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
   };
+  // The Gatekeeper step's presets as main serves them (gatekeeperPreview.ts),
+  // and the verdicts its example decks are rehearsed to read.
+  const gatekeeperPresets = {
+    home: {
+      text:
+        "Allow my family assistant to keep our calendar, text family, and order groceries online. " +
+        "Never let it share my documents or passwords with anyone.",
+      rows: [
+        { label: "Check the family calendar", icon: "calendar" },
+        { label: "Text Mary \u201cRunning late\u201d", icon: "messages" },
+        { label: "Sign in to Instacart with your password", icon: "key" },
+        { label: "Post your tax return publicly", icon: "upload" },
+        { label: "Copy all your saved passwords", icon: "lock" },
+      ],
+    },
+    work: {
+      text:
+        "Allow my work assistant to access my email, calendar and GitHub. " +
+        "Keep it out of my personal texts and chats.",
+      rows: [
+        { label: "Find unread email from your team", icon: "mail" },
+        { label: "Draft a reply to a customer", icon: "pen" },
+        { label: "Find a free hour next week", icon: "calendar" },
+        { label: "Review a pull request on GitHub", icon: "git" },
+        { label: "Read your personal WhatsApp", icon: "messages" },
+      ],
+    },
+  };
+  const allow = (reason) => ({ verdict: "allow", reason });
+  const deny = (reason) => ({ verdict: "deny", reason });
+  const homeResults = [
+    allow("Keeping the family calendar is what you allowed."),
+    allow("Texting family is what you allowed."),
+    allow("Ordering groceries online is what you allowed."),
+    deny("You said never to share your documents."),
+    deny("You said never to share your passwords."),
+  ];
+  const workResults = [
+    allow("Email is one of the things you allowed."),
+    allow("Drafting email is allowed, and nothing is sent."),
+    allow("Your calendar is allowed."),
+    allow("GitHub is allowed."),
+    deny("You kept it out of your personal texts and chats."),
+  ];
+  const noCredits = homeResults.map(() =>
+    ({ verdict: "ask", reason: "insufficient Plow balance", cause: "no_credits" }));
   const relaunchLeft = {
     rows: rows("off", "needs-setup", fullDiskRelaunch),
     grants: [{ ...fullDiskRelaunch, plugins: [iMessage] }],
@@ -213,6 +260,60 @@ export function onboardingFixtures(now) {
       expectFocus: "Continue",
     },
     {
+      name: "gatekeeper-home",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
+      cloud: noAgents,
+      gatekeeper: { presets: gatekeeperPresets, results: homeResults },
+      expect: [
+        "Meet the Plow Gatekeeper",
+        "Plow's adversarial reviewer protects your data from malicious queries, while allowing your agents to get useful work done.",
+        "What access should it allow to your Mac?",
+        "Home", "Work",
+        ...gatekeeperPresets.home.rows.map((r) => r.label),
+        "Continue",
+      ],
+      expectValues: [gatekeeperPresets.home.text],
+      reject: ["Back", "Tap a request", "Name the work", "never sees it"],
+      expectFocus: "Continue",
+      expectDotCount: 6,
+    },
+    {
+      name: "gatekeeper-work",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.work.text },
+      cloud: noAgents,
+      gatekeeper: { presets: gatekeeperPresets, results: workResults },
+      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.work.rows.map((r) => r.label), "Continue"],
+      expectValues: [gatekeeperPresets.work.text],
+      reject: ["Back"],
+      expectDotCount: 6,
+    },
+    {
+      name: "gatekeeper-checking",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
+      cloud: noAgents,
+      gatekeeper: { presets: gatekeeperPresets, results: "pending" },
+      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.home.rows.map((r) => r.label)],
+      expectDotCount: 6,
+    },
+    {
+      name: "gatekeeper-stopped",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
+      cloud: noAgents,
+      gatekeeper: { presets: gatekeeperPresets, results: homeResults },
+      click: "Post your tax return publicly",
+      expect: ["Post your tax return publicly", "You said never to share your documents."],
+      expectDotCount: 6,
+    },
+    {
+      name: "gatekeeper-couldnt-check",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
+      cloud: noAgents,
+      gatekeeper: { presets: gatekeeperPresets, results: noCredits },
+      click: "Check the family calendar",
+      expect: ["Check the family calendar", "Your Plow account is out of credits, so the gatekeeper can't review right now."],
+      expectDotCount: 6,
+    },
+    {
       name: "plugins-fresh",
       state: { ...base, step: "plugins" },
       cloud: noAgents,
@@ -228,11 +329,12 @@ export function onboardingFixtures(now) {
         "Nothing to grant. These work as soon as setup finishes.",
         "Share usage data so we can improve Plow",
         "Never your messages or your data",
+        "Back",
         "Continue",
       ],
       reject: [`for ${iMessage}`],
       expectFocus: "Continue",
-      expectDotCount: 5,
+      expectDotCount: 6,
     },
     {
       name: "plugins-picked",
@@ -247,11 +349,12 @@ export function onboardingFixtures(now) {
         "Google account",
         `for ${gmail}`,
         "Share usage data so we can improve Plow",
+        "Back",
         "Continue",
       ],
       reject: ["Nothing to grant. These work as soon as setup finishes."],
       expectFocus: "Continue",
-      expectDotCount: 5,
+      expectDotCount: 6,
     },
     {
       name: "plugins-error",
@@ -261,7 +364,7 @@ export function onboardingFixtures(now) {
       expect: ["Choose your plugins", "Something went wrong. Try again."],
       reject: ["Talking to Plow"],
       expectFocus: "Continue",
-      expectDotCount: 5,
+      expectDotCount: 6,
     },
     {
       name: "access-ready",
@@ -282,7 +385,7 @@ export function onboardingFixtures(now) {
       ],
       reject: ["Granted"],
       expectFocus: "Set up all 2",
-      expectDotCount: 5,
+      expectDotCount: 6,
     },
     {
       name: "access-partly",
@@ -292,7 +395,7 @@ export function onboardingFixtures(now) {
       expect: ["Grant access", "Full Disk Access", "Granted", "Google account", "Set up all 1"],
       reject: ["Set up all 2"],
       expectFocus: "Set up all 1",
-      expectDotCount: 5,
+      expectDotCount: 6,
     },
     {
       name: "access-relaunch",
@@ -309,7 +412,7 @@ export function onboardingFixtures(now) {
       ],
       reject: ["Set up all", "Google account"],
       expectFocus: "Relaunch to finish",
-      expectDotCount: 5,
+      expectDotCount: 6,
     },
     {
       name: "availability",
@@ -328,7 +431,7 @@ export function onboardingFixtures(now) {
       ],
       reject: ["Only the installed app can add itself as a login item"],
       expectFocus: "Continue",
-      expectDotCount: 5,
+      expectDotCount: 6,
     },
     {
       name: "availability-from-source",
@@ -343,7 +446,7 @@ export function onboardingFixtures(now) {
         "Continue",
       ],
       expectFocus: "Continue",
-      expectDotCount: 5,
+      expectDotCount: 6,
     },
     {
       name: "done-agent",

@@ -6,6 +6,7 @@ import { el, icon, switchEl } from "./dom.js";
 import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
+import { presetFor, rowView } from "./gatekeeperRows.js";
 import { accessPrimary, runGrants } from "./onboardingGrants.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
@@ -37,6 +38,11 @@ let missed = null;
 /** The id of the switch a redraw hands focus back to, so a click keeps it. */
 let restoreFocus = null;
 let doneAgent = null;
+/** The Gatekeeper screen's live pieces. Built on entering the step and updated
+ * in place, so typing never loses its focus to a redraw. */
+let gatekeeper = null;
+let gatekeeperPresets = null;
+const PREVIEW_PAUSE_MS = 1000;
 const mutate = singleFlight(() => state?.busy === true);
 
 async function update(action) {
@@ -64,7 +70,7 @@ const screen = el("section", { class: "wizard-screen", attrs: { "aria-live": "po
 const body = el("div", { class: "wizard-body" }, [screen]);
 const backButton = button("", "nav-back", () => update(() => window.domo.onboardingBack()));
 backButton.append(arrowIcon("back"), document.createTextNode("Back"));
-const dots = [0, 1, 2, 3, 4].map(() => el("i", { class: "foot-dot" }));
+const dots = [0, 1, 2, 3, 4, 5].map(() => el("i", { class: "foot-dot" }));
 const dotRow = el("span", { class: "foot-dots", attrs: { "aria-hidden": "true" } }, dots);
 const primaryLabel = el("span", { text: "Get started" });
 const primaryArrow = arrowIcon("next");
@@ -190,6 +196,198 @@ function privacyScreen() {
     el("div", { class: "trust-rows" }, rows),
     note(state),
   ]);
+}
+
+const MINI_STROKE = "rgba(240,240,232,.34)";
+const PORT_STROKE = "rgba(240,240,232,.42)";
+
+/** The Mac mini, drawn — monochrome lines, no logo. Its status light and
+ * underglow pulse when a request gets through. */
+function macMini() {
+  const svg = svgElement("svg", { viewBox: "0 0 120 86", fill: "none", "aria-hidden": "true" });
+  const defs = svgElement("defs");
+  const grad = (tag, id, attrs, stops) => {
+    const g = svgElement(tag, { id, ...attrs });
+    for (const [offset, color, opacity] of stops) {
+      g.appendChild(svgElement("stop", { offset, "stop-color": color, "stop-opacity": opacity }));
+    }
+    return g;
+  };
+  defs.append(
+    grad("linearGradient", "gk-mm-top", { x1: "0", y1: "0", x2: "0", y2: "1" }, [["0", "#1b1c18", "1"], ["1", "#222420", "1"]]),
+    grad("linearGradient", "gk-mm-front", { x1: "0", y1: "0", x2: "0", y2: "1" }, [["0", "#191a16", "1"], ["1", "#121310", "1"]]),
+    grad("radialGradient", "gk-mm-under", { cx: ".5", cy: ".5", r: ".5" }, [["0", "#d5ef8a", ".55"], ["1", "#d5ef8a", "0"]]),
+    grad("radialGradient", "gk-mm-led", { cx: ".5", cy: ".5", r: ".5" }, [["0", "#eaffb0", "1"], [".35", "#d5ef8a", ".8"], ["1", "#d5ef8a", "0"]]),
+  );
+  svg.append(
+    defs,
+    svgElement("ellipse", { class: "gk-glow", cx: "60", cy: "77", rx: "54", ry: "6", fill: "url(#gk-mm-under)" }),
+    svgElement("ellipse", { cx: "60", cy: "75.5", rx: "50", ry: "2.6", fill: "rgba(0,0,0,.55)" }),
+    svgElement("path", { d: "M8.5 36 H111.5 V65 Q111.5 74 102 74 H18 Q8.5 74 8.5 65 Z", fill: "url(#gk-mm-front)", stroke: MINI_STROKE, "stroke-width": "1.3", "stroke-linejoin": "round" }),
+    svgElement("path", { d: "M17 23 Q18 18 26 18 H94 Q102 18 103 23 L111 32 Q113 36.5 107 36.5 H13 Q7 36.5 9 32 Z", fill: "url(#gk-mm-top)", stroke: MINI_STROKE, "stroke-width": "1.3", "stroke-linejoin": "round" }),
+    svgElement("path", { d: "M13 36 H107", stroke: "rgba(240,240,232,.12)", "stroke-width": "1" }),
+    svgElement("rect", { x: "23", y: "53", width: "3.6", height: "10", rx: "1.8", stroke: PORT_STROKE, "stroke-width": "1.1" }),
+    svgElement("rect", { x: "31", y: "53", width: "3.6", height: "10", rx: "1.8", stroke: PORT_STROKE, "stroke-width": "1.1" }),
+    svgElement("circle", { cx: "96", cy: "58", r: "2.3", stroke: PORT_STROKE, "stroke-width": "1.1" }),
+    svgElement("circle", { class: "gk-glow", cx: "86", cy: "58", r: "5", fill: "url(#gk-mm-led)" }),
+    svgElement("circle", { cx: "86", cy: "58", r: ".9", fill: "rgba(240,240,232,.5)" }),
+  );
+  return el("div", { class: "gk-mac" }, [el("div", { class: "gk-halo" }), svg]);
+}
+
+/** One row as its latest result reads; the beam scans while any row is out. */
+function paintRow(view, index) {
+  const g = gatekeeper;
+  const { state: rowState, reason } = rowView(g.results[index]);
+  const row = view.rows[index];
+  row.node.className = `gk-row ${rowState}${g.open.has(index) ? " open" : ""}`;
+  row.end.textContent = rowState === "ok" ? "✓" : rowState === "no" ? "✕" : "";
+  row.why.textContent = reason;
+  // Restart the flare so a re-review flashes again.
+  const flare = el("span", { class: "gk-flare" });
+  row.flare.replaceWith(flare);
+  row.flare = flare;
+  view.field.classList.toggle("reviewing", g.results.some((result) => !result));
+}
+
+function lightMac(view) {
+  view.mac.classList.remove("lit");
+  void view.mac.offsetWidth;
+  view.mac.classList.add("lit");
+  setTimeout(() => view.mac.classList.remove("lit"), 260);
+}
+
+/** Review every row of the current deck against the text in the field. A newer
+ * run supersedes an older one; its late answers are dropped, not cancelled. */
+function runPreview(force = false) {
+  const g = gatekeeper;
+  if (!g?.view) return;
+  const text = g.text;
+  if (!force && g.lastRun && g.lastRun.text === text.trim() && g.lastRun.deck === g.deck) return;
+  g.lastRun = { text: text.trim(), deck: g.deck };
+  const gen = ++g.gen;
+  g.results = g.results.map(() => null);
+  g.open.clear();
+  g.results.forEach((_, i) => paintRow(g.view, i));
+  g.results.forEach((_, i) => {
+    window.domo.gatekeeperPreview(g.deck, i, text)
+      .catch(() => ({ verdict: "ask", reason: "", cause: "unavailable" }))
+      .then((result) => {
+        if (gatekeeper !== g || g.gen !== gen) return;
+        g.results[i] = result;
+        paintRow(g.view, i);
+        if (result.verdict === "allow") setTimeout(() => lightMac(g.view), 420);
+      });
+  });
+}
+
+function schedulePreview() {
+  clearTimeout(gatekeeper.timer);
+  gatekeeper.timer = setTimeout(() => runPreview(), PREVIEW_PAUSE_MS);
+}
+
+function choosePreset(key) {
+  const g = gatekeeper;
+  g.deck = key;
+  g.text = gatekeeperPresets[key].text;
+  g.results = gatekeeperPresets[key].rows.map(() => null);
+  render();
+  runPreview(true);
+}
+
+function gatekeeperScreen() {
+  const head = el("div", { class: "head-center" }, [
+    el("h1", { text: "Meet the Plow Gatekeeper" }),
+    el("p", { class: "subhead" }, [
+      document.createTextNode(
+        "Plow's adversarial reviewer protects your data from malicious queries, while allowing your agents to get useful work done. ",
+      ),
+      el("strong", { text: "What access should it allow to your Mac?" }),
+    ]),
+  ]);
+  const g = gatekeeper;
+  if (!g || !gatekeeperPresets) return el("div", { class: "step-inner gatekeeper-screen" }, [head]);
+
+  const segButtons = ["home", "work"].map((key) => {
+    const b = button(key === "home" ? "Home" : "Work", "gk-seg-button", () => choosePreset(key));
+    b.dataset.preset = key;
+    return b;
+  });
+  const syncSegments = () => {
+    const active = presetFor(g.text, gatekeeperPresets);
+    segButtons.forEach((b) => b.classList.toggle("on", b.dataset.preset === active));
+  };
+  syncSegments();
+
+  const field = el("textarea", {
+    class: "gk-text",
+    attrs: { rows: "3", spellcheck: "false", "aria-label": "What access should it allow to your Mac?" },
+  });
+  field.value = g.text;
+  field.addEventListener("input", () => {
+    g.text = field.value;
+    syncSegments();
+    schedulePreview();
+  });
+
+  const rows = gatekeeperPresets[g.deck].rows.map(({ label, icon: glyph }, index) => {
+    const end = el("span", { class: "gk-end" });
+    const pill = el("button", { class: "gk-pill", attrs: { type: "button" } }, [
+      icon(glyph, { strokeWidth: "1.7" }),
+      el("span", { class: "gk-label", text: label }),
+      end,
+    ]);
+    const flare = el("span", { class: "gk-flare" });
+    const why = el("div", { class: "gk-why" });
+    const node = el("div", { class: "gk-row" }, [el("div", { class: "gk-lane" }, [pill, flare]), why]);
+    pill.addEventListener("click", () => {
+      if (g.open.has(index)) g.open.delete(index);
+      else g.open.add(index);
+      node.classList.toggle("open", g.open.has(index));
+    });
+    return { node, end, why, flare };
+  });
+
+  const mac = macMini();
+  const beamField = el("div", { class: "gk-field" }, [
+    mac,
+    el("div", { class: "gk-beam", attrs: { "aria-hidden": "true" } }),
+    el("div", { class: "gk-list" }, rows.map((r) => r.node)),
+  ]);
+  g.view = { field: beamField, rows, mac };
+  rows.forEach((_, i) => paintRow(g.view, i));
+
+  return el("div", { class: "step-inner gatekeeper-screen" }, [
+    head,
+    el("div", { class: "gk-seg" }, [el("div", { class: "gk-seg-track" }, segButtons)]),
+    field,
+    beamField,
+  ]);
+}
+
+async function enterGatekeeper() {
+  gatekeeperPresets ??= await window.domo.gatekeeperPresets();
+  if (state?.step !== "gatekeeper" || !gatekeeperPresets) return;
+  const deck = presetFor(state.purpose, gatekeeperPresets) ?? "home";
+  gatekeeper = {
+    deck,
+    text: state.purpose,
+    gen: 0,
+    lastRun: null,
+    timer: null,
+    view: null,
+    open: new Set(),
+    results: gatekeeperPresets[deck].rows.map(() => null),
+  };
+  render();
+  runPreview(true);
+}
+
+function continueFromGatekeeper() {
+  return update(async () => {
+    await window.domo.onboardingSetPurpose(gatekeeper?.text ?? state.purpose);
+    return window.domo.onboardingAdvance();
+  });
 }
 
 function copyButton(value) {
@@ -613,6 +811,7 @@ function doneScreen() {
 function screenForStep() {
   if (state.step === "welcome") return welcomeScreen();
   if (state.step === "privacy") return privacyScreen();
+  if (state.step === "gatekeeper") return gatekeeperScreen();
   if (state.step === "activate" || state.step === "waiting") return verifyScreen();
   if (state.step === "plugins") return pluginsScreen();
   if (state.step === "access") return accessScreen();
@@ -646,12 +845,15 @@ function footerForStep() {
       action: advance,
     };
   }
+  if (step === "gatekeeper") {
+    return { back: false, dot: 2, label: "Continue", arrow: true, action: continueFromGatekeeper };
+  }
   if (step === "access") {
     const { label, kind } = accessPrimary({ grants: pluginsState?.grants ?? [], skipped, running, missed });
     const actions = { run: startGrants, relaunch: () => window.domo.appRelaunch(), advance };
     return {
       back: true,
-      dot: 3,
+      dot: 4,
       label,
       arrow: kind !== null,
       disabled: kind === null || pluginsState === null,
@@ -661,15 +863,15 @@ function footerForStep() {
   if (step === "availability") {
     return {
       back: true,
-      dot: 4,
+      dot: 5,
       label: "Continue",
       arrow: true,
       action: advance,
     };
   }
   return {
-    back: false,
-    dot: 2,
+    back: true,
+    dot: 3,
     label: "Continue",
     arrow: true,
     action: advance,
@@ -760,12 +962,17 @@ function render() {
 async function apply(next) {
   const previousStep = state?.step;
   state = resolveOnboardingState(state, next);
+  if (state?.step !== "gatekeeper" && gatekeeper) {
+    clearTimeout(gatekeeper.timer);
+    gatekeeper = null;
+  }
   if (state?.step !== "done") doneAgent = null;
   if (!onPluginStep()) pluginsState = null;
   if (state?.step !== previousStep) missed = null;
   if (!onPluginStep() && state?.step !== "availability") skipped.clear();
   if (state?.step !== "availability") availability = null;
   render();
+  if (state?.step === "gatekeeper" && previousStep !== "gatekeeper") void enterGatekeeper();
   if (onPluginStep() && previousStep !== state.step) void refreshPlugins();
   if (state?.step === "availability" && previousStep !== "availability") {
     void refreshAvailability();
@@ -780,7 +987,7 @@ async function apply(next) {
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.defaultPrevented || footer.hidden || primaryButton.disabled) return;
-  if (event.target instanceof HTMLButtonElement) return;
+  if (event.target instanceof HTMLButtonElement || event.target instanceof HTMLTextAreaElement) return;
   event.preventDefault();
   primaryButton.click();
 });
