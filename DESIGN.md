@@ -1058,12 +1058,12 @@ bit, no settings mirror) and Keep Mac Awake (`keepAwake.ts`, a `caffeinate`
 hold while on AC only — the lid still sleeps it). The tray keeps the app
 resident when its window closes.
 
-First-run setup tells the user this on its own screen, "Keep this Mac
-reachable", between Data and Connect, and turns both on for them when they
-reach it (`Onboarding.advance()` → the injected `applyAvailabilityDefault`).
-`Settings.launchAtLoginDefaulted` records that the one-time default ran, and
-survives sign-out, so a user who turned a switch off stays off (a from-source
-run has its own home, so it never spends a packaged install's first run).
+Setup tells the user this on its own screen, "Keep this Mac reachable",
+between Data and Connect, and turns both on for them when they reach it
+(`Onboarding.advance()` → the injected `applyAvailabilityDefault`) — every
+setup, a re-setup after sign-out included, so the screen always opens with
+both on. Once per setup: Back then Continue leaves a switch the user turned
+off alone.
 Agent-side, the per-turn prefix says the Mac has to be awake
 (plow-pbc/hermes-plugin-plow#75); this screen is where the owner can act on it.
 

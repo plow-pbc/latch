@@ -337,11 +337,10 @@ describe("wizard steps around the existing verification flow", () => {
     expect(build().state().step).toBe("done");
   });
 
-  it("lands the availability default once, on reaching the screen, and keeps what it wrote", async () => {
+  it("turns the availability defaults on once per setup, on reaching the screen, and keeps what it wrote", async () => {
     const settings = loadSettings(home);
     settings.relayCredential = DEVICE_TOKEN;
     saveSettings(home, settings);
-    expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
 
     // The production dep persists Keep Awake's opt-in itself. The write must
     // survive the step's own settings write — the first cut clobbered it.
@@ -352,23 +351,21 @@ describe("wizard steps around the existing verification flow", () => {
       live.keepAwakeWhileRunning = true;
       saveSettings(home, live);
     };
-    let onboarding = build({ applyAvailabilityDefault });
+    const onboarding = build({ applyAvailabilityDefault });
     onboarding.setTelemetryEnabled(false);
     expect((await onboarding.advance()).step).toBe("availability");
     expect(applied).toBe(1);
-    expect(loadSettings(home)).toMatchObject({
-      keepAwakeWhileRunning: true,
-      telemetryEnabled: false,
-      launchAtLoginDefaulted: true,
-    });
+    expect(loadSettings(home)).toMatchObject({ keepAwakeWhileRunning: true, telemetryEnabled: false });
 
-    // A second pass (Back, Continue) is silent, and so is a re-setup over the
-    // same home — sign-out keeps the marker, so a choice the user made stays.
+    // Back and Continue within one setup is silent: a switch turned off there stays off.
     await onboarding.back();
     expect((await onboarding.advance()).step).toBe("availability");
-    onboarding = build({ applyAvailabilityDefault });
-    await onboarding.advance();
     expect(applied).toBe(1);
+
+    // A re-setup (sign-out resets onboarding) shows the switches on again.
+    expect(onboarding.reset().step).toBe("data");
+    expect((await onboarding.advance()).step).toBe("availability");
+    expect(applied).toBe(2);
   });
 
 });

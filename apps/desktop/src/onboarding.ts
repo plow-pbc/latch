@@ -145,11 +145,10 @@ export interface OnboardingDeps {
   deviceName: string;
   /**
    * Turn the availability defaults on — Keep Awake, and Launch at Login where
-   * the build can. Called once per home, on reaching the Availability screen,
-   * so the switches it shows are on because they ARE on; the marker
-   * (`Settings.launchAtLoginDefaulted`) records that it ran. It writes
-   * settings itself (Keep Awake persists its opt-in), so it runs between two
-   * loads here, never inside one.
+   * the build can. Called once per setup, re-setups included, on reaching the
+   * Availability screen, so the switches it shows are on because they ARE on.
+   * It writes settings itself (Keep Awake persists its opt-in), so it runs
+   * after the step's own write, never inside it.
    */
   applyAvailabilityDefault?: () => void;
   onChange?: () => void;
@@ -180,6 +179,9 @@ export class Onboarding {
   private pendingMintId = 0;
   private mints = 0;
   private telemetryEnabled: boolean;
+  /** The availability default ran in this setup, so Back then Continue leaves
+   * a switch the user turned off alone; `reset` starts a new setup. */
+  private availabilityDefaulted = false;
 
   constructor(private readonly deps: OnboardingDeps) {
     const settings = this.settings();
@@ -219,11 +221,9 @@ export class Onboarding {
       const settings = this.settings();
       settings.telemetryEnabled = this.telemetryEnabled;
       this.save(settings);
-      if (!settings.launchAtLoginDefaulted) {
+      if (!this.availabilityDefaulted) {
         this.deps.applyAvailabilityDefault?.();
-        const defaulted = this.settings();
-        defaulted.launchAtLoginDefaulted = true;
-        this.save(defaulted);
+        this.availabilityDefaulted = true;
       }
       this.step = "availability";
       return this.publish();
@@ -531,6 +531,7 @@ export class Onboarding {
     this.message = "";
     this.noteKind = "error";
     this.busy = false;
+    this.availabilityDefaulted = false;
     const settings = this.settings();
     this.telemetryEnabled = settings.telemetryEnabled;
     this.step = this.initialStep(settings);
