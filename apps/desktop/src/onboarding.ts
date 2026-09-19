@@ -148,8 +148,6 @@ export interface OnboardingDeps {
   startRelay: () => Promise<void>;
   /** Names this Mac in the activation request. */
   deviceName: string;
-  /** Once per entry from Privacy: turn off every plugin that can't work yet, so the switches start on only what works. */
-  applyPluginDefault: () => Promise<void>;
   /** Whether any switched-on plugin still has something to grant; false skips Access. */
   accessNeeded: () => Promise<boolean>;
   /** Load account-backed grants before a checkpointed launch exposes Access. */
@@ -239,14 +237,8 @@ export class Onboarding {
       return this.newActivationCode();
     }
     if (this.step === "privacy") {
-      // run() keeps a throw readable on Privacy and retries the default
-      // rather than skipping it; the step moves only once it has applied.
-      return this.run(async () => {
-        await this.deps.applyPluginDefault();
-        // A reset() (sign-out) can land during this await; don't overwrite it.
-        if (this.step !== "privacy") return;
-        this.step = "gatekeeper";
-      });
+      this.step = "gatekeeper";
+      return this.publish();
     }
     if (this.step === "gatekeeper") {
       const settings = this.settings();

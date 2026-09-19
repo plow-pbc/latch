@@ -75,28 +75,31 @@ export function onboardingFixtures(now) {
     ({ name, title, summary, kind, description: null, example: examples[name] ?? null, status, requirements });
   const gmail = "Gmail and Google Calendar";
   const iMessage = "iMessage history";
-  /** The four rows, with Gmail's and iMessage's switch states and how this
-   * Mac reads Full Disk Access. The browser stays off: Safari still needs it. */
-  const rows = (gmailStatus, iMessageStatus, fda) => [
+  /** The four rows, with each switch state and how this Mac reads Full Disk Access. */
+  const rows = (gmailStatus, iMessageStatus, fda, browserStatus = "needs-setup") => [
     row("gog", gmail, "Read and draft email; check and book your calendar.", "CLI", gmailStatus, [google]),
     row("messages", iMessage, "Find and read your texts, right on this Mac.", "CLI", iMessageStatus, [fda]),
     row("wiki", "Obsidian-style wiki", "A notebook your agents keep about the people and projects in your life.", "CLI", "ready", []),
-    row("browser", "Browser use", "Browse and fill in forms in a private browser, with Safari as a fallback.", "Browser", "off", [fda, safari]),
+    row("browser", "Browser use", "Browse and fill in forms in a private browser, with Safari as a fallback.", "Browser", browserStatus, [fda, safari]),
   ];
-  const onlyWiki = { rows: rows("off", "off", fullDisk), grants: [] };
+  const onlyWiki = { rows: rows("off", "off", fullDisk, "off"), grants: [] };
   const picked = {
     rows: rows("needs-setup", "needs-setup", fullDisk),
-    grants: [{ ...fullDisk, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
+    grants: [
+      { ...fullDisk, plugins: [iMessage, "Browser use"] },
+      { ...safari, plugins: ["Browser use"] },
+      { ...google, plugins: [gmail] },
+    ],
   };
   const browserReady = {
-    rows: rows("off", "off", fullDisk).map((plugin) =>
+    rows: rows("off", "off", fullDisk, "off").map((plugin) =>
       plugin.name === "browser"
         ? { ...plugin, status: "ready", requirements: [{ ...safari, status: "met" }] }
         : plugin),
     grants: [{ ...safari, status: "met", plugins: ["Browser use"] }],
   };
   const fullDiskDone = {
-    rows: rows("needs-setup", "ready", fullDiskMet),
+    rows: rows("needs-setup", "ready", fullDiskMet, "off"),
     grants: [{ ...fullDiskMet, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
   };
   // The Gatekeeper step's presets as main serves them (gatekeeperPreview.ts) on
@@ -207,7 +210,7 @@ export function onboardingFixtures(now) {
   const noCredits = homeResults.map(() =>
     ({ verdict: "ask", reason: "insufficient Plow balance", cause: "no_credits" }));
   const relaunchLeft = {
-    rows: rows("off", "needs-setup", fullDiskRelaunch),
+    rows: rows("off", "needs-setup", fullDiskRelaunch, "off"),
     grants: [{ ...fullDiskRelaunch, plugins: [iMessage] }],
   };
 
@@ -414,7 +417,7 @@ export function onboardingFixtures(now) {
       name: "plugins-fresh",
       state: { ...base, step: "plugins" },
       cloud: noAgents,
-      plugins: onlyWiki,
+      plugins: picked,
       expect: [
         "Give your agents superpowers",
         "Plugins teach your agent how to reliably use your Mac",
@@ -423,12 +426,13 @@ export function onboardingFixtures(now) {
         iMessage,
         "Obsidian-style wiki",
         "Browser use",
+        "Required: Safari",
         "Share usage data so we can improve Plow",
         "Never your messages or your data",
         "Back",
         "Continue",
       ],
-      reject: ["You'll grant next", "Nothing to grant", "Required:", `for ${iMessage}`],
+      reject: ["You'll grant next", "Nothing to grant", `for ${iMessage}`],
       expectFocus: "Continue",
       expectDotCount: 6,
     },

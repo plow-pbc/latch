@@ -48,4 +48,14 @@ describe("onboarding visual fixtures", () => {
       expect(f.expectAriaLabel).toBe("Agents including Claude, OpenAI, and Cursor");
     }
   });
+
+  it("starts every fresh plugin row on, including Browser", () => {
+    const fresh = fixture("plugins-fresh");
+    expect(fresh.plugins.rows.map((row) => [row.name, row.status])).toEqual([
+      ["gog", "needs-setup"],
+      ["messages", "needs-setup"],
+      ["wiki", "ready"],
+      ["browser", "needs-setup"],
+    ]);
+  });
 });
