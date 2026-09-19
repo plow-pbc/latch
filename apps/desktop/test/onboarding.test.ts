@@ -508,6 +508,95 @@ describe("wizard steps around the existing verification flow", () => {
     expect(applied).toBe(2);
   });
 
+  describe("the Access relaunch checkpoint", () => {
+    function signedIn(overrides: Partial<ReturnType<typeof loadSettings>> = {}) {
+      const settings = loadSettings(home);
+      settings.relayCredential = DEVICE_TOKEN;
+      Object.assign(settings, overrides);
+      saveSettings(home, settings);
+    }
+
+    async function enterAccess(): Promise<Onboarding> {
+      signedIn();
+      const onboarding = build({ accessNeeded: async () => true });
+      expect(onboarding.state().step).toBe("plugins");
+      expect((await onboarding.advance()).step).toBe("access");
+      return onboarding;
+    }
+
+    it("reopens directly on Access after Access requests a relaunch", async () => {
+      const onboarding = await enterAccess();
+
+      onboarding.prepareRelaunch();
+
+      expect(loadSettings(home).onboardingResumeStep).toBe("access");
+      expect(build({ accessNeeded: async () => true }).state().step).toBe("access");
+    });
+
+    it("awaits Access preparation before the resumed initial step is ready", async () => {
+      signedIn({ onboardingResumeStep: "access" });
+      let finishPreparation = () => {};
+      const preparation = new Promise<void>((resolve) => {
+        finishPreparation = resolve;
+      });
+      let calls = 0;
+      const onboarding = build({
+        prepareAccess: async () => {
+          calls += 1;
+          await preparation;
+        },
+      });
+      expect(onboarding.state().step).toBe("access");
+
+      let ready = false;
+      const initial = onboarding.prepareInitialStep().then((state) => {
+        ready = true;
+        return state;
+      });
+      await Promise.resolve();
+
+      expect(calls).toBe(1);
+      expect(ready).toBe(false);
+      finishPreparation();
+      expect((await initial).step).toBe("access");
+      expect(ready).toBe(true);
+    });
+
+    it.each([
+      ["a signed-out setup", { relayCredential: "", setupComplete: false }, "welcome"],
+      ["a completed setup", { relayCredential: DEVICE_TOKEN, setupComplete: true }, "done"],
+    ] as const)("ignores the checkpoint for %s", (_name, overrides, expectedStep) => {
+      signedIn({ ...overrides, onboardingResumeStep: "access" });
+
+      expect(build().state().step).toBe(expectedStep);
+    });
+
+    it.each([
+      ["Plugins", { setupComplete: false }, "plugins"],
+      ["Done", { setupComplete: true }, "done"],
+    ] as const)("does not arm the checkpoint from %s", (_name, overrides, expectedStep) => {
+      signedIn(overrides);
+      const onboarding = build();
+      expect(onboarding.state().step).toBe(expectedStep);
+
+      onboarding.prepareRelaunch();
+
+      expect(loadSettings(home).onboardingResumeStep).toBeUndefined();
+    });
+
+    it.each([
+      ["Back", (onboarding: Onboarding) => onboarding.back(), "plugins"],
+      ["Continue", (onboarding: Onboarding) => onboarding.advance(), "availability"],
+      ["reset", (onboarding: Onboarding) => onboarding.reset(), "plugins"],
+    ] as const)("clears the checkpoint when %s leaves Access", async (_name, leave, expectedStep) => {
+      const onboarding = await enterAccess();
+      onboarding.prepareRelaunch();
+
+      expect((await leave(onboarding)).step).toBe(expectedStep);
+      expect(loadSettings(home).onboardingResumeStep).toBeUndefined();
+    });
+  });
+
 });
 
 describe("the gatekeeper's instructions", () => {

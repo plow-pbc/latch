@@ -5,7 +5,7 @@ import { PlowApi } from "../src/plowApi.js";
 import { compileMain, mainFunctions } from "./mainSource.js";
 
 // Plugins → Continue's shipping access decision, without Electron.
-const compiled = compileMain(...mainFunctions("accessNeeded"));
+const compiled = compileMain(...mainFunctions("prepareSetupAccounts", "accessNeeded"));
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());

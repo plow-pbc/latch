@@ -48,9 +48,9 @@ export async function runGrants({ act, getState, stillHere }, skipped) {
 /**
  * Access's primary button: its label and what it does — "run" the list,
  * "relaunch", "advance", or null while a flow runs. A pending relaunch comes
- * first, as it stops the run; setup reopens on Plugins, and Access runs the
- * rest. Try again only while the miss is still open (a grant made in System
- * Settings meanwhile moves on).
+ * first, as it stops the run; the checkpoint reopens setup on Access, where
+ * the fresh inventory runs the rest. Try again only while the miss is still
+ * open (a grant made in System Settings meanwhile moves on).
  */
 export function accessPrimary({ grants, skipped, running, missed }) {
   const open = openGrants(grants, skipped);

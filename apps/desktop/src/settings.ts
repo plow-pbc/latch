@@ -226,6 +226,8 @@ export interface Settings {
   /** The first-run setup has reached its final screen. Kept separately from
    * the credential because the data choice happens after sign-in. */
   setupComplete: boolean;
+  /** Where an incomplete setup should resume after a relaunch it requested. */
+  onboardingResumeStep?: "access";
 }
 
 function settingsPath(home: string): string {

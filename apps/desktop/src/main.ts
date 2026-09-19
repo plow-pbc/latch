@@ -1675,8 +1675,12 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
  *  setup can get here before the relay's poll, so ask Plow for the accounts —
  *  quietly and briefly: past the wait the cache answers, and a late reply
  *  redraws Access. A slow Plow never holds Continue. */
-async function accessNeeded(): Promise<boolean> {
+async function prepareSetupAccounts(): Promise<void> {
   await Promise.race([connectors?.poll(), new Promise((done) => setTimeout(done, CONNECTOR_SETUP_WAIT_MS))]);
+}
+
+async function accessNeeded(): Promise<boolean> {
+  await prepareSetupAccounts();
   return (await pluginsNow()).grants.some((g) => g.status !== "met");
 }
 
@@ -1720,6 +1724,7 @@ ipcMain.handle("requirements:act", async (e, rawId: unknown) => {
 // A relaunch-pending requirement's button, and setup's "Relaunch to finish":
 // the same relaunch the simulated updater's install does.
 ipcMain.handle("app:relaunch", () => {
+  onboarding?.prepareRelaunch();
   app.relaunch();
   app.quit();
 });
@@ -2460,7 +2465,13 @@ app.whenReady().then(async () => {
       if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
     },
     accessNeeded,
+    // A checkpointed relaunch skips Plugins, so give the same bounded account
+    // refresh a chance to land before Access becomes interactive.
+    prepareAccess: prepareSetupAccounts,
   });
+  // A checkpointed relaunch skips the Plugins transition (and accessNeeded),
+  // so give its account inventory the same bounded chance before the window.
+  await onboarding.prepareInitialStep();
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   const cloudAgentsClient = new CloudAgentsClient(cloudApi);
 
