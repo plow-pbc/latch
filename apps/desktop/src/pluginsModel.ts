@@ -59,7 +59,7 @@ export interface PluginsInput {
  *  permission's own key so the two id spaces never collide. */
 export const accountRequirementId = (id: string): string => `account:${id}`;
 
-function permissionRequirement(key: string, granted: ReadonlySet<string>): Requirement {
+function permissionRequirement(key: string, met: boolean): Requirement {
   const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
   const title = app ? `Automation for ${app.name}` : (PERMISSION_TITLES[key] ?? key);
   return {
@@ -69,19 +69,19 @@ function permissionRequirement(key: string, granted: ReadonlySet<string>): Requi
       ? "Drag Plow Latch into the list in System Settings."
       : "Allow it when macOS asks, or in System Settings.",
     action: `Grant ${title}`,
-    met: granted.has(key),
+    met,
   };
 }
 
 /** `ACCOUNT_IDS` in manifest.ts is `{google}` only, so the fixed Google
  *  title and copy are right for every account requirement today. */
-function accountRequirement(id: string, connected: ReadonlySet<string>): Requirement {
+function accountRequirement(id: string, met: boolean): Requirement {
   return {
     id: accountRequirementId(id),
     title: "Google account",
     detail: "Sign in with Google in your browser.",
     action: "Connect Google",
-    met: connected.has(id),
+    met,
   };
 }
 
@@ -97,8 +97,8 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
   const granted = new Set(input.grantedPermissions);
   return input.plugins.map(({ manifest, enabled, description }) => {
     const requirements: Requirement[] = [
-      ...manifest.requires.permissions.map((key) => permissionRequirement(key, granted)),
-      ...manifest.requires.accounts.map((id) => accountRequirement(id, accounts)),
+      ...manifest.requires.permissions.map((key) => permissionRequirement(key, granted.has(key))),
+      ...manifest.requires.accounts.map((id) => accountRequirement(id, accounts.has(id))),
     ];
     return {
       name: manifest.name,
@@ -131,7 +131,7 @@ export function browserPluginRow(input: {
 }): PluginRow {
   const requirements: Requirement[] = [];
   if (!input.safariJavaScript) {
-    requirements.push(permissionRequirement("full_disk_access", new Set(input.fullDiskAccess ? ["full_disk_access"] : [])));
+    requirements.push(permissionRequirement("full_disk_access", input.fullDiskAccess));
   }
   requirements.push({
     id: SAFARI_JAVASCRIPT,
