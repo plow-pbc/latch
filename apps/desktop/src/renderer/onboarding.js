@@ -6,7 +6,7 @@ import { el, icon, switchEl } from "./dom.js";
 import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
-import { presetFor, rowView } from "./gatekeeperRows.js";
+import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
 import { accessPrimary, runGrants } from "./onboardingGrants.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
@@ -244,8 +244,10 @@ function paintRow(index) {
   const row = g.view.rows[index];
   row.node.className = `gk-row ${rowState}${g.open.has(index) ? " open" : ""}`;
   row.pill.setAttribute("aria-expanded", String(g.open.has(index)));
-  row.end.textContent = rowState === "ok" ? "✓" : rowState === "no" ? "✕" : "";
-  row.why.textContent = reason;
+  const word = verdictWord(rowState);
+  row.end.textContent = rowState === "ok" ? "✓" : rowState === "no" ? "✕" : rowState === "checking" ? word : "";
+  row.word.textContent = word;
+  row.reason.textContent = reason ? ` — ${reason}` : "";
   // Restart the flare so a re-review flashes again.
   const flare = el("span", { class: "gk-flare" });
   row.flare.replaceWith(flare);
@@ -260,12 +262,12 @@ function lightMac(view) {
   setTimeout(() => view.mac.classList.remove("lit"), 260);
 }
 
-/** Every row back to checking, for `text`. Answers still out for older text
- * land on a stale generation and are dropped. */
+/** Every row back to checking, for `text`; an open row stays open to watch its
+ * re-review. Answers still out for older text land on a stale generation and
+ * are dropped. */
 function invalidate(g, text) {
   g.lastText = text.trim();
   g.results = g.results.map(() => null);
-  g.open.clear();
   g.results.forEach((_, i) => paintRow(i));
   return ++g.gen;
 }
@@ -301,6 +303,7 @@ function choosePreset(key) {
   g.deck = lastDeck = key;
   g.text = gatekeeperPresets[key].text;
   g.results = gatekeeperPresets[key].rows.map(() => null);
+  g.open.clear();
   g.view = null; // render() rebuilds a screen with no view
   render();
   runPreview();
@@ -347,7 +350,7 @@ function gatekeeperScreen() {
     schedulePreview();
   });
 
-  const rows = gatekeeperPresets[g.deck].rows.map(({ label, icon: glyph }, index) => {
+  const rows = gatekeeperPresets[g.deck].rows.map(({ label, icon: glyph, command }, index) => {
     const end = el("span", { class: "gk-end" });
     const pill = el("button", { class: "gk-pill", attrs: { type: "button" } }, [
       icon(glyph, { strokeWidth: "1.7" }),
@@ -355,7 +358,15 @@ function gatekeeperScreen() {
       end,
     ]);
     const flare = el("span", { class: "gk-flare" });
-    const why = el("div", { class: "gk-why" });
+    const word = el("span", { class: "gk-word" });
+    const reason = el("span");
+    // The capability lines the reviewer reads, then what it made of them.
+    const why = el("div", { class: "gk-why" }, [
+      el("div", { class: "gk-detail" }, [
+        el("div", { class: "gk-command" }, command.map((line) => el("div", { text: line }))),
+        el("p", { class: "gk-verdict" }, [el("strong", { text: "Gatekeeper Verdict: " }), word, reason]),
+      ]),
+    ]);
     const node = el("div", { class: "gk-row" }, [el("div", { class: "gk-lane" }, [pill, flare]), why]);
     pill.addEventListener("click", () => {
       if (g.open.has(index)) g.open.delete(index);
@@ -363,7 +374,7 @@ function gatekeeperScreen() {
       node.classList.toggle("open", g.open.has(index));
       pill.setAttribute("aria-expanded", String(g.open.has(index)));
     });
-    return { node, pill, end, why, flare };
+    return { node, pill, end, word, reason, flare };
   });
 
   const mac = macMini();

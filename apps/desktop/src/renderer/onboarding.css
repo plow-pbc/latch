@@ -1205,7 +1205,7 @@ body.dev-preview {
 .wizard-screen.is-gatekeeper .step-inner { max-width: 520px; }
 .wizard-screen.is-gatekeeper h1 { font-size: 40px; margin-bottom: 16px; }
 .gatekeeper-screen .head-center .subhead { max-width: 44ch; }
-.gatekeeper-screen .subhead strong { color: var(--text); font-weight: 500; }
+.gatekeeper-screen .subhead strong { display: block; margin-top: 6px; color: var(--text); font-weight: 500; }
 .gk-seg { display: flex; justify-content: center; margin: 26px 0 14px; }
 .gk-seg-track { display: inline-flex; padding: 3px; border-radius: 11px; background: var(--surface); border: 1px solid var(--border); }
 .gk-seg-button { font: 600 13px var(--sans); color: var(--muted-2); background: transparent; border: 0; border-radius: 8px; padding: 7px 24px; cursor: pointer; }
@@ -1223,20 +1223,30 @@ body.dev-preview {
   transition: width 0.6s cubic-bezier(0.2, 0.9, 0.2, 1), background 0.35s, border-color 0.35s, color 0.35s; }
 .gk-pill .ico { width: 16px; height: 16px; flex: none; color: var(--muted-2); transition: color 0.35s; }
 .gk-label { overflow: hidden; text-overflow: ellipsis; }
-.gk-end { margin-left: auto; font-weight: 700; opacity: 0; transition: opacity 0.3s 0.3s; }
-.gk-row.ok .gk-end, .gk-row.no .gk-end { opacity: 1; }
+.gk-end { flex: none; margin-left: auto; font-weight: 700; }
+.gk-row.ok .gk-end, .gk-row.no .gk-end { animation: gk-reveal 0.3s 0.3s backwards; }
+.gk-row.checking .gk-end { font-size: 12px; font-weight: 500; }
+/* Analyzing…: a highlight sweeps through the word while the review is out. */
+.gk-row.checking .gk-end, .gk-row.checking .gk-word { color: transparent; background: linear-gradient(90deg, var(--muted) 35%, var(--text) 50%, var(--muted) 65%) 0 0 / 300% 100%;
+  background-clip: text; animation: gk-shimmer 1.4s linear infinite; }
 .gk-row.checking .gk-pill { border-style: dashed; color: var(--muted-2);
   background: linear-gradient(100deg, #151513 30%, #1f1f1c 50%, #151513 70%) 0 0 / 300% 100%; animation: gk-shimmer 1.4s linear infinite; }
 .gk-row.ok .gk-pill { width: calc(100% - var(--mac-w) - 8px); border-color: rgba(213, 239, 138, 0.3); background: #181a14; }
-.gk-row.ok .gk-pill .ico, .gk-row.ok .gk-end { color: var(--volt); }
+.gk-row.ok .gk-pill .ico, .gk-row.ok .gk-end, .gk-row.ok .gk-word { color: var(--volt); }
 .gk-row.no .gk-pill { width: calc(100% - var(--beam-x) - 4px); border-color: rgba(216, 148, 120, 0.45); background: rgba(192, 115, 85, 0.07);
   color: var(--muted-2); animation: gk-bump 0.45s 0.45s ease-out; }
-.gk-row.no .gk-pill .ico, .gk-row.no .gk-end { color: var(--clay-soft); }
+.gk-row.no .gk-pill .ico, .gk-row.no .gk-end, .gk-row.no .gk-word { color: var(--clay-soft); }
 .gk-row.unavailable .gk-pill { color: var(--muted-2); }
-.gk-why { overflow: hidden; max-height: 0; opacity: 0; visibility: hidden; padding-left: 40px; max-width: calc(100% - var(--beam-x) - 8px);
-  font-size: 12px; line-height: 1.45; color: var(--muted-2);
+/* The row's detail: opaque and above the beam, so the beam never runs through the text. */
+.gk-why { position: relative; z-index: 5; overflow: hidden; max-height: 0; opacity: 0; visibility: hidden;
   transition: max-height 0.3s, opacity 0.3s, margin 0.3s, visibility 0s 0.3s; }
-.gk-row.open .gk-why { max-height: 80px; opacity: 1; visibility: visible; margin: -2px 0 8px; transition-delay: 0s; }
+.gk-row.open .gk-why { max-height: 260px; opacity: 1; visibility: visible; margin: -2px 0 8px; transition-delay: 0s; }
+.gk-detail { padding: 10px 12px; border: 1px solid var(--border-2); border-radius: 11px; background: #161614;
+  font-size: 12px; line-height: 1.45; color: var(--muted-2); }
+.gk-command { max-height: 170px; overflow: auto; font: 11.5px/1.5 var(--mono); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.gk-command > div + div { margin-top: 4px; }
+.gk-verdict { margin: 8px 0 0; }
+.gk-verdict strong { color: var(--text); font-weight: 600; }
 
 .gk-beam { position: absolute; top: -12px; bottom: -12px; right: var(--beam-x); width: 2px; z-index: 3; border-radius: 2px; pointer-events: none; overflow: hidden;
   background: linear-gradient(180deg, transparent, rgba(213, 239, 138, 0.85) 10%, rgba(213, 239, 138, 0.85) 90%, transparent);
@@ -1258,12 +1268,14 @@ body.dev-preview {
 .gk-mac.lit .gk-halo { opacity: 1; transition: opacity 0.08s; }
 
 @keyframes gk-shimmer { from { background-position: 100% 0; } to { background-position: -200% 0; } }
+@keyframes gk-reveal { from { opacity: 0; } }
 @keyframes gk-scan { from { top: -70px; } to { top: 100%; } }
 @keyframes gk-bump { 0% { transform: translateX(0); } 35% { transform: translateX(-7px); } 65% { transform: translateX(2px); } 100% { transform: translateX(0); } }
 @keyframes gk-flare-ok { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0.3; } }
 @keyframes gk-flare-no { 0% { opacity: 0; } 20% { opacity: 1; } 100% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) {
-  .gk-pill, .gk-flare, .gk-beam::after { animation: none !important; transition: none !important; }
+  .gk-pill, .gk-end, .gk-word, .gk-flare, .gk-beam::after { animation: none !important; transition: none !important; }
+  .gk-row.checking .gk-end, .gk-row.checking .gk-word { background: none; color: var(--muted); }
   .gk-row.ok .gk-flare { opacity: 0.3; }
   .gk-row.no .gk-flare { opacity: 0.55; }
 }

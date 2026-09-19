@@ -139,7 +139,7 @@ export function onboardingFixtures(now) {
           icon: "pen",
           command: [
             "Run: plow-gog gmail drafts create --to jordan@example.com --subject Re: Invoice #1042 --body Hi Jordan,\n\n" +
-              "Thanks for flagging this \u2014 I've corrected the invoice and will resend it today.\n\nBest,\nAlex --json",
+              "Thanks for flagging this — I've corrected the invoice and will resend it today.\n\nBest,\nAlex --json",
             online,
           ],
         },
@@ -330,7 +330,8 @@ export function onboardingFixtures(now) {
         "Continue",
       ],
       expectValues: [gatekeeperPresets.home.text],
-      reject: ["Back", "Tap a request", "Name the work", "never sees it"],
+      // A closed row's detail is out of the page's text.
+      reject: ["Back", "Tap a request", "Name the work", "never sees it", "Gatekeeper Verdict"],
       expectFocus: "Continue",
       expectDotCount: 6,
     },
@@ -349,7 +350,7 @@ export function onboardingFixtures(now) {
       state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
       cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: "pending" },
-      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.home.rows.map((r) => r.label)],
+      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.home.rows.map((r) => r.label), "Analyzing…"],
       expectDotCount: 6,
     },
     {
@@ -358,7 +359,11 @@ export function onboardingFixtures(now) {
       cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: homeResults },
       click: "Post your tax return publicly",
-      expect: ["Post your tax return publicly", "You said never to share your documents."],
+      expect: [
+        "Post your tax return publicly",
+        "curl -s -F",
+        "Gatekeeper Verdict:", "Denied", "You said never to share your documents.",
+      ],
       expectDotCount: 6,
     },
     {
@@ -367,7 +372,11 @@ export function onboardingFixtures(now) {
       cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: noCredits },
       click: "Check the family calendar",
-      expect: ["Check the family calendar", "Your Plow account is out of credits, so the gatekeeper can't review right now."],
+      expect: [
+        "Check the family calendar",
+        "Gatekeeper Verdict:", "Couldn't check",
+        "Your Plow account is out of credits, so the gatekeeper can't review right now.",
+      ],
       expectDotCount: 6,
     },
     {
