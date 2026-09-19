@@ -77,7 +77,7 @@ import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./
 import { resolveTelemetryConfig, SimulatedError, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
-import { Connectors } from "./connectors.js";
+import { CONNECTOR_SETUP_WAIT_MS, Connectors } from "./connectors.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
@@ -1647,6 +1647,15 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
   return { rows, grants: grantList(rows) };
 }
 
+/** Plugins → Continue: does a switched-on plugin still need a grant? A resumed
+ *  setup can get here before the relay's poll, so ask Plow for the accounts —
+ *  quietly and briefly: past the wait the cache answers, and a late reply
+ *  redraws Access. A slow Plow never holds Continue. */
+async function accessNeeded(): Promise<boolean> {
+  await Promise.race([connectors?.poll(), new Promise((done) => setTimeout(done, CONNECTOR_SETUP_WAIT_MS))]);
+  return (await pluginsNow()).grants.some((g) => g.status !== "met");
+}
+
 ipcMain.handle("plugins:get", async () => pluginsNow());
 
 /** The owner's off switches: the disabled NAMES persist (a later plugin is on
@@ -2419,12 +2428,7 @@ app.whenReady().then(async () => {
       const off = rows.filter((r) => r.status === "needs-setup").map((r) => r.name);
       if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
     },
-    // A relaunched setup resumes on Plugins before the relay's connector
-    // poll: read the accounts first, or a connected Google needs connecting.
-    accessNeeded: async () => {
-      await connectors?.refresh();
-      return (await pluginsNow()).grants.some((g) => g.status !== "met");
-    },
+    accessNeeded,
   });
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   const cloudAgentsClient = new CloudAgentsClient(cloudApi);

@@ -14,6 +14,7 @@ import {
 
 export const CONNECTOR_POLL_INTERVAL_MS = 3_000;
 export const CONNECTOR_TIMEOUT_MS = 30_000;
+export const CONNECTOR_SETUP_WAIT_MS = 2_000;
 export const CONNECTOR_TIMEOUT_NOTE =
   "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
 
