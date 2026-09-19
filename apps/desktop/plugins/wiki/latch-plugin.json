@@ -1,6 +1,7 @@
 {
   "name": "wiki",
   "title": "Obsidian-style wiki",
+  "summary": "A notebook your agents keep about the people and projects in your life.",
   "version": "0.2.0",
   "command": "wiki",
   "runtime": {
