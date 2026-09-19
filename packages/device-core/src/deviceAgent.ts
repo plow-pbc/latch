@@ -1672,16 +1672,18 @@ export class DeviceAgent {
       const couldNotCheck: string[] = [];
       for (const { a, result } of listed) {
         const shown = result.exitCode === 0 ? shownCalendars(this.readJson(result.handle)) : [];
-        // The destination rides the query on the account it books on.
-        const ids =
-          a.account === target.account && !shown.includes(calendar) ? [...shown, calendar] : shown;
-        if (ids.length === 0) {
+        if (shown.length === 0) {
           unchecked.push({
             account: a.account,
             reason: result.exitCode === 0 ? "the check did not answer readably" : gogExitReason(result.exitCode),
           });
           continue;
         }
+        // The destination rides the query on the account it books on — added to
+        // a listing that SUCCEEDED, so a failed one cannot narrow the check to
+        // the destination alone.
+        const ids =
+          a.account === target.account && !shown.includes(calendar) ? [...shown, calendar] : shown;
         const probe = await settled(
           await runGog(
             ["calendar", "freebusy", "--cal", ids.join(","), "--from", from, "--to", to, "--json", "--results-only"],

@@ -700,6 +700,10 @@ case "$*" in
         echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"busy":[]},"hidden":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]}}'
         exit 0 ;;
       *"--cal primary,family@group.calendar.google.com --from 2026-08-28T10:00:00Z --to 2026-08-28T11:00:00Z"*) ;;
+      # A destination-only query: all this account's other calendars went
+      # unasked. Answering it clear is what makes the row below fail if the
+      # gate ever narrows to the destination.
+      *"--cal primary --from 2026-08-28T10:00:00Z --to 2026-08-28T11:00:00Z"*) echo '{"primary":{"busy":[]}}'; exit 0 ;;
       *) echo '{"argv-mismatch":{"errors":[{"reason":"theGateAskedTheWrongQuestion"}]}}'; exit 0 ;;
     esac
     case "$GOG_ACCESS_TOKEN" in
@@ -708,6 +712,7 @@ case "$*" in
       tok-cbusyerr) echo '{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
       tok-cerr) echo '{"primary":{"busy":[]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
       tok-callerr) echo '{"primary":{"errors":[{"reason":"notFound"}]},"family@group.calendar.google.com":{"errors":[{"reason":"notFound"}]}}' ;;
+      tok-clistbad) echo '{"primary":{"busy":[]}}' ;;
       tok-ctransient) echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"errors":[{"reason":"rateLimitExceeded"}]}}' ;;
       *) echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"busy":[]}}' ;;
     esac ;;
@@ -715,6 +720,7 @@ case "$*" in
   *"calendar calendars"*)
     case "$GOG_ACCESS_TOKEN" in
       tok-cbad) exit 9 ;;
+      tok-clistbad) exit 9 ;;
       *) echo '[{"id":"primary","summary":"Calendar","selected":true},{"id":"family@group.calendar.google.com","summary":"Family","selected":true},{"id":"hidden","summary":"Hidden","selected":false}]' ;;
     esac ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
@@ -1099,6 +1105,15 @@ esac
       // in this account answered, so the window is unknown, not free.
       why: "an account whose every calendar errored",
       accounts: () => [{ account: "a@example.com", token: "tok-callerr", isDefault: true }],
+      extra: [],
+      expected: "a@example.com: could not check",
+    },
+    {
+      // The calendar listing failed, so which calendars this account keeps is
+      // unknown. Checking the destination alone would clear the create while
+      // every other calendar went unasked.
+      why: "an account whose calendar listing failed, destination clear",
+      accounts: () => [{ account: "a@example.com", token: "tok-clistbad", isDefault: true }],
       extra: [],
       expected: "a@example.com: could not check",
     },
