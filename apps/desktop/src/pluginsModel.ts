@@ -158,7 +158,7 @@ export interface GrantItem extends Requirement {
   plugins: string[];
 }
 
-const rank = (id: string): number => (id.startsWith("account:") ? 2 : id === SAFARI_JAVASCRIPT ? 1 : 0);
+const rank = (id: string): number => (id.startsWith(accountRequirementId("")) ? 2 : id === SAFARI_JAVASCRIPT ? 1 : 0);
 
 /** Every switched-on plugin's still-actionable requirements, as one ordered
  *  list the setup flow walks: permissions, then Safari, then accounts. A
