@@ -216,15 +216,11 @@ export class Onboarding {
       return this.newActivationCode();
     }
     if (this.step === "privacy") {
-      // Wrapped in `run()` so a throw leaves the owner readably on Privacy
-      // instead of an unhandled rejection, and `busy` blocks a second advance
-      // from racing this one. The step moves only once the default has
-      // actually applied, so a throw retries it rather than skipping it for
-      // good.
+      // run() keeps a throw readable on Privacy and retries the default
+      // rather than skipping it; the step moves only once it has applied.
       return this.run(async () => {
         await this.deps.applyPluginDefault?.();
-        // A reset() (sign-out) can land during this await and move the step
-        // itself — see the identical check in the plugins branch below.
+        // A reset() (sign-out) can land during this await; don't overwrite it.
         if (this.step !== "privacy") return;
         this.step = "plugins";
       });
@@ -232,10 +228,7 @@ export class Onboarding {
     if (this.step === "plugins") {
       return this.run(async () => {
         const needsAccess = (await this.deps.accessNeeded?.()) ?? false;
-        // A reset() (sign-out) can land during this await and move the step
-        // itself — most commonly to Welcome. Resuming here must not overwrite
-        // whatever it decided, and must not persist a choice into the home it
-        // just signed out of.
+        // Same reset()-mid-await guard as the privacy branch above.
         if (this.step !== "plugins") return;
         const settings = this.settings();
         settings.telemetryEnabled = this.telemetryEnabled;
