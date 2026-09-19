@@ -1457,7 +1457,6 @@ function rosterPermissionCopy(row) {
     row.permissions.canReadAndReply
       ? `Reads and replies in ${rosterChatGrant(row.chatUids, row.chatAccess)}`
       : null,
-    "Can reach this Mac",
     row.permissions.canSpendInference ? "Can spend inference" : null,
   ].filter(Boolean);
 }
@@ -1601,10 +1600,10 @@ function clientEntityRow(row, redraw) {
   const name = rosterName(row);
   const context = [
     "MCP client",
-    // Which Mac this credential works from, when it is bound to one. The main
-    // process hands down a label and never the device uid, and it goes in as
-    // text — a device name is a string somebody else chose.
-    row.deviceLabel ? `Bound to ${row.deviceLabel}` : null,
+    // Which Mac this credential works from. The main process hands down a
+    // label and never the device uid, and it goes in as text — a device name
+    // is a string somebody else chose.
+    row.deviceLabel ? `Bound to ${row.deviceLabel}` : "Works from any Mac",
     row.createdAt ? `Created ${rosterDate(row.createdAt) ?? "date unknown"}` : "Created date unknown",
     row.lastSeenAt ? `Last used ${rosterAgo(row.lastSeenAt) ?? "date unknown"}` : "Never used",
   ].filter(Boolean).join(" · ");

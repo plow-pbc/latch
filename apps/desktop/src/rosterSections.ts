@@ -2,7 +2,7 @@
 import { parseApiTimestamp, type KeyDevice, type KeyInfo } from "./plowApi.js";
 
 /**
- * What a client may do beyond reaching this Mac, which every listed one can.
+ * What a client may do beyond reaching the Mac it is bound to.
  *
  * Derived here from its real scopes: a permission line that does not read the
  * permissions is a claim, not a description.
