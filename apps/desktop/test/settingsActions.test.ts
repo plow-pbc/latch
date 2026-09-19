@@ -239,12 +239,15 @@ describe("retireUnretiredSession clears the session an offline sign-out could no
   it.each([
     { name: "every active key holding a pending prefix, among others", pending: ["earlier1", PREFIX],
       keys: [keyInfo({ id: 10, key_prefix: "other001" }), keyInfo({ id: 15, key_prefix: "earlier1" }), keyInfo({ id: 20, key_prefix: PREFIX })],
-      expectRevoked: [15, 20], expectListed: true },
+      expectRevoked: [15, 20], expectListed: true, expectKept: [] },
     { name: "only an inactive or other-prefix key", pending: [PREFIX],
       keys: [keyInfo({ id: 10, key_prefix: PREFIX, is_active: false }), keyInfo({ id: 30, key_prefix: "other002" })],
-      expectRevoked: [], expectListed: true },
-    { name: "no pending session recorded at all", pending: [], keys: [], expectRevoked: [], expectListed: false },
-  ])("$name", async ({ pending, keys, expectRevoked, expectListed }) => {
+      expectRevoked: [], expectListed: true, expectKept: [] },
+    { name: "a prefix this account's listing doesn't know (signed into another account)", pending: [PREFIX],
+      keys: [keyInfo({ id: 30, key_prefix: "other002" })],
+      expectRevoked: [], expectListed: true, expectKept: [PREFIX] },
+    { name: "no pending session recorded at all", pending: [], keys: [], expectRevoked: [], expectListed: false, expectKept: [] },
+  ])("$name", async ({ pending, keys, expectRevoked, expectListed, expectKept }) => {
     const home = homeWith({ relayCredential: PLOW_CREDENTIAL, unretiredKeyPrefixes: pending });
     const { api, revoked } = fakeApi(keys);
 
@@ -252,7 +255,7 @@ describe("retireUnretiredSession clears the session an offline sign-out could no
 
     expect(revoked).toEqual(expectRevoked);
     expect(api.listApiKeys).toHaveBeenCalledTimes(expectListed ? 1 : 0);
-    expect(stored(home).unretiredKeyPrefixes).toEqual([]);
+    expect(stored(home).unretiredKeyPrefixes).toEqual(expectKept);
   });
 
   it("keeps the record when listing fails, and lets the rejection propagate", async () => {

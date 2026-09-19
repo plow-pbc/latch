@@ -146,10 +146,12 @@ export async function retireUnretiredSession(
   const prefixes = settings.unretiredKeyPrefixes ?? [];
   const credential = (settings.relayCredential ?? "").trim();
   if (!prefixes.length || !credential) return;
-  for (const key of await api.listApiKeys(credential)) {
+  const keys = await api.listApiKeys(credential);
+  for (const key of keys) {
     if (key.is_active && key.key_prefix && prefixes.includes(key.key_prefix)) await api.revokeApiKey(credential, key.id);
   }
-  forgetUnretired(home, prefixes);
+  // Only this account's keys are listed; another account's prefix waits for it.
+  forgetUnretired(home, prefixes.filter((prefix) => keys.some((key) => key.key_prefix === prefix)));
 }
 
 /**
