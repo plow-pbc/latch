@@ -240,6 +240,11 @@ let connectors: Connectors | null = null;
 /** What `loadPlugins` found at startup — the Plugins tab's inventory, and the
  *  list the owner's off switch selects from. Empty until whenReady. */
 let stagedPlugins: readonly StagedPlugin[] = [];
+/** Whether this process could read Full Disk Access's files at launch. A grant
+ *  that arrives later reaches the app but not its children until a relaunch;
+ *  one already there at launch that a child still cannot use will not be
+ *  fixed by relaunching (pluginsNow). Read once in whenReady. */
+let fullDiskAccessAtLaunch = false;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
@@ -1442,7 +1447,14 @@ function grantTargetFor(key: string): GrantTarget | null {
   const label = permissionTitle(key);
   const probes = device?.hostProbes ?? null;
   const probe = async (): Promise<boolean> => {
-    if (key === "full_disk_access") return probeFullDiskAccess();
+    // Done once a child can use it (the Settings row's own answer), or once
+    // it arrives during this run, which a relaunch finishes. On at launch but
+    // not inherited, the panel stays up for the row's remove-and-re-add.
+    if (key === "full_disk_access") {
+      if (!(await probeFullDiskAccess())) return false;
+      if (!fullDiskAccessAtLaunch) return true;
+      return (await device?.hostInventory({ automationTargets: [] }))?.child_attribution.status === "ok";
+    }
     if (!probes) return false;
     if (app) return (await probes.automationStatus(app.bundleId)) === "granted";
     if (key === "accessibility" || key === "contacts" || key === "calendars" || key === "screen_recording") {
@@ -2225,6 +2237,8 @@ app.whenReady().then(async () => {
   }
   // What the Plugins tab lists, and what its off switch selects from.
   stagedPlugins = plugins;
+  // Before any window exists to read the Plugins tab.
+  fullDiskAccessAtLaunch = await probeFullDiskAccess();
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
