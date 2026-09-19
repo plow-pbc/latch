@@ -3,7 +3,6 @@
    persistent shell. The page is sandboxed and receives no Node primitives. */
 
 import { el, icon, switchEl } from "./dom.js";
-import { googleConnectorCard } from "./connectorsCard.js";
 import { singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
@@ -17,26 +16,28 @@ const root = document.getElementById("root");
 let state = null;
 let primaryAction = null;
 let expiryTimer = null;
-let fullDiskAccess = null;
 /** The Availability screen's two switches, read fresh from the OS/disk on
  * entering the step and on window focus — never remembered across steps. */
 let availability = null;
 /** Set by availabilityScreen(); moves the live switches to `availability`
  * without a re-render, so a click keeps its focus. */
 let syncAvailability = null;
-let fullDiskProbe = null;
-let fullDiskRequestBusy = false;
-let restoreTelemetryFocus = false;
+/** The Plugins tab's state (pluginsGet): the rows setup switches and the
+ * ordered grants Access walks. Read fresh on entering either step and on
+ * window focus — null on every other step. */
+let pluginsState = null;
+/** Access's own run: the grants the owner skipped, the one whose flow is
+ * running, and the one that stopped it ({ id, error }). */
+const skipped = new Set();
+let running = null;
+let missed = null;
+/** The id of the switch a redraw hands focus back to, so a click keeps it. */
+let restoreFocus = null;
 let doneAgent = null;
-let connectorState = null;
 const mutate = singleFlight(() => state?.busy === true);
 
 async function update(action) {
   await mutate(async () => apply(await action()));
-}
-
-async function updateConnectors(action) {
-  applyConnectors(await action());
 }
 
 function svgElement(tag, attrs = {}) {
@@ -334,33 +335,44 @@ function verifyScreen() {
   return el("div", { class: "step-inner" }, parts);
 }
 
-async function refreshFullDiskAccess(force = false) {
-  if (!force && fullDiskAccess !== null) return;
-  if (fullDiskProbe) return fullDiskProbe;
-  fullDiskProbe = window.domo.capabilitiesGet()
-    .then((capabilities) => {
-      fullDiskAccess = capabilities?.fullDiskAccess === true;
-    })
-    .catch(() => {
-      fullDiskAccess = false;
-    })
-    .finally(() => {
-      fullDiskProbe = null;
-      if (state?.step === "data") render();
-    });
-  return fullDiskProbe;
+const onPluginStep = () => state?.step === "plugins" || state?.step === "access";
+
+async function refreshPlugins() {
+  const next = await window.domo.pluginsGet();
+  if (!onPluginStep()) return;
+  pluginsState = next;
+  render();
 }
 
-async function requestFullDiskAccess() {
-  fullDiskRequestBusy = true;
-  render();
-  try {
-    await window.domo.fullDiskGrantFlow();
-  } finally {
-    await refreshFullDiskAccess(true);
-    fullDiskRequestBusy = false;
-    if (state?.step === "data") render();
+/** What the run still has to do: not met, not waiting on a relaunch, not skipped. */
+const openGrants = () =>
+  pluginsState?.grants.filter((g) => !g.met && !g.relaunch && !skipped.has(g.id)) ?? [];
+
+/**
+ * Access's one button: each open grant's flow in list order, one at a time,
+ * reading from the fresh state whether it landed. A grant that did not stops
+ * the run on its row. A throw is a miss like any other, so Try again is
+ * never stuck behind "Setting up…".
+ */
+async function runGrants() {
+  missed = null;
+  for (;;) {
+    const next = openGrants()[0];
+    if (!next) break;
+    running = next.id;
+    render();
+    const result = await window.domo.requirementsAct(next.id).catch(() => ({ ...pluginsState, error: null }));
+    running = null;
+    // Back (or a sign-out) left the screen mid-flow: start nothing new.
+    if (state.step !== "access") break;
+    pluginsState = result;
+    if (skipped.has(next.id)) continue;
+    const fresh = result.grants.find((g) => g.id === next.id);
+    if (!fresh || fresh.met || fresh.relaunch) continue;
+    missed = { id: next.id, error: result.error };
+    break;
   }
+  render();
 }
 
 async function refreshAvailability() {
@@ -419,7 +431,7 @@ function availabilityScreen() {
   syncAvailability = sync;
   sync();
 
-  return el("div", { class: "data-screen availability-screen" }, [
+  return el("div", { class: "form-screen availability-screen" }, [
     el("div", { class: "step-inner" }, [
       el("div", { class: "head-center" }, [
         el("h1", { text: "Keep this Mac reachable" }),
@@ -428,7 +440,7 @@ function availabilityScreen() {
           text: "Your agents work through this Mac. When it's off, asleep, or Plow Latch isn't running, they can't reach your email, calendar, messages, or browser.",
         }),
       ]),
-      el("div", { class: "data-consent" }, [
+      el("div", { class: "form-block" }, [
         toggleRow(
           launchBox,
           "Open Plow Latch when you log in. ",
@@ -445,7 +457,32 @@ function availabilityScreen() {
   ]);
 }
 
-function dataScreen() {
+function pluginRow(row) {
+  const box = el("input", { attrs: { id: `plugin-${row.name}`, type: "checkbox", "aria-label": `Use ${row.title}` } });
+  box.checked = row.status !== "off";
+  box.addEventListener("change", async () => {
+    restoreFocus = box.id;
+    pluginsState = await window.domo.pluginsSetEnabled(row.name, box.checked);
+    render();
+  });
+  const tags = row.requirements.length
+    ? row.requirements.map((req) =>
+      el("span", { class: `item-tag${req.met ? " met" : ""}`, text: req.met ? `✓ ${req.title}` : req.title }))
+    : [el("span", { class: "item-tag none", text: "Nothing to grant" })];
+  return el("div", { class: `item-row${row.status === "off" ? " off" : ""}` }, [
+    el("span", { class: "item-icon" }, [
+      icon(row.kind === "Browser" ? "browser" : "command", { strokeWidth: "1.7" }),
+    ]),
+    el("span", { class: "item-copy" }, [
+      el("span", { class: "item-name", text: row.title }),
+      row.summary ? el("span", { class: "item-detail", text: row.summary }) : null,
+      el("span", { class: "item-tags" }, tags),
+    ]),
+    switchEl(box),
+  ]);
+}
+
+function pluginsScreen() {
   const telemetry = el("input", {
     attrs: {
       id: "telemetry-toggle",
@@ -455,102 +492,121 @@ function dataScreen() {
   });
   telemetry.checked = state.telemetryEnabled === true;
   telemetry.addEventListener("change", () => {
-    restoreTelemetryFocus = true;
+    restoreFocus = telemetry.id;
     void update(() => window.domo.onboardingSetTelemetry(telemetry.checked));
   });
 
-  let permissionControl;
-  if (fullDiskAccess === true) {
-    permissionControl = button("", "req-btn granted", null);
-    permissionControl.append(
-      icon("checkmark", { strokeWidth: "1.7" }),
-      document.createTextNode("Granted"),
-    );
-    permissionControl.disabled = true;
-  } else {
-    permissionControl = button(
-      fullDiskRequestBusy ? "Waiting…" : fullDiskAccess === null ? "Checking…" : "Request…",
-      "req-btn",
-      fullDiskRequestBusy || fullDiskAccess === null ? null : requestFullDiskAccess,
-    );
-    permissionControl.disabled = fullDiskRequestBusy || fullDiskAccess === null;
-  }
-
-  return el("div", { class: "data-screen" }, [
-    el("div", { class: "step-inner" }, [
-      el("div", { class: "head-center" }, [
-        el("h1", { text: "Your data & permissions" }),
-        el("p", { class: "subhead", text: "You can change any of these anytime in Settings." }),
-      ]),
-      el("div", { class: "data-consent" }, [
-        el("div", { class: "section-heading", text: "Help make Plow better?" }),
-        toggleRow(
-          telemetry,
-          "Share usage data so we can improve Plow. ",
-          "Never your messages or your data.",
-        ),
-      ]),
-      el("div", { class: "data-divider" }),
-      el("div", { class: "section-label permission-label", text: "Permissions" }),
-      el("div", { class: "permission-rows" }, [
-        el("div", { class: "permission-row" }, [
-          el("span", { class: "permission-icon" }, [
-            icon("hardDrive", { strokeWidth: "1.7" }),
-          ]),
-          el("span", { class: "permission-copy" }, [
-            el("span", { class: "permission-name" }, [
-              document.createTextNode("Full Disk Access "),
-              el("span", { class: "optional-label", text: "Optional" }),
-            ]),
-            el("span", {
-              class: "permission-detail",
-              text: "Plow Latch reads your Messages right on your Mac, so you never miss the texts that matter. Apple keeps Messages behind this permission. Only what you approve an agent to read is ever sent to it.",
-            }),
-          ]),
-          el("span", { class: "permission-control" }, [permissionControl]),
-        ]),
-      ]),
+  const parts = [
+    el("div", { class: "head-center" }, [
+      el("h1", { text: "Choose your plugins" }),
+      el("p", {
+        class: "subhead",
+        text: "Switch on what your agents can use on this Mac. You'll grant what they need next.",
+      }),
     ]),
+  ];
+  if (pluginsState) {
+    const toGrant = pluginsState.grants.filter((g) => !g.met);
+    parts.push(
+      el("div", { class: "item-rows" }, pluginsState.rows.map(pluginRow)),
+      el("div", { class: "grant-next" }, [
+        el("div", { class: "section-label", text: "You'll grant next" }),
+        toGrant.length
+          ? el("div", { class: "grant-items" }, toGrant.map((g) =>
+            el("span", { class: "grant-item" }, [
+              document.createTextNode(g.title),
+              el("small", { text: `for ${g.plugins.join(" · ")}` }),
+            ])))
+          : el("p", { class: "grant-empty", text: "Nothing to grant. These work as soon as setup finishes." }),
+      ]),
+    );
+  }
+  parts.push(toggleRow(
+    telemetry,
+    "Share usage data so we can improve Plow. ",
+    "Never your messages or your data.",
+  ));
+  return el("div", { class: "form-screen" }, [el("div", { class: "step-inner" }, parts)]);
+}
+
+/** The three kinds of grant, told apart by id (pluginsModel.ts): the glyph,
+ * the line while its flow runs, and the word once it lands. */
+const GRANT_KINDS = {
+  permission: { glyph: "access", live: "Waiting for you in System Settings…", done: "Granted" },
+  safari: { glyph: "browser", live: "Turning it on. Safari relaunches.", done: "Granted" },
+  account: { glyph: "user", live: "Finish signing in with Google in your browser.", done: "Connected" },
+};
+
+function grantKind(id) {
+  if (id.startsWith("account:")) return GRANT_KINDS.account;
+  return id === "safari-javascript-from-apple-events" ? GRANT_KINDS.safari : GRANT_KINDS.permission;
+}
+
+function statusLine(tone, text, lead = null) {
+  return el("span", { class: `item-status ${tone}` }, [lead, el("span", { text })]);
+}
+
+function grantRow(grant) {
+  const kind = grantKind(grant.id);
+  const skip = () => button("Skip", "link-button", () => {
+    skipped.add(grant.id);
+    if (running === grant.id) {
+      // Ends a waiting panel at once; the run moves on when the act returns.
+      window.domo.fullDiskDismiss();
+      render();
+    } else {
+      void runGrants();
+    }
+  });
+  let tone = "";
+  let line = null;
+  let control = null;
+  if (grant.met) {
+    control = el("span", { class: "item-chip" }, [
+      icon("checkmark", { strokeWidth: "1.7" }),
+      document.createTextNode(kind.done),
+    ]);
+  } else if (grant.relaunch) {
+    line = statusLine("done", "Granted: relaunch to finish");
+  } else if (skipped.has(grant.id)) {
+    line = statusLine("skipped", "Skipped. Finish anytime in Settings\u00a0›\u00a0Plugins.");
+    control = button("Set up", "link-button", () => {
+      skipped.delete(grant.id);
+      render();
+    });
+  } else if (running === grant.id) {
+    tone = " running";
+    line = statusLine("live", kind.live, el("span", { class: "waiting-spinner" }));
+    control = skip();
+  } else if (missed?.id === grant.id) {
+    line = statusLine("error", missed.error || "That didn't finish, so nothing changed.");
+    control = skip();
+  }
+  return el("div", { class: `item-row${tone}` }, [
+    el("span", { class: "item-icon" }, [icon(kind.glyph, { strokeWidth: "1.7" })]),
+    el("span", { class: "item-copy" }, [
+      el("span", { class: "item-name", text: grant.title }),
+      el("span", { class: "item-for", text: `For ${grant.plugins.join(" · ")}` }),
+      el("span", { class: "item-detail", text: grant.detail }),
+      line,
+    ]),
+    control ? el("span", { class: "item-control" }, [control]) : null,
   ]);
 }
 
-function connectScreen() {
-  const current = connectorState ?? {
-    busy: true,
-    message: "",
-    noteKind: "error",
-    loading: true,
-    google: { accounts: [], connecting: false },
-  };
-  const actions = {
-    connect: () => updateConnectors(() => window.domo.connectorsConnect()),
-    disconnect: (account) => updateConnectors(
-      () => window.domo.connectorsDisconnect(account),
-    ),
-    setDefault: (account) => updateConnectors(
-      () => window.domo.connectorsSetDefault(account),
-    ),
-  };
-  const parts = [
-    el("div", { class: "head-center" }, [
-      el("h1", { text: "Connect your accounts" }),
-      el("p", {
-        class: "subhead",
-        text: "Connect Plow Latch to your most helpful accounts.",
-      }),
+function accessScreen() {
+  return el("div", { class: "form-screen" }, [
+    el("div", { class: "step-inner" }, [
+      el("div", { class: "head-center" }, [
+        el("h1", { text: "Grant access" }),
+        el("p", {
+          class: "subhead",
+          text: "One at a time. Skip anything and it'll wait for you in Settings\u00a0›\u00a0Plugins.",
+        }),
+      ]),
+      el("div", { class: "item-rows" }, (pluginsState?.grants ?? []).map(grantRow)),
     ]),
-    el("div", { class: "provider-groups" }, [
-      googleConnectorCard(current, actions),
-    ]),
-  ];
-  if (current.message) {
-    parts.push(el("p", {
-      class: `state-note ${current.noteKind} connector-note`,
-      text: current.message,
-      attrs: { role: "status" },
-    }));
-  }
-  return el("div", { class: "connect-screen step-inner" }, parts);
+  ]);
 }
 
 function doneScreen() {
@@ -578,15 +634,16 @@ function screenForStep() {
   if (state.step === "welcome") return welcomeScreen();
   if (state.step === "privacy") return privacyScreen();
   if (state.step === "activate" || state.step === "waiting") return verifyScreen();
-  if (state.step === "data") return dataScreen();
+  if (state.step === "plugins") return pluginsScreen();
+  if (state.step === "access") return accessScreen();
   if (state.step === "availability") return availabilityScreen();
-  if (state.step === "connect") return connectScreen();
   if (state.step === "done") return doneScreen();
   return el("p", { class: "state-note error", text: "This setup step is unavailable." });
 }
 
 function footerForStep() {
   const step = state.step;
+  const advance = () => update(() => window.domo.onboardingAdvance());
   if (step === "done") return { hidden: true };
   if (step === "welcome") {
     return {
@@ -594,7 +651,7 @@ function footerForStep() {
       dot: null,
       label: "Get started",
       arrow: false,
-      action: () => update(() => window.domo.onboardingAdvance()),
+      action: advance,
     };
   }
   if (step === "activate" || step === "waiting") {
@@ -606,26 +663,32 @@ function footerForStep() {
       dot: 1,
       label: "Continue",
       arrow: true,
-      action: () => update(() => window.domo.onboardingAdvance()),
+      action: advance,
+    };
+  }
+  if (step === "access") {
+    const open = openGrants().length;
+    const [label, action] = missed ? ["Try again", runGrants]
+      : running ? ["Setting up…", null]
+      : open ? [`Set up all ${open}`, runGrants]
+      : pluginsState?.grants.some((g) => g.relaunch) ? ["Relaunch to finish", () => window.domo.appRelaunch()]
+      : ["Continue", advance];
+    return {
+      back: true,
+      dot: 3,
+      label,
+      arrow: action !== null,
+      disabled: action === null || pluginsState === null,
+      action,
     };
   }
   if (step === "availability") {
     return {
       back: true,
-      dot: 3,
+      dot: 4,
       label: "Continue",
       arrow: true,
-      action: () => update(() => window.domo.onboardingAdvance()),
-    };
-  }
-  if (step === "connect") {
-    return {
-      back: true,
-      dot: 4,
-      label: connectorState?.google.accounts.length > 0 ? "Done" : "Skip",
-      arrow: false,
-      disabled: connectorState === null,
-      action: () => update(() => window.domo.onboardingAdvance()),
+      action: advance,
     };
   }
   return {
@@ -633,7 +696,7 @@ function footerForStep() {
     dot: 2,
     label: "Continue",
     arrow: true,
-    action: () => update(() => window.domo.onboardingAdvance()),
+    action: advance,
   };
 }
 
@@ -667,16 +730,18 @@ function render() {
   if (!state) return;
   clearInterval(expiryTimer);
   expiryTimer = null;
-  if (state.step !== "data") restoreTelemetryFocus = false;
+  if (state.step !== "plugins") restoreFocus = null;
   if (state.step !== "availability") syncAvailability = null;
 
   const continuingWelcome = state.step === "welcome" && screen.classList.contains("is-welcome");
   if (continuingWelcome) {
     refreshWelcomeNote();
   } else {
+    // A redraw of the same step (a switch, a grant landing) keeps its scroll.
+    const stepChanged = !screen.classList.contains(`is-${state.step}`);
     screen.className = `wizard-screen is-${state.step}`;
     screen.replaceChildren(screenForStep());
-    body.scrollTop = 0;
+    if (stepChanged) body.scrollTop = 0;
     document.body.classList.remove("welcome-full");
   }
   document.body.classList.toggle("on-welcome", state.step === "welcome");
@@ -702,21 +767,15 @@ function render() {
   if (state.step === "welcome" && !continuingWelcome) {
     playWelcomeEntrance();
   }
-  if (state.step === "data") void refreshFullDiskAccess();
 
-  const telemetryFocus = restoreTelemetryFocus
-    ? screen.querySelector("#telemetry-toggle")
-    : null;
-  const focus = telemetryFocus ?? screen.querySelector("input[autofocus]")
+  const kept = restoreFocus ? document.getElementById(restoreFocus) : null;
+  const focus = kept ?? screen.querySelector("input[autofocus]")
     ?? (primaryButton.disabled ? screen.querySelector(".verify-activate:not(:disabled)") : null)
-    ?? (state.step === "connect"
-      ? screen.querySelector(".provider-connect:not(:disabled), .add-another:not(:disabled)")
-      : null)
     ?? (!footer.hidden ? primaryButton : null);
   if (focus && !state.busy) {
     requestAnimationFrame(() => {
       focus.focus({ preventScroll: true, focusVisible: false });
-      if (focus === telemetryFocus) restoreTelemetryFocus = false;
+      if (focus === kept) restoreFocus = null;
     });
   }
   root.hidden = false;
@@ -726,12 +785,10 @@ async function apply(next) {
   const previousStep = state?.step;
   state = resolveOnboardingState(state, next);
   if (state?.step !== "done") doneAgent = null;
-  if (state?.step !== "connect") connectorState = null;
+  if (!onPluginStep()) pluginsState = null;
   if (state?.step !== "availability") availability = null;
   render();
-  if (state?.step === "connect" && previousStep !== "connect") {
-    applyConnectors(await window.domo.connectorsRefresh());
-  }
+  if (onPluginStep() && previousStep !== state.step) void refreshPlugins();
   if (state?.step === "availability" && previousStep !== "availability") {
     void refreshAvailability();
   }
@@ -741,12 +798,6 @@ async function apply(next) {
     doneAgent = loaded;
     render();
   }
-}
-
-function applyConnectors(next) {
-  if (!next) return;
-  connectorState = next;
-  if (state?.step === "connect") render();
 }
 
 document.addEventListener("keydown", (event) => {
@@ -763,13 +814,9 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 window.addEventListener("focus", () => {
-  if (state?.step === "data") void refreshFullDiskAccess(true);
+  if (onPluginStep()) void refreshPlugins();
   if (state?.step === "availability") void refreshAvailability();
-  if (state?.step === "connect" && connectorState?.busy !== true) {
-    void updateConnectors(() => window.domo.connectorsRefresh());
-  }
 });
 
 window.domo.onOnboardingChanged(async () => apply(await window.domo.onboardingGet()));
-window.domo.onConnectorsChanged(applyConnectors);
 void window.domo.onboardingGet().then(apply);
