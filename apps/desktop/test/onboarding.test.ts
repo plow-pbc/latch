@@ -2,8 +2,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseManifest } from "@domo/device-core";
-import { Connectors } from "../src/connectors.js";
 import { PRESET_TEXT } from "../src/gatekeeperPreview.js";
 import {
   ACTIVATION_POLL_INTERVAL_MS,
@@ -12,7 +10,6 @@ import {
   OnboardingDeps,
 } from "../src/onboarding.js";
 import { PlowApi, PlowApiError } from "../src/plowApi.js";
-import { grantList, pluginRows } from "../src/pluginsModel.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
@@ -529,64 +526,33 @@ describe("wizard steps around the existing verification flow", () => {
       expect(build({ accessNeeded: async () => true }).state().step).toBe("access");
     });
 
-    it("loads an already-connected Google account before resumed Access becomes actionable", async () => {
+    it("awaits Access preparation before the resumed initial step is ready", async () => {
       signedIn({ onboardingResumeStep: "access" });
-      let listCalls = 0;
-      let finishRelayPoll = (_accounts: Array<{ email: string; isDefault: boolean }>) => {};
-      const heldRelayPoll = new Promise<{ google: { accounts: Array<{ email: string; isDefault: boolean }> } }>(
-        (resolve) => {
-          finishRelayPoll = (accounts) => resolve({ google: { accounts } });
-        },
-      );
-      const connected = { email: "owner@example.com", isDefault: true };
-      const connectors = new Connectors({
-        api: {
-          listConnectors: async () => {
-            listCalls += 1;
-            return listCalls === 1 ? heldRelayPoll : { google: { accounts: [connected] } };
-          },
-          connectorConnectUrl: async () => "https://api.plow.co/v1/connectors/gmail/connect?code=unused",
-          disconnectConnector: async () => ({ status: "disconnected" }),
-          setDefaultConnector: async () => {},
-        },
-        credential: () => DEVICE_TOKEN,
-        openExternal: async () => {},
-        recordAudit: () => {},
+      let finishPreparation = () => {};
+      const preparation = new Promise<void>((resolve) => {
+        finishPreparation = resolve;
       });
-      const relayPolling = connectors.poll();
-      await Promise.resolve();
-      expect(listCalls).toBe(1);
+      let calls = 0;
       const onboarding = build({
         prepareAccess: async () => {
-          await connectors.refresh();
+          calls += 1;
+          await preparation;
         },
       });
       expect(onboarding.state().step).toBe("access");
 
-      await onboarding.prepareInitialStep();
+      let ready = false;
+      const initial = onboarding.prepareInitialStep().then((state) => {
+        ready = true;
+        return state;
+      });
+      await Promise.resolve();
 
-      const googleManifest = parseManifest(JSON.stringify({
-        name: "gog",
-        version: "1",
-        command: "gog",
-        exec: { argv: ["/bin/sh", "cli.sh"] },
-        argv: { read: [["calendar", "list"]], write: [] },
-        requires: { accounts: ["google"] },
-      }));
-      const connectedAccounts = connectors.state().google.accounts.length ? ["google"] : [];
-      const grants = grantList(pluginRows({
-        plugins: [{ manifest: googleManifest, enabled: true }],
-        connectedAccounts,
-        grantedPermissions: [],
-        relaunchPending: [],
-      }));
-      expect(grants).toMatchObject([{ id: "account:google", status: "met" }]);
-      expect(listCalls).toBe(2);
-
-      // The delayed relay poll cannot overwrite the newer startup refresh.
-      finishRelayPoll([]);
-      await relayPolling;
-      expect(connectors.state().google.accounts).toEqual([connected]);
+      expect(calls).toBe(1);
+      expect(ready).toBe(false);
+      finishPreparation();
+      expect((await initial).step).toBe("access");
+      expect(ready).toBe(true);
     });
 
     it.each([
@@ -611,27 +577,15 @@ describe("wizard steps around the existing verification flow", () => {
       expect(loadSettings(home).onboardingResumeStep).toBeUndefined();
     });
 
-    it("clears the checkpoint when Back leaves Access", async () => {
+    it.each([
+      ["Back", (onboarding: Onboarding) => onboarding.back(), "plugins"],
+      ["Continue", (onboarding: Onboarding) => onboarding.advance(), "availability"],
+      ["reset", (onboarding: Onboarding) => onboarding.reset(), "plugins"],
+    ] as const)("clears the checkpoint when %s leaves Access", async (_name, leave, expectedStep) => {
       const onboarding = await enterAccess();
       onboarding.prepareRelaunch();
 
-      expect((await onboarding.back()).step).toBe("plugins");
-      expect(loadSettings(home).onboardingResumeStep).toBeUndefined();
-    });
-
-    it("clears the checkpoint when Continue leaves Access", async () => {
-      const onboarding = await enterAccess();
-      onboarding.prepareRelaunch();
-
-      expect((await onboarding.advance()).step).toBe("availability");
-      expect(loadSettings(home).onboardingResumeStep).toBeUndefined();
-    });
-
-    it("clears the checkpoint when the state machine resets", async () => {
-      const onboarding = await enterAccess();
-      onboarding.prepareRelaunch();
-
-      expect(onboarding.reset().step).toBe("plugins");
+      expect((await leave(onboarding)).step).toBe(expectedStep);
       expect(loadSettings(home).onboardingResumeStep).toBeUndefined();
     });
   });

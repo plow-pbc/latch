@@ -11,12 +11,6 @@ export function singleFlight(blocked) {
   };
 }
 
-/** Persist setup's navigation intent before starting a process relaunch. */
-export async function relaunchAfterPreparingOnboarding(prepare, relaunch) {
-  await prepare();
-  await relaunch();
-}
-
 /** Only the newest request for one piece of state lands its answer: asking a
  * newer one retires every older snapshot, so a slow read can't paint over a
  * later write. Every caller still gets its answer. */

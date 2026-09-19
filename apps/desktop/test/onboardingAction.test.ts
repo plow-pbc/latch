@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — plain-JS renderer helper, shipped as-is.
-import {
-  latestOnly,
-  relaunchAfterPreparingOnboarding,
-  singleFlight,
-  whenAnswered,
-} from "../src/renderer/onboardingAction.js";
+import { latestOnly, singleFlight, whenAnswered } from "../src/renderer/onboardingAction.js";
 
 describe("onboarding renderer actions", () => {
   it("ignores a queued mutation until the first bridge call and redraw finish", async () => {
@@ -42,30 +37,6 @@ describe("onboarding renderer actions", () => {
     expect(calls).toBe(0);
     busy = false;
     expect(await run(async () => ++calls)).toBe(1);
-  });
-
-  it("persists the Access checkpoint before asking the app to relaunch", async () => {
-    const calls: string[] = [];
-    let finishPreparation = () => {};
-    const preparationFinished = new Promise<void>((resolve) => {
-      finishPreparation = resolve;
-    });
-
-    const relaunching = relaunchAfterPreparingOnboarding(
-      async () => {
-        calls.push("prepare");
-        await preparationFinished;
-      },
-      async () => {
-        calls.push("relaunch");
-      },
-    );
-
-    await Promise.resolve();
-    expect(calls).toEqual(["prepare"]);
-    finishPreparation();
-    await relaunching;
-    expect(calls).toEqual(["prepare", "relaunch"]);
   });
 
   // A focus refresh asked before a switch flips read the old switches: once

@@ -900,7 +900,6 @@ ipcMain.handle("onboarding:get", async () => onboarding?.state() ?? null);
 ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
 ipcMain.handle("onboarding:advance", async (_e, draft: unknown) => onboarding?.advance(draft));
 ipcMain.handle("onboarding:back", async () => onboarding?.back());
-ipcMain.handle("onboarding:prepareRelaunch", async () => onboarding?.prepareRelaunch());
 ipcMain.handle("onboarding:setTelemetry", async (_e, on: unknown) =>
   onboarding?.setTelemetryEnabled(on),
 );
@@ -1688,6 +1687,7 @@ ipcMain.handle("requirements:act", async (e, rawId: unknown) => {
 // A relaunch-pending requirement's button, and setup's "Relaunch to finish":
 // the same relaunch the simulated updater's install does.
 ipcMain.handle("app:relaunch", () => {
+  onboarding?.prepareRelaunch();
   app.relaunch();
   app.quit();
 });
