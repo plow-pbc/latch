@@ -598,7 +598,7 @@ async function startGrants() {
  * open-grant runner. Its id and label both come from the model. */
 async function repeatGrant(id) {
   const result = await actRequirement(id).catch(() => null);
-  if (result !== ACTION_IGNORED) missed = actionMiss(id, result);
+  if (result !== ACTION_IGNORED) missed = actionMiss(id, result, "repeat");
   render();
 }
 

@@ -31,17 +31,19 @@ export function grantAction({ act, setRunning }) {
 /** What an action result leaves for its row to explain. The same account can
  * remain met after another-account sign-in fails, so errors are independent
  * of the row's fresh status. */
-export function actionMiss(id, result) {
+export function actionMiss(id, result, kind = null) {
   if (result === ACTION_IGNORED) return null;
-  if (!result) return { id, error: null };
+  if (!result) return { id, error: null, ...(kind ? { kind } : {}) };
   const fresh = result.grants.find((grant) => grant.id === id);
-  return fresh?.status === "open" || result.error ? { id, error: result.error } : null;
+  return fresh?.status === "open" || result.error
+    ? { id, error: result.error, ...(kind ? { kind } : {}) }
+    : null;
 }
 
 /** A refresh can resolve a flow after its foreground action said it missed.
  * Keep the notice only while the fresh list still calls that row open. */
 export function clearMissed(missed, grants) {
-  return missed && grants.find((grant) => grant.id === missed.id)?.status !== "open"
+  return missed && missed.kind !== "repeat" && grants.find((grant) => grant.id === missed.id)?.status !== "open"
     ? null
     : missed;
 }

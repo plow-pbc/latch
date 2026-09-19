@@ -146,6 +146,21 @@ describe("a refreshed Access list", () => {
     expect(clearMissed(missed, [grant("fda"), grant("account:google", "met")])).toBeNull();
     expect(clearMissed(missed, [grant("fda"), grant("account:google")])).toEqual(missed);
   });
+
+  it("keeps a repeat failure on its met row until a successful retry clears it", () => {
+    const failed = actionMiss(
+      "account:google",
+      { grants: [grant("account:google", "met")], error: "Sign-in didn't finish." },
+      "repeat",
+    );
+
+    expect(failed).toEqual({ id: "account:google", error: "Sign-in didn't finish.", kind: "repeat" });
+    expect(clearMissed(failed, [grant("account:google", "met")])).toEqual(failed);
+    const missing = actionMiss("account:google", null, "repeat");
+    expect(missing).toEqual({ id: "account:google", error: null, kind: "repeat" });
+    expect(clearMissed(missing, [grant("account:google", "met")])).toEqual(missing);
+    expect(actionMiss("account:google", { grants: [grant("account:google", "met")], error: null }, "repeat")).toBeNull();
+  });
 });
 
 describe("the Access button", () => {
