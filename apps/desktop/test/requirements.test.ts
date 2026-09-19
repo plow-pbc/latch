@@ -11,11 +11,15 @@ import { actOnRequirement, type ActResult, type RequirementDeps } from "../src/r
 
 /** A Mac where Full Disk Access is (or is not) on, and Safari's write may
  *  fail. `mac` is what the acts leave behind. */
-function world(o: { fullDiskAccess?: boolean; safariFails?: string }) {
+function world(o: { fullDiskAccess?: boolean; safariFails?: string; connectFails?: string }) {
   const mac = { accounts: [] as string[], permissions: [] as string[], safari: false };
   const deps: RequirementDeps = {
     permission: async (key) => void mac.permissions.push(key),
-    connectAccount: async (id) => void mac.accounts.push(id),
+    connectAccount: async (id) => {
+      if (o.connectFails) return o.connectFails;
+      mac.accounts.push(id);
+      return null;
+    },
     fullDiskAccess: async () => o.fullDiskAccess ?? false,
     enableSafari: async () => {
       if (o.safariFails) throw new Error(o.safariFails);
@@ -30,6 +34,7 @@ const untouched: ReturnType<typeof world>["mac"] = { accounts: [], permissions: 
 describe("actOnRequirement", () => {
   it.each<[string, string, Parameters<typeof world>[0], ActResult, typeof untouched]>([
     ["an account", accountRequirementId("google"), {}, { error: null }, { ...untouched, accounts: ["google"] }],
+    ["an account that does not connect", accountRequirementId("google"), { connectFails: "Plow could not start Google sign-in." }, { error: "Plow could not start Google sign-in." }, untouched],
     ["a permission", "accessibility", {}, { error: null }, { ...untouched, permissions: ["accessibility"] }],
     [
       "Safari without Full Disk Access",

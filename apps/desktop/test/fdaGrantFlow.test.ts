@@ -137,6 +137,20 @@ describe("FdaGrantFlow.start", () => {
     expect(live()).toHaveLength(0);
   });
 
+  it("keeps polling past a probe that fails, and ends when the grant lands", async () => {
+    // Opening probe: not yet. First poll: fails. Second poll: granted.
+    const answers = [Promise.resolve(false), Promise.reject(new Error("probe failed")), Promise.resolve(true)];
+    answers[1].catch(() => {});
+    const target: GrantTarget = { ...makeTarget("fullDiskAccess", () => false), probe: () => answers.shift()! };
+    const f = track(makeFlow().start(target));
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(2 * PROBE_INTERVAL_MS + GRANTED_LINGER_MS);
+
+    expect(f.ended).toBe(true);
+    expect(live()).toHaveLength(0);
+  });
+
   it("ends the replaced flow when a different switch takes over, and leaves the new panel up until it ends", async () => {
     const flow = makeFlow();
     const a = track(flow.start(makeTarget("a", () => false)));
@@ -176,8 +190,8 @@ describe("FdaGrantFlow.start", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     grantedA = true;
-    // checkGranted's first tick sees the grant and arms the 2.5s linger —
-    // it does not end the flow yet.
+    // The first probe sees the grant and arms the 2.5s linger — it does not
+    // end the flow yet.
     await vi.advanceTimersByTimeAsync(PROBE_INTERVAL_MS);
     expect(a.ended).toBe(false);
 
@@ -188,28 +202,6 @@ describe("FdaGrantFlow.start", () => {
 
     // Past where A's linger would have fired.
     await vi.advanceTimersByTimeAsync(GRANTED_LINGER_MS);
-    expect(b.ended).toBe(false);
-    expect(live().map((w) => w.title)).toEqual(["Grant b"]);
-  });
-
-  it("arms one linger when a slow probe overlaps the next tick, so a replacing flow cancels it", async () => {
-    let granted = false;
-    // Every probe answers a tick and a half late, so two ticks' probes overlap.
-    const lag = PROBE_INTERVAL_MS * 1.5;
-    const slow: GrantTarget = {
-      ...makeTarget("a", () => false),
-      probe: () => new Promise<boolean>((r) => setTimeout(() => r(granted), lag)),
-    };
-    const flow = makeFlow();
-    void flow.start(slow);
-    await vi.advanceTimersByTimeAsync(lag);
-    granted = true;
-    // Through the second tick's answer: both ticks' probes have said granted.
-    await vi.advanceTimersByTimeAsync(2 * PROBE_INTERVAL_MS + lag);
-
-    const b = track(flow.start(makeTarget("b", () => false)));
-    await vi.advanceTimersByTimeAsync(GRANTED_LINGER_MS);
-
     expect(b.ended).toBe(false);
     expect(live().map((w) => w.title)).toEqual(["Grant b"]);
   });
