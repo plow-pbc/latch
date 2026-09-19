@@ -1469,6 +1469,11 @@ function entityMark(name, client = false) {
   return el("span", { class: `entity-mark${client ? " client" : ""}`, text });
 }
 
+/** An agent's Agent Index logo — a PNG data URL main checked — or null to draw its initial. */
+function logoMark(logo) {
+  return logo ? el("span", { class: "entity-mark logo" }, [el("img", { attrs: { src: logo, alt: "" } })]) : null;
+}
+
 function closeRosterConfirm(shell) {
   if (shell) closeModal(shell);
 }
@@ -1583,7 +1588,7 @@ function cloudEntityRow(agent, state, redraw) {
   message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId));
   const actions = [message].filter(Boolean);
   const row = el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent.agentId } }, [
-    entityMark(name),
+    logoMark(state.cloudAgentIndex?.[agent.provider]?.logo) ?? entityMark(name),
     main,
     actions.length ? el("div", { class: "entity-actions" }, actions) : null,
   ]);
@@ -1646,7 +1651,7 @@ function openDeployModal(trigger, s, redraw) {
   const grid = el("div", { class: "deploy-grid" }, cards.map((card) => {
     const button = el("button", { class: "deploy-card", attrs: { type: "button", "aria-pressed": "false" } }, [
       el("span", { class: "deploy-card-top" }, [
-        el("span", { class: "entity-mark", text: card.initial }),
+        logoMark(card.logo) ?? el("span", { class: "entity-mark", text: card.initial }),
         el("span", { class: "deploy-card-name", text: card.name }),
       ]),
       card.blurb ? el("span", { class: "deploy-card-blurb", text: card.blurb }) : null,

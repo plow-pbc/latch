@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AgentIndexEntry } from "../src/agentIndex.js";
 import { cloudProviderPickerViewModel, deployCards } from "../src/cloudAgentViewModel.js";
 
 describe("cloudProviderPickerViewModel", () => {
@@ -51,8 +52,8 @@ describe("cloudProviderPickerViewModel", () => {
 
 describe("deployCards", () => {
   const provider = (id: string, name: string) => ({ id, name, phrase: `Start ${name}` });
-  const entry = (users: number, extra: Partial<{ blurb: string | null; builder: string | null; successRate: number | null }> = {}) =>
-    ({ blurb: "Does a thing.", builder: "Sam", successRate: 88, users, ...extra });
+  const entry = (users: number, extra: Partial<Omit<AgentIndexEntry, "users">> = {}) =>
+    ({ blurb: "Does a thing.", builder: "Sam", successRate: 88, logo: null, users, ...extra });
 
   it("orders by people, then name, with undescribed agents last", () => {
     const cards = deployCards(
@@ -75,7 +76,7 @@ describe("deployCards", () => {
 
   it("gives an undescribed agent its name only", () => {
     expect(deployCards([provider("hermes", " hermes")], {})).toEqual([
-      { id: "hermes", name: " hermes", initial: "H", blurb: null, byline: "No description yet" },
+      { id: "hermes", name: " hermes", initial: "H", logo: null, blurb: null, byline: "No description yet" },
     ]);
   });
 

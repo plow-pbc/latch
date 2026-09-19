@@ -425,7 +425,7 @@ function availabilityScreen() {
         el("h1", { text: "Keep this Mac reachable" }),
         el("p", {
           class: "subhead",
-          text: "Your agents work through this Mac. When it's off, asleep, or Plow Latch isn't running, they can't reach your email, calendar, messages, or browser — they'll wait until it's back.",
+          text: "Your agents work through this Mac. When it's off, asleep, or Plow Latch isn't running, they can't reach your email, calendar, messages, or browser.",
         }),
       ]),
       el("div", { class: "data-consent" }, [
@@ -441,10 +441,6 @@ function availabilityScreen() {
           "Prevents idle and display sleep on power. On battery it sleeps normally, and closing the lid still sleeps it.",
         ),
       ]),
-      el("p", {
-        class: "subhead availability-note",
-        text: "Once setup is done, Plow Latch lives in your menu bar and closing its window doesn't quit it. Change either of these anytime in Settings → Availability.",
-      }),
     ]),
   ]);
 }

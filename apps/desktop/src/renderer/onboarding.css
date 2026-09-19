@@ -756,11 +756,6 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   line-height: 1.5;
 }
 
-.availability-note {
-  margin-top: 22px;
-  text-align: center;
-}
-
 .toggle-row + .toggle-row {
   margin-top: 14px;
 }
