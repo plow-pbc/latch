@@ -955,8 +955,10 @@ export async function renderVault(view, isCurrent = () => true) {
       const exchange = await window.domo.vaultExchangePending().catch(() => null);
       const requested = await window.domo.vaultImportRequested().catch(() => false);
       if (!alive()) return;
-      if (exchange) await openImport(exchange);
-      else if (requested && await openImport()) {
+      const mounted = exchange ? await openImport(exchange)
+        : requested ? await openImport()
+        : false;
+      if (requested && mounted) {
         await window.domo.vaultImportAcknowledged().catch(() => {});
       }
     } finally {

@@ -46,6 +46,7 @@ let sentUrls = null;
 /** The revision the form last sent with it. */
 let sentRevision = null;
 let importRequested = false;
+let pendingExchange = null;
 
 function seed(input) {
   const id = `item-${nextId++}`;
@@ -106,7 +107,7 @@ async function setUp() {
   ipcMain.handle("vault:deleteItem", async (_e, itemId) => {
     ciphers.delete(itemId);
   });
-  ipcMain.handle("vault:exchangePending", async () => null);
+  ipcMain.handle("vault:exchangePending", async () => pendingExchange);
   ipcMain.handle("vault:importRequested", async () => {
     return importRequested;
   });
@@ -136,6 +137,17 @@ async function setUp() {
 
 /** Each shot: how to get the screen into that state, and what must be on it. */
 const SCREENS = [
+  {
+    name: "onboarding-exchange",
+    openImport: true,
+    openExchange: true,
+    prepare: async (win) => {
+      if (importRequested) throw new Error("Exchange did not acknowledge the coexisting onboarding import");
+      const sheets = await win.webContents.executeJavaScript(`document.querySelectorAll(".overlay.show").length`);
+      if (sheets !== 1) throw new Error(`Exchange and onboarding opened ${sheets} import sheets`);
+    },
+    expect: ["Ready to import", "Exchange login", "1 login from Apple Passwords"],
+  },
   {
     name: "onboarding-import",
     openImport: true,
@@ -382,6 +394,22 @@ app.whenReady().then(async () => {
     screens: SCREENS,
     load: async (fixture) => {
       importRequested = fixture.openImport === true;
+      pendingExchange = fixture.openExchange === true ? {
+        source: "Apple Passwords",
+        items: [{
+          title: "Exchange login",
+          username: "owner@example.com",
+          url: "https://example.com",
+          hasPassword: true,
+          hasTotp: false,
+          warnings: [],
+          duplicate: false,
+          changed: [],
+        }],
+        skipped: [],
+        vaults: [],
+        ticket: 42,
+      } : null;
       await win.loadFile(path.join(dist, "renderer/index.html"));
       // Wait for the LIST, not merely for the pane: the tab now paints its
       // masthead and an "Opening the vault…" row before it reads the vault, so
