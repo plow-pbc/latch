@@ -297,4 +297,76 @@ describe("FdaGrantFlow.start", () => {
     flow.stop();
     await expect(pB).resolves.toBe(false);
   });
+
+  it("shares one outcome and builds one panel for a same-switch double call before the probe resolves", async () => {
+    const deps = makeDeps();
+    const target = makeTarget("fullDiskAccess", () => false);
+    const flow = new FdaGrantFlow(deps);
+
+    // No await between these two calls: both hit start() while the first
+    // one's probe is still in flight and no panel exists yet.
+    const p1 = flow.start(target);
+    const p2 = flow.start(target);
+    expect(p2).toBe(p1);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeWindow.instances).toHaveLength(1);
+
+    flow.stop();
+    await expect(p1).resolves.toBe(false);
+    await expect(p2).resolves.toBe(false);
+    expect(FakeWindow.instances[0].isDestroyed()).toBe(true);
+  });
+
+  it("builds no panel when stopped while the initial probe is still in flight", async () => {
+    const deps = makeDeps();
+    let resolveProbe!: (granted: boolean) => void;
+    const target: GrantTarget = {
+      key: "fullDiskAccess",
+      label: "Full Disk Access",
+      pane: "pane",
+      acceptsDrop: true,
+      probe: () => new Promise<boolean>((resolve) => { resolveProbe = resolve; }),
+    };
+    const flow = new FdaGrantFlow(deps);
+
+    const startPromise = flow.start(target);
+    flow.stop();
+    await expect(startPromise).resolves.toBe(false);
+
+    // The probe finally resolves, long after the flow was dismissed.
+    resolveProbe(false);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(FakeWindow.instances).toHaveLength(0);
+
+    // The flow is left clean: starting the same switch again works normally.
+    const target2 = makeTarget("fullDiskAccess", () => false);
+    const again = flow.start(target2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeWindow.instances).toHaveLength(1);
+    flow.stop();
+    await expect(again).resolves.toBe(false);
+  });
+
+  it("resolves false, and builds no panel, when the probe rejects", async () => {
+    const deps = makeDeps();
+    const target: GrantTarget = {
+      key: "fullDiskAccess",
+      label: "Full Disk Access",
+      pane: "pane",
+      acceptsDrop: true,
+      probe: async () => {
+        throw new Error("probe boom");
+      },
+    };
+    const flow = new FdaGrantFlow(deps);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await flow.start(target);
+
+    expect(result).toBe(false);
+    expect(FakeWindow.instances).toHaveLength(0);
+    consoleError.mockRestore();
+  });
 });
