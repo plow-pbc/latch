@@ -91,7 +91,7 @@ export async function previewRow(
   return reviewOperation(row.operation, typeof draft === "string" ? draft : "", deps);
 }
 
-export async function reviewOperation(
+async function reviewOperation(
   operation: Operation,
   agentPurpose: string,
   deps: PreviewDeps,
