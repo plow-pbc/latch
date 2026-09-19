@@ -200,13 +200,13 @@ export function onboardingFixtures(now) {
         ...base,
         step: "welcome",
         message:
-          "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
+          "Signed out on this Mac. Plow could not be reached to revoke the session — Plow Latch revokes it the next time this Mac signs in, or revoke it now in Plow's account settings.",
       },
       cloud: noAgents,
       expect: [
         "Signed out on this Mac",
         "Plow could not be reached to revoke the session",
-        "revoke it in Plow's account settings",
+        "Plow Latch revokes it the next time this Mac signs in",
       ],
       expectFocus: "Get started",
     },
