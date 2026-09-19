@@ -127,6 +127,34 @@ export function permissionTitle(key: string): string {
   return app ? `Automation for ${app.name}` : (PERMISSION_TITLES[key] ?? key);
 }
 
+/** Full Disk Access as a plugin's sandboxed run sees it. */
+export type FullDiskState = "off" | "granted" | "relaunch" | "broken";
+
+/**
+ * Full Disk Access over one run of the app. A grant the app gains while it
+ * runs (fresh, or a remove-and-re-add) reaches its children only after a
+ * relaunch; one it has held all run that a child still cannot use (a
+ * signature change) needs the Settings row's remove-and-re-add. Telling the
+ * two apart takes remembering whether the app has seen it off this run —
+ * which is all this holds.
+ */
+export class FullDiskWatch {
+  private seenOff: boolean;
+
+  constructor(onAtLaunch: boolean) {
+    this.seenOff = !onAtLaunch;
+  }
+
+  observe(appGranted: boolean, inherited: boolean): FullDiskState {
+    if (!appGranted) {
+      this.seenOff = true;
+      return "off";
+    }
+    if (inherited) return "granted";
+    return this.seenOff ? "relaunch" : "broken";
+  }
+}
+
 /**
  * Where each switch lives, as the deep link System Settings answers. The
  * panel flow opens the pane and floats beside it; whether the pane also
