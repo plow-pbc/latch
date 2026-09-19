@@ -160,6 +160,30 @@ pluginsFreshFixture.prepare = async (win) => {
 const doneAgentFixture = SCREENS.find((fixture) => fixture.name === "done-agent");
 doneAgentFixture.prepare = async (win) => {
   finishDestination = null;
+  const geometry = await win.webContents.executeJavaScript(`(() => {
+    const box = (selector) => {
+      const rect = document.querySelector(selector)?.getBoundingClientRect();
+      return rect && { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width, height: rect.height };
+    };
+    return {
+      request: box(".finish-request"), gate: box(".finish-gate"),
+      vault: box(".finish-vault"), browser: box(".finish-browser"),
+      requestLine: box(".finish-request-line"), secretLine: box(".finish-secret-line"),
+    };
+  })()`);
+  const { request, gate, vault, browser, requestLine, secretLine } = geometry;
+  if (!request || !gate || !vault || !browser || !requestLine || !secretLine) {
+    throw new Error("Final page is missing a browser-cutaway region");
+  }
+  if (request.bottom > gate.top + 1 || vault.top <= gate.bottom || browser.top <= gate.bottom) {
+    throw new Error(`Final page crossed the Gatekeeper beam: ${JSON.stringify(geometry)}`);
+  }
+  if (vault.right > browser.left || secretLine.left < vault.right - 1 || secretLine.right > browser.left + 1) {
+    throw new Error(`Vault, password line, and browser overlap: ${JSON.stringify(geometry)}`);
+  }
+  if (requestLine.width > 1.5 || secretLine.height > 1.5) {
+    throw new Error(`Final page connectors are not straight: ${JSON.stringify(geometry)}`);
+  }
   const focused = await win.webContents.executeJavaScript(
     `document.activeElement?.textContent.trim() ?? ""`,
   );

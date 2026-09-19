@@ -23,6 +23,11 @@ export function onboardingFixtures(now) {
     cloudAgentsError: null,
     cloudAgents: [{ agentId: "agent_elm", name: "Elm", canMessage: true }],
   };
+  const amazonBrowserExample = {
+    id: "amazon-refund",
+    prompt: "Amazon overcharged me for a solar panel—can you get a refund?",
+    site: "Amazon",
+  };
   // The Plugins tab's state as main answers it (pluginsModel.ts): the shipped
   // plugins as staged, then the browser, and the ordered grants setup walks.
   const fullDisk = {
@@ -541,41 +546,56 @@ export function onboardingFixtures(now) {
       state: { ...base, step: "done" },
       cloud: elm,
       plugins: browserReady,
+      browserExample: amazonBrowserExample,
       expect: [
-        "Put your passwords to work",
-        "Import passwords so your agents can securely sign in and get things done in your browser.",
-        "Reconcile bank deposits and catch payment problems.",
-        "Negotiate and verify an Amazon credit.",
-        "Arrange follow-up care through Kaiser.",
-        "Cancel Hipcamp bookings before their refund deadlines.",
+        "Your agent asks. Plow signs in.",
+        "Latch takes care of logging in, so your agent never sees your passwords.",
+        "Amazon overcharged me for a solar panel—can you get a refund?",
+        "Gatekeeper",
+        "Browser Vault",
+        "Amazon",
+        "Signed in",
         "Import passwords",
-        "Text Elm",
         "Not now",
       ],
+      reject: [
+        "Reconcile bank deposits",
+        "Negotiate and verify an Amazon credit",
+        "Arrange follow-up care",
+        "Cancel Hipcamp bookings",
+        "Text Elm",
+      ],
+      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
     },
     {
       name: "done-noagent",
       state: { ...base, step: "done" },
       cloud: noAgents,
       plugins: browserReady,
-      expect: ["Put your passwords to work", "Import passwords", "Not now"],
+      browserExample: amazonBrowserExample,
+      expect: ["Your agent asks. Plow signs in.", "Amazon overcharged me for a solar panel—can you get a refund?", "Import passwords", "Not now"],
       reject: ["Text Elm"],
+      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
     },
     {
       name: "done-browser-off",
       state: { ...base, step: "done" },
       cloud: noAgents,
       plugins: onlyWiki,
-      expect: ["Put your passwords to work", "Enable Browser & import passwords", "Not now"],
+      browserExample: amazonBrowserExample,
+      expect: ["Your agent asks. Plow signs in.", "Enable Browser & import passwords", "Not now"],
       reject: ["Text Elm"],
+      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
     },
     {
       name: "done-browser-loading",
       state: { ...base, step: "done" },
       cloud: noAgents,
       pluginsPending: true,
-      expect: ["Put your passwords to work", "Import passwords", "Not now"],
+      browserExample: amazonBrowserExample,
+      expect: ["Your agent asks. Plow signs in.", "Import passwords", "Not now"],
       reject: ["Text Elm", "Enable Browser & import passwords"],
+      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
     },
   ];
 }

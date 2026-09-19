@@ -35,4 +35,17 @@ describe("onboarding visual fixtures", () => {
     const presets = gatekeeperPresets();
     for (const f of withGatekeeper) expect(f.gatekeeper.presets, f.name).toEqual(presets);
   });
+
+  it("gives every Done fixture the same display-safe browser example", () => {
+    const done = fixtures.filter((f) => f.state?.step === "done");
+    expect(done).toHaveLength(4);
+    for (const f of done) {
+      expect(f.browserExample).toEqual({
+        id: "amazon-refund",
+        prompt: "Amazon overcharged me for a solar panel—can you get a refund?",
+        site: "Amazon",
+      });
+      expect(f.expectAriaLabel).toBe("Agents including Claude, OpenAI, and Cursor");
+    }
+  });
 });
