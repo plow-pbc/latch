@@ -1440,7 +1440,14 @@ function grantTargetFor(key: string): GrantTarget | null {
   const label = permissionTitle(key);
   const probes = device?.hostProbes ?? null;
   const probe = async (): Promise<boolean> => {
-    if (key === "full_disk_access") return probeFullDiskAccess();
+    // Done once a child can use it (the Settings row's own answer), or once
+    // it arrives during this run, which a relaunch finishes. On at launch but
+    // not inherited, the panel stays up for the row's remove-and-re-add.
+    if (key === "full_disk_access") {
+      if (!(await probeFullDiskAccess())) return false;
+      if (!fullDiskAccessAtLaunch) return true;
+      return (await device!.hostInventory({ automationTargets: [] })).child_attribution.status === "ok";
+    }
     if (!probes) return false;
     if (app) return (await probes.automationStatus(app.bundleId)) === "granted";
     if (key === "accessibility" || key === "contacts" || key === "calendars" || key === "screen_recording") {
