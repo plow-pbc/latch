@@ -31,21 +31,26 @@ export function grantAction({ act, setRunning }) {
 /** What an action result leaves for its row to explain. The same account can
  * remain met after another-account sign-in fails, so errors are independent
  * of the row's fresh status. */
-export function actionMiss(id, result, kind = null) {
+export function actionMiss(id, result, kind = null, baseline = null) {
   if (result === ACTION_IGNORED) return null;
-  if (!result) return { id, error: null, ...(kind ? { kind } : {}) };
+  if (!result) return { id, error: null, ...(kind ? { kind } : {}), ...(typeof baseline === "number" ? { progress: baseline } : {}) };
   const fresh = result.grants.find((grant) => grant.id === id);
+  const progress = kind === "repeat" ? baseline ?? fresh?.progress : fresh?.progress ?? baseline;
   return fresh?.status === "open" || result.error
-    ? { id, error: result.error, ...(kind ? { kind } : {}) }
+    ? { id, error: result.error, ...(kind ? { kind } : {}), ...(typeof progress === "number" ? { progress } : {}) }
     : null;
 }
 
 /** A refresh can resolve a flow after its foreground action said it missed.
  * Keep the notice only while the fresh list still calls that row open. */
 export function clearMissed(missed, grants) {
-  return missed && missed.kind !== "repeat" && grants.find((grant) => grant.id === missed.id)?.status !== "open"
-    ? null
-    : missed;
+  const fresh = grants.find((grant) => grant.id === missed?.id);
+  if (missed?.kind === "repeat") {
+    return typeof missed.progress === "number" && typeof fresh?.progress === "number" && fresh.progress > missed.progress
+      ? null
+      : missed;
+  }
+  return missed && fresh?.status !== "open" ? null : missed;
 }
 
 /**
@@ -66,6 +71,7 @@ export async function runGrants({ act, getState, stillHere }, skipped) {
     if (!next || grants.some((g) => g.status === "relaunch")) return null;
     const result = await act(next.id).catch(() => null);
     if (!stillHere()) return null;
+    if (result === ACTION_IGNORED) return null;
     const missed = actionMiss(next.id, result);
     if (missed) return missed;
   }

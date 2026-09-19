@@ -1609,6 +1609,12 @@ function connectedAccountIds(): string[] {
   return (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [];
 }
 
+/** The count, rather than an account identity, is enough for setup to tell a
+ * newly added account from a same-account reauthorization. */
+function connectedAccountProgress(): Record<string, number> {
+  return { google: connectors?.state().google.accounts.length ?? 0 };
+}
+
 /** The whole tab, fresh: what is staged, what each plugin still needs, and
  *  the one ordered list of it setup walks. A permission is met when Settings'
  *  own Permissions section reads it granted — one answer, so the two tabs
@@ -1633,6 +1639,7 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
       description: device?.pluginDescription(p.manifest.name) ?? null,
     })),
     connectedAccounts: connectedAccountIds(),
+    accountProgress: connectedAccountProgress(),
     grantedPermissions: granted,
     relaunchPending,
   });

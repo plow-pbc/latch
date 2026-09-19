@@ -9,9 +9,10 @@ import { ACTION_IGNORED, accessPrimary, actionMiss, clearMissed, grantAction, ru
 interface Grant {
   id: string;
   status: "open" | "met" | "relaunch";
+  progress?: number;
 }
 
-const grant = (id: string, status: Grant["status"] = "open"): Grant => ({ id, status });
+const grant = (id: string, status: Grant["status"] = "open", progress?: number): Grant => ({ id, status, ...(progress === undefined ? {} : { progress }) });
 
 /** "warn": the grant lands, but the act still has something to say. */
 type Outcome = "met" | "relaunch" | "miss" | "warn" | "throw";
@@ -76,6 +77,24 @@ describe("the Access run", () => {
     // nothing reads as running once the run ends.
     expect(result.runningDuringAct).toEqual(expected.walked);
     expect(result.runningAfter).toBeNull();
+  });
+
+  it("stops cleanly when the serialized action ignores its entry", async () => {
+    let calls = 0;
+    let state = { grants: [grant("fda"), grant("safari")] };
+    const result = await runGrants({
+      act: async () => {
+        calls += 1;
+        if (calls === 1) return ACTION_IGNORED;
+        state = { grants: [] };
+        return { ...state, error: null };
+      },
+      getState: () => state,
+      stillHere: () => true,
+    }, new Set());
+
+    expect(result).toBeNull();
+    expect(calls).toBe(1);
   });
 });
 
@@ -160,6 +179,27 @@ describe("a refreshed Access list", () => {
     expect(missing).toEqual({ id: "account:google", error: null, kind: "repeat" });
     expect(clearMissed(missing, [grant("account:google", "met")])).toEqual(missing);
     expect(actionMiss("account:google", { grants: [grant("account:google", "met")], error: null }, "repeat")).toBeNull();
+  });
+
+  it("clears a repeat failure only when its model progress advances", () => {
+    const failed = actionMiss(
+      "account:google",
+      { grants: [grant("account:google", "met", 1)], error: "Sign-in didn't finish." },
+      "repeat",
+      1,
+    );
+
+    expect(failed).toEqual({ id: "account:google", error: "Sign-in didn't finish.", kind: "repeat", progress: 1 });
+    expect(clearMissed(failed, [grant("account:google", "met", 1)])).toEqual(failed);
+    expect(clearMissed(failed, [grant("account:google", "met", 2)])).toBeNull();
+    const advancedBeforeActionAnswered = actionMiss(
+      "account:google",
+      { grants: [grant("account:google", "met", 2)], error: "Sign-in didn't finish." },
+      "repeat",
+      1,
+    );
+    expect(advancedBeforeActionAnswered).toMatchObject({ progress: 1 });
+    expect(clearMissed(advancedBeforeActionAnswered, [grant("account:google", "met", 2)])).toBeNull();
   });
 });
 

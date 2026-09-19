@@ -64,8 +64,17 @@ describe("pluginRows status", () => {
 it("names an unmet account requirement with the action that fixes it, then gives its met row a model-owned repeat action", () => {
   const requirements = (connected: string[]) =>
     pluginRows(build({ requires: { accounts: ["google"] }, enabled: true, connected }))[0]!.requirements;
-  expect(requirements([])).toEqual([{ ...google, status: "open" }]);
-  expect(requirements(["google"])).toEqual([{ ...google, status: "met", repeatAction: "Add another" }]);
+  expect(requirements([])).toEqual([{ ...google, status: "open", progress: 0 }]);
+  expect(requirements(["google"])).toEqual([{ ...google, status: "met", repeatAction: "Add another", progress: 1 }]);
+});
+
+it("carries an account requirement's model progress across successive account snapshots", () => {
+  const requirement = (count: number) => pluginRows({
+    ...build({ requires: { accounts: ["google"] }, enabled: true, connected: count ? ["google"] : [] }),
+    accountProgress: { google: count },
+  })[0]!.requirements[0]!;
+
+  expect([0, 1, 2, 3].map((count) => requirement(count).progress)).toEqual([0, 1, 2, 3]);
 });
 
 it.each([
@@ -92,7 +101,7 @@ it("reads a permission waiting on a relaunch as unmet, with the relaunch as its 
 it("keeps a disabled plugin's status off, but still lists its requirements — hiding them is the tab's business", () => {
   const [row] = pluginRows(build({ requires: { accounts: ["google"] }, enabled: false }));
   expect(row!.status).toBe("off");
-  expect(row!.requirements).toEqual([{ ...google, status: "open" }]);
+  expect(row!.requirements).toEqual([{ ...google, status: "open", progress: 0 }]);
 });
 
 it("carries its skill's description", () => {

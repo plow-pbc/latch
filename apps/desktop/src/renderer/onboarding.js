@@ -597,8 +597,9 @@ async function startGrants() {
 /** A met requirement can offer another action without restarting Access's
  * open-grant runner. Its id and label both come from the model. */
 async function repeatGrant(id) {
+  const baseline = pluginsState?.grants.find((grant) => grant.id === id)?.progress;
   const result = await actRequirement(id).catch(() => null);
-  if (result !== ACTION_IGNORED) missed = actionMiss(id, result, "repeat");
+  if (result !== ACTION_IGNORED) missed = actionMiss(id, result, "repeat", baseline);
   render();
 }
 

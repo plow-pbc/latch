@@ -33,6 +33,9 @@ export interface Requirement {
   /** An optional model-owned action that remains useful after this
    *  requirement is met, such as connecting another account. */
   repeatAction?: string;
+  /** Model-owned progress for a repeatable requirement. Account requirements
+   *  carry their connected-account count; permissions carry none. */
+  progress?: number;
   /** "relaunch": granted, but only a relaunch lets this app's children
    *  inherit it — the button relaunches rather than acting. */
   status: "open" | "met" | "relaunch";
@@ -62,6 +65,9 @@ export interface PluginsInput {
   plugins: { manifest: PluginManifest; enabled: boolean; description?: string | null }[];
   /** Connector ids the owner has connected, e.g. "google". */
   connectedAccounts: string[];
+  /** Per-connector account counts, used to tell a later account from a
+   *  same-account reauthorization without exposing account identities. */
+  accountProgress?: Record<string, number>;
   /** Permission keys this Mac's inventory reads as granted. */
   grantedPermissions: string[];
   /** Permission keys granted during this run that a relaunch will finish. */
@@ -94,7 +100,7 @@ function permissionRequirement(key: string, met: boolean, relaunch: boolean): Re
 
 /** `ACCOUNT_IDS` in manifest.ts is `{google}` only, so the fixed Google
  *  title and copy are right for every account requirement today. */
-function accountRequirement(id: string, met: boolean): Requirement {
+function accountRequirement(id: string, met: boolean, progress: number): Requirement {
   return {
     id: accountRequirementId(id),
     title: "Google account",
@@ -102,6 +108,7 @@ function accountRequirement(id: string, met: boolean): Requirement {
     action: "Connect Google",
     waiting: "Finish signing in with Google in your browser.",
     done: "Connected",
+    progress,
     status: met ? "met" : "open",
     ...(met ? { repeatAction: "Add another" } : {}),
   };
@@ -121,7 +128,7 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
   return input.plugins.map(({ manifest, enabled, description }) => {
     const requirements: Requirement[] = [
       ...manifest.requires.permissions.map((key) => permissionRequirement(key, granted.has(key), pending.has(key))),
-      ...manifest.requires.accounts.map((id) => accountRequirement(id, accounts.has(id))),
+      ...manifest.requires.accounts.map((id) => accountRequirement(id, accounts.has(id), input.accountProgress?.[id] ?? (accounts.has(id) ? 1 : 0))),
     ];
     return {
       name: manifest.name,
