@@ -8,14 +8,14 @@ function openGrants(grants, skipped) {
 
 /**
  * Each open grant's flow in list order, one at a time, reading from the fresh
- * state whether it landed. `act(id)` answers with that state plus `error`;
- * `setRunning` is told the id whose flow is running, then null. Resolves with
- * the grant that did not land ({ id, error }) — a throw is a miss like any
- * other — or null once nothing is left, once the owner left the step, or once
- * a grant waits on a relaunch: until then this app's children can't use it,
- * so a later flow (Safari's write) would only fail.
+ * state whether it landed. `act(id)` shows that state and answers with it plus
+ * `error`; `setRunning` is told the id whose flow is running, then null.
+ * Resolves with the grant that did not land ({ id, error }) — a throw is a
+ * miss like any other — or null once nothing is left, once the owner left the
+ * step, or once a grant waits on a relaunch: until then this app's children
+ * can't use it, so a later flow (Safari's write) would only fail.
  */
-export async function runGrants({ act, getState, setState, stillHere, setRunning }, skipped) {
+export async function runGrants({ act, getState, stillHere, setRunning }, skipped) {
   for (;;) {
     const { grants } = getState();
     const next = openGrants(grants, skipped)[0];
@@ -25,7 +25,6 @@ export async function runGrants({ act, getState, setState, stillHere, setRunning
     setRunning(null);
     if (!stillHere()) return null;
     if (!result) return { id: next.id, error: null };
-    setState(result);
     const fresh = result.grants.find((g) => g.id === next.id);
     if (fresh?.status === "open") return { id: next.id, error: result.error };
   }

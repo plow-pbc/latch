@@ -3,7 +3,7 @@
    persistent shell. The page is sandboxed and receives no Node primitives. */
 
 import { el, icon, switchEl } from "./dom.js";
-import { singleFlight } from "./onboardingAction.js";
+import { latestOnly, singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { accessPrimary, runGrants } from "./onboardingGrants.js";
@@ -341,15 +341,17 @@ function verifyScreen() {
 
 const onPluginStep = () => state?.step === "plugins" || state?.step === "access";
 
-/** A plugins answer that lands after setup left both steps is dropped. */
-function showPlugins(next) {
+/** Every plugins answer — a refresh, a switch, a grant's act — lands here.
+ * One older than an answer already shown is dropped (a focus refresh must not
+ * undo a switch), and so is one that lands after setup left both steps. */
+const showPlugins = latestOnly((next) => {
   if (!onPluginStep()) return;
   pluginsState = next;
   render();
-}
+});
 
 async function refreshPlugins() {
-  showPlugins(await window.domo.pluginsGet());
+  await showPlugins(() => window.domo.pluginsGet());
 }
 
 /** Access's one button: the list's flows in order; a grant that did not land
@@ -357,11 +359,8 @@ async function refreshPlugins() {
 async function startGrants() {
   missed = null; // the run's first redraw must not still show the last miss
   missed = await runGrants({
-    act: (id) => window.domo.requirementsAct(id),
+    act: (id) => showPlugins(() => window.domo.requirementsAct(id)),
     getState: () => pluginsState,
-    setState: (next) => {
-      pluginsState = next;
-    },
     stillHere: () => state?.step === "access",
     setRunning: (id) => {
       running = id;
@@ -458,7 +457,7 @@ function pluginRow(row) {
   box.checked = row.status !== "off";
   box.addEventListener("change", async () => {
     restoreFocus = box.id;
-    showPlugins(await window.domo.pluginsSetEnabled(row.name, box.checked));
+    await showPlugins(() => window.domo.pluginsSetEnabled(row.name, box.checked));
   });
   const tags = row.requirements.length
     ? row.requirements.map((req) => req.status === "met"

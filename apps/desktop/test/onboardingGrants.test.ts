@@ -1,7 +1,8 @@
 /* Setup's Access run (onboardingGrants.js) over a fake bridge: which grant
    flows the owner is walked through, where a miss stops the run, and what the
-   one button says. The act answers with the fresh list, as main's
-   requirements:act does; whether a grant landed is read from that list. */
+   one button says. The act shows the fresh list and answers with it, as
+   onboarding.js's does over main's requirements:act; whether a grant landed
+   is read from that answer. */
 import { describe, expect, it } from "vitest";
 import { accessPrimary, runGrants } from "../src/renderer/onboardingGrants.js";
 
@@ -29,13 +30,10 @@ function run(grants: Grant[], outcomes: Record<string, Outcome> = {}, skipped: s
       if (id === leaveOn) here = false;
       const how = outcomes[id] ?? "met";
       if (how === "throw") throw new Error("the bridge went away");
-      const next = state.grants.map((g) => (g.id !== id || how === "miss" ? g : { ...g, status: how }));
-      return { grants: next, error: how === "miss" ? "Sign-in didn't finish." : null };
+      state = { grants: state.grants.map((g) => (g.id !== id || how === "miss" ? g : { ...g, status: how })) };
+      return { ...state, error: how === "miss" ? "Sign-in didn't finish." : null };
     },
     getState: () => state,
-    setState: (next: { grants: Grant[] }) => {
-      state = next;
-    },
     stillHere: () => here,
     setRunning: (id: string | null) => {
       running = id;
