@@ -207,8 +207,8 @@ export interface TelemetryDeps {
   /** Signed-in account uid, or "" — the distinct id when present, matching
    * how the Plow API server keys its events. */
   accountUid: () => string;
-  /** Values that must never leave this Mac (the relay credential). Read per
-   * event: it changes on sign-in/out. */
+  /** Values that must never leave this Mac (active or pending relay
+   * credentials). Read per event: sign-in/out moves between them. */
   secrets: () => string[];
   /** The owner's real home directory, redacted from error text. */
   ownerHome: string;

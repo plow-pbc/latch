@@ -53,8 +53,9 @@ run_probe() {
 }
 
 # --- Probes ---------------------------------------------------------------------
-# SECRETS: never print relayCredential, privateKeyBase64, or Authorization
-# values — presence/length only. deviceId first 8 chars; accountUid last 3.
+# SECRETS: never print active/pending relay credentials, privateKeyBase64, or
+# Authorization values — presence/count/length only. deviceId first 8 chars;
+# accountUid last 3.
 
 probe_app_bundle() {
   [[ -d "$LATCH_APP" ]] || { PROBE_EVIDENCE="$LATCH_APP not installed"; return 1; }
@@ -74,7 +75,7 @@ probe_settings() {
   local f="$APP_SUPPORT/app/settings.json"
   [[ -f "$f" ]] || { PROBE_EVIDENCE="missing — open Plow Latch.app to activate"; return 1; }
   command -v jq >/dev/null 2>&1 || { PROBE_EVIDENCE="jq missing — cannot verify"; return 1; }
-  local mode cred_len uid3
+  local mode cred_len pending_count uid3
   if ! mode=$(jq -r '.approvalMode // "adversarial"' "$f" 2>/dev/null); then
     PROBE_EVIDENCE="settings.json unreadable (bad JSON)"
     return 1
@@ -92,11 +93,12 @@ probe_settings() {
     cred_field="relayCredential"
   fi
   uid3=$(jq -r '.accountUid // "" | tostring | .[-3:]' "$f")
+  pending_count=$(jq -r '(((.pendingRevokeCredentialsEnc // []) | length) + ((.pendingRevokeCredentials // []) | length))' "$f")
   if (( cred_len == 0 )); then
-    PROBE_EVIDENCE="no relayCredentialEnc or relayCredential — Mac not signed in"
+    PROBE_EVIDENCE="no relayCredentialEnc or relayCredential — Mac not signed in · pending revokes=$pending_count"
     return 1
   fi
-  PROBE_EVIDENCE="approvalMode=$mode · $cred_field present ($cred_len chars) · account …$uid3"
+  PROBE_EVIDENCE="approvalMode=$mode · $cred_field present ($cred_len chars) · pending revokes=$pending_count · account …$uid3"
   return 0
 }
 

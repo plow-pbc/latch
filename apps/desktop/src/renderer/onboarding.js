@@ -6,7 +6,6 @@ import { el, icon, switchEl } from "./dom.js";
 import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
-import { verifyIdlePresentation } from "./onboardingVerify.js";
 import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
 import { accessPrimary, clearMissed, runGrants } from "./onboardingGrants.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
@@ -472,9 +471,9 @@ function startActivationCountdown(node, until) {
 
 function verifyScreen() {
   const activation = state.activation;
-  const idle = !activation
-    ? verifyIdlePresentation({ busy: state.busy, message: state.message })
-    : null;
+  const idle = activation ? null : state.busy
+    ? { kind: "loading", text: "Getting a code from Plow…", action: null }
+    : { kind: state.message ? "failure" : "idle", text: state.message, action: "Try again" };
   const parts = [
     el("div", { class: "head-center" }, [
       el("h1", { text: "Verify your phone to connect this Mac" }),

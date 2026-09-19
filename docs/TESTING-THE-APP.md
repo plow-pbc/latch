@@ -183,11 +183,13 @@ DOMO_HOME=/tmp/plow-latch-local DOMO_API_BASE_URL=http://localhost:4242 npx elec
 **Reset to first-run state.** State lives under `DOMO_HOME` (default
 `~/Library/Application Support/Plow-Latch-<branch>` under `just`). With no `relayCredential` in
 `app/settings.json` the app is behind the login gate: the Set Up window is the only window there
-is, and there is no main window until the wizard's last button hands over:
+is, and there is no main window until the wizard's last button hands over. To reset a real dev
+home, sign out in Latch, leave it open until the pending revoke completes, then use the guarded
+clean recipe. It refuses to delete active or pending credentials, so retry it after Plow recovers:
 
 ```bash
 DOMO_HOME=$(mktemp -d) just app                                    # a clean first run; real state untouched, except ~/Plow (created deliberately — the playground is the owner's)
-rm ~/Library/Application\ Support/Plow-Latch-<branch>/app/settings.json  # or reset the real one
+just clean                                                        # refuses active or pending credentials
 ```
 
 `just` recipes default `DOMO_HOME` to this checkout's `Plow-Latch-<branch>` home — your *real* dev one.

@@ -17,6 +17,7 @@ import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { chatPeople, chatRowTitle, usableChatDisplayName } from "./chatRows.js";
 import { PRESET_TEXT } from "./gatekeeperPreview.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
+import { queuePendingRevoke } from "./settingsActions.js";
 
 /**
  * The verification sub-steps retain their existing mechanics. A successful
@@ -146,6 +147,8 @@ export interface OnboardingDeps {
   home: string;
   /** (Re)start the relay from stored settings. */
   startRelay: () => Promise<void>;
+  /** Wake the one main-process executor for credentials queued to retire. */
+  wakePendingRevokes: () => void;
   /** Names this Mac in the activation request. */
   deviceName: string;
   /** Once per entry from Privacy: turn off every plugin that can't work yet, so the switches start on only what works. */
@@ -482,10 +485,11 @@ export class Onboarding {
       // re-evaluated on the far side of one rather than read once at the top.
       const keep = () =>
         secret === this.activationSecret && !this.settings().relayCredential.trim();
-      // A verified token this Mac will not keep is revoked best-effort. The
-      // redeem answers once, so it must not simply be dropped here.
+      // A verified token this Mac will not keep enters the same durable queue
+      // as sign-out. The redeem answers once, so it must not be held only in
+      // this stack frame or handed to a second network owner.
       if (result.status === "verified" && result.token && !keep()) {
-        await this.deps.api.revokeDeviceCredential(result.token).catch(() => {});
+        this.retireSession(result.token);
       }
       if (result.status === "verified" && result.token && keep()) {
         this.cancelPolling();
@@ -640,27 +644,38 @@ export class Onboarding {
     // login — reset or a fresh mint — so it is the epoch to
     // check against after each network step.
     //
-    // A sign-out landing inside it takes the session with it. The session is
-    // revoked best-effort, the same contract sign-out keeps.
+    // Persist the one-shot token BEFORE another network call. If account lookup
+    // fails, the active credential remains recoverable on relaunch; if sign-out
+    // lands inside the lookup, its queue-first path captures this stored token.
     const epoch = this.pollGeneration;
-    const info = await this.deps.api.relayInfo(sessionToken);
-    if (epoch !== this.pollGeneration) {
-      await this.deps.api.revokeDeviceCredential(sessionToken).catch(() => {});
-      return;
+    const accepted = this.settings();
+    accepted.relayCredential = sessionToken;
+    accepted.accountUid = "";
+    accepted.mcpUrl = "";
+    this.save(accepted);
+    this.deps.applyAvailabilityDefault?.();
+    let info;
+    try {
+      info = await this.deps.api.relayInfo(sessionToken);
+    } catch (error) {
+      // A clean failure can recover in-process: move the accepted token from
+      // active storage into the durable retirement queue, so Try again is free
+      // to keep the next one. A crash still leaves the active copy recoverable.
+      this.retireSession(sessionToken, true);
+      throw error;
     }
+    if (epoch !== this.pollGeneration) return;
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
     const settings = this.settings();
-    settings.relayCredential = sessionToken;
+    if (settings.relayCredential !== sessionToken) return;
     settings.accountUid = info.uid;
-    settings.mcpUrl = "";
     // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
     // phone — the number that takes an activation text, not one anyone can be
     // told to text afterwards to get a chat. The cloud-agents screen names the
     // lines the account's own chats run on, which is the only source that
     // cannot be wrong.
     this.save(settings);
-    this.deps.applyAvailabilityDefault?.();
 
     // The activation is spent and dropped. Everything here is derived from
     // the save above; none of it needs the socket to be up.
@@ -672,6 +687,19 @@ export class Onboarding {
     this.noteKind = "error";
     this.step = "privacy";
     this.telemetryEnabled = settings.telemetryEnabled;
+  }
+
+  private retireSession(sessionToken: string, clearIfActive = false): void {
+    const settings = this.settings();
+    queuePendingRevoke(settings, sessionToken);
+    if (clearIfActive && settings.relayCredential === sessionToken) {
+      settings.relayCredential = "";
+      settings.relayCredentialEnc = undefined;
+      settings.accountUid = "";
+      settings.mcpUrl = "";
+    }
+    this.save(settings);
+    this.deps.wakePendingRevokes();
   }
 
   // MARK: plumbing

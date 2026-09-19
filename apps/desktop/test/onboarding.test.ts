@@ -11,7 +11,7 @@ import {
 } from "../src/onboarding.js";
 import { PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
-import { signOutOfPlow } from "../src/settingsActions.js";
+import { PendingRevokeRetrier, queueRevokeAndSignOut, signOutOfPlow } from "../src/settingsActions.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
@@ -122,6 +122,12 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
         // Production leaves registration failures on RelayClient's backoff.
         return;
       }
+    },
+    wakePendingRevokes: () => {
+      void new PendingRevokeRetrier(
+        home,
+        (token) => plow.revokeDeviceCredential(token),
+      ).start();
     },
     deviceName: "Plow Latch (test)",
     applyPluginDefault: async () => {},
@@ -1177,7 +1183,32 @@ describe("signing out", () => {
 });
 
 describe("while the credential handoff is in the air", () => {
-  it("keeps the verified session when a new-code request lands during relayInfo", async () => {
+  it("retires a failed handoff durably and lets Try again keep the next session", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    plow.relayInfo = async () => {
+      throw new PlowApiError("network", "Plow unavailable");
+    };
+    const onboarding = build();
+
+    await onboarding.advance();
+    await settle();
+
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+    expect(onboarding.state().message).toBe("Plow isn’t responding right now.");
+
+    const nextSession = "plow_ACTIVATIONsession_retry";
+    plow.relayInfo = async (token: string) => {
+      expect(token).toBe(nextSession);
+      return { uid: "u_123" };
+    };
+    plow.redeems = [{ status: "verified", token: nextSession }];
+    await onboarding.newActivationCode();
+    await settleUntil(() => onboarding.state().step === "privacy");
+    expect(loadSettings(home).relayCredential).toBe(nextSession);
+  });
+
+  it("persists availability defaults before a verified session can be interrupted", async () => {
     let release = () => {};
     const inAir = new Promise<void>((resolve) => {
       release = resolve;
@@ -1188,10 +1219,13 @@ describe("while the credential handoff is in the air", () => {
       await inAir;
       return original(token);
     };
-    const onboarding = build();
+    let defaultsApplied = 0;
+    const onboarding = build({ applyAvailabilityDefault: () => { defaultsApplied += 1; } });
     await onboarding.advance();
     await settle();
     expect(onboarding.state().busy).toBe(true);
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(defaultsApplied).toBe(1);
 
     plow.redeems = [{ status: "pending" }];
     const during = await onboarding.newActivationCode();
@@ -1221,9 +1255,10 @@ describe("while the credential handoff is in the air", () => {
     await onboarding.advance();
     await settle();
 
-    signOutOfPlow(home);
+    queueRevokeAndSignOut(home);
     onboarding.reset();
     release();
+    await new PendingRevokeRetrier(home, (token) => plow.revokeDeviceCredential(token)).start();
     await settle();
 
     // Nothing is persisted, the session is retired best-effort, and the

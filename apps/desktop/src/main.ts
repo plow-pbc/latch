@@ -100,12 +100,10 @@ import {
 import {
   isSignedIn,
   PendingRevokeRetrier,
-  PENDING_REVOKE_RETRY_DELAYS_MS,
   readAgentPurpose,
   readInference,
   setAgentPurpose,
-  retireUnretiredSession,
-  revokeAndSignOut,
+  queueRevokeAndSignOut,
   setApprovalMode,
   signOutOfPlow,
 } from "./settingsActions.js";
@@ -657,22 +655,17 @@ ipcMain.handle("settings:getRelay", async () => {
   };
 });
 /**
- * Forget this Mac's credential and put the user back at the start.
+ * Put every in-memory account surface back at the signed-out start.
  *
  * Nobody clicked anything on the relay's `onAuthFailed` path or on
  * `signInAgainIfOldKey`: the credential is already retired on the account, so
  * there is nothing to revoke and the window has to be OPENED — otherwise the app
  * sits silently disconnected with no way forward but quitting.
  *
- * `signOutOfPlow` rather than blanking the fields inline: losing the Plow
- * credential takes the Plow reviewer with it, and retiring Adversarial mode is
- * part of that same write.
+ * Callers clear settings first, either as an ordinary auth failure or as the
+ * atomic queue-and-clear transition for explicit sign-out.
  */
-function signOut() {
-  // `signOutOfPlow` rather than blanking the fields inline: losing the Plow
-  // credential takes the Plow reviewer with it, and retiring Adversarial mode
-  // is part of that same write.
-  signOutOfPlow(home);
+function resetSignedOutRuntime() {
   onboarding?.reset();
   connectors?.signedOut();
   // Connect-a-client holds the old account's state too — possibly a shown-once
@@ -689,11 +682,15 @@ function signOut() {
   return onboarding?.state();
 }
 
+function signOut() {
+  signOutOfPlow(home);
+  return resetSignedOutRuntime();
+}
+
 /**
- * Sign out: retire the credential with Plow, forget it here, and drop the
- * socket. The first revoke attempt is best-effort — see `revokeAndSignOut` —
- * so a Mac that cannot reach Plow still signs out locally while the durable
- * background queue keeps retiring the server session.
+ * Sign out: forget the credential here, queue its retirement, and drop the
+ * socket. A Mac that cannot reach Plow still signs out locally while the
+ * background retrier keeps retiring the server session.
  *
  * Two callers: the Settings button, and the roster's own row for this Mac.
  * Revoking that row as an ordinary key would leave the credential on disk, the
@@ -709,22 +706,14 @@ async function signOutThisMac(): Promise<void> {
   // Before the credential is cleared, so the event still keys on the account
   // that is signing out rather than the anonymous install id.
   telemetry?.track("signed_out");
-  // Started first: it clears the stored credential synchronously, before its
-  // own first await, so everything below already sees a signed-out Mac.
-  const revoking = revokeAndSignOut(home, (credential) =>
-    new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
-  );
+  // One atomic write clears the login and makes the remote cleanup durable.
+  queueRevokeAndSignOut(home);
+  void pendingRevokeRetrier?.start();
   // The one place that resets the app's state, shared with the relay's
   // auth-failed path. It also drops connect-a-client's shown-once credential,
   // which a click has exactly as much reason to clear as a revocation does.
-  signOut();
+  resetSignedOutRuntime();
   await startRelay();
-  // Nothing about remote cleanup belongs on the signed-out setup screen. If
-  // the immediate attempt loses a race with an outage, the encrypted queue is
-  // durable and this background flight owns the remaining process budget.
-  void revoking.then((retired) => {
-    if (!retired) void pendingRevokeRetrier?.start(PENDING_REVOKE_RETRY_DELAYS_MS.slice(1));
-  });
 }
 
 ipcMain.handle("settings:signOut", async () => signOutThisMac());
@@ -2120,9 +2109,14 @@ async function startRelay(): Promise<void> {
       // Logged, so a 409 here lands in plow-wire.log.
       const api = new PlowApi(apiBaseUrl, loggingFetch(home));
       let registered;
+      let accountUid: string | undefined;
       try {
-        // Clears a session an earlier offline sign-out couldn't reach.
-        await retireUnretiredSession(home, api);
+        // A prior offline sign-out gets one immediate retirement attempt before
+        // its still-live session can block this registration with a 409.
+        await pendingRevokeRetrier?.start();
+        accountUid = loadSettings(home).accountUid.trim()
+          ? undefined
+          : (await api.relayInfo(credential)).uid;
         registered = await api.registerRelayDevice(credential, deviceId, hostName());
       } catch (error) {
         if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
@@ -2137,6 +2131,7 @@ async function startRelay(): Promise<void> {
       const latest = loadSettings(home);
       if (latest.relayCredential.trim() !== credential) return;
       latest.mcpUrl = registered.mcpUrl;
+      if (accountUid) latest.accountUid = accountUid;
       saveSettings(home, latest);
     },
     serve: (request, auth) => server.fetch(request, auth),
@@ -2246,9 +2241,12 @@ app.whenReady().then(async () => {
       },
       enabled: () => telemetryMaySend(loadSettings(home)),
       accountUid: () => loadSettings(home).accountUid,
-      // The relay credential is the one secret this process holds in a string;
-      // read per event because it changes on sign-in/out.
-      secrets: () => [loadSettings(home).relayCredential],
+      // Active and pending relay credentials are the secrets this process
+      // holds in strings; read per event because sign-in/out moves between them.
+      secrets: () => {
+        const settings = loadSettings(home);
+        return [settings.relayCredential, ...settings.pendingRevokeCredentials];
+      },
       ownerHome: os.homedir(),
       baseProps: {
         app_version: app.getVersion(),
@@ -2452,12 +2450,11 @@ app.whenReady().then(async () => {
       mainWindow?.webContents.send("connectors:changed", state);
     },
   });
-  // Keep asking while connected: an account connected or disconnected outside
-  // this app (Plow hands agents a connect link), or a refresh that failed, must
-  // not leave a plugin that needs one in the wrong state until the next
-  // reconnect. The poll is quiet and publishes only a changed list.
+  // The app's existing heartbeat refreshes connected accounts and gives any
+  // offline sign-out another revoke attempt. Both passes are quiet.
   setInterval(() => {
     if (connected) void connectors?.poll();
+    void pendingRevokeRetrier?.start();
   }, 60_000);
   await startRelay();
 
@@ -2465,6 +2462,7 @@ app.whenReady().then(async () => {
     api: new PlowApi(apiBaseUrl),
     home,
     startRelay,
+    wakePendingRevokes: () => { void pendingRevokeRetrier?.start(); },
     deviceName: `Plow Latch (${hostName()})`,
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
     // The Availability screen's defaults. keepAwake exists by the time any

@@ -319,6 +319,7 @@ audit:
 # is this branch's "Plow-Latch-<branch>" home, never another checkout's and
 # never the packaged install's plain "Plow-Latch".
 clean:
+    node scripts/assert-home-cleanable.mjs "{{apphome}}"
     rm -rf "{{apphome}}"
     @echo "wiped {{apphome}}"
 

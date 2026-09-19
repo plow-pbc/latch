@@ -12,11 +12,6 @@
 #                                                            app never migrated)
 #   /tmp/plow-latch-<branch> (and pre-rename /tmp/domo-<branch>)  (evidence screenshots)
 #
-# What it cannot do: revoke this worktree's relay credential. Sign-out only
-# forgets the credential locally — revocation needs the account's own key
-# list, which this Mac deliberately cannot reach (apps/desktop/src/main.ts).
-# Deleting the home orphans the device registration on the relay; retire it
-# from the account console if it matters.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,6 +28,14 @@ branch=$(sh scripts/worktree-name.sh --branch)
 appsupport="$HOME/Library/Application Support"
 echo "cleaning up worktree '$name'…"
 
+# Check every settings-bearing home before deleting any of them. A pending
+# token is the only way an offline sign-out can finish revoking its session.
+node scripts/assert-home-cleanable.mjs \
+  "$appsupport/Plow-Latch-$branch" \
+  "$appsupport/Plow-Latch-$branch-local" \
+  "$appsupport/Domo-$branch" \
+  "$appsupport/Domo-$branch-local"
+
 # The production-facing home ("Plow-Latch-<branch>"). Unset the overrides so
 # `clean` resolves to this branch's default home, not wherever the caller's
 # environment happens to point.
@@ -48,6 +51,4 @@ echo "wiped $appsupport/Plow-Latch-$branch-local"
 echo "wiped /tmp/plow-latch-$branch"
 
 echo ""
-echo "Worktree '$name' state is gone. If this worktree had signed in, its"
-echo "relay credential is now orphaned — revoke the device from the account"
-echo "console if you want it retired server-side."
+echo "Worktree '$name' state is gone."

@@ -140,15 +140,10 @@ export interface Settings {
   pendingRevokeCredentials: string[];
   /** Individually sealed pending-revoke credentials that could not be read on
    * this load. Keeping each ciphertext separate lets a newly queued sign-out
-   * be appended without replacing an older seal while the Keychain is locked.
-   * A legacy settings file may contain one string; `loadSettings` normalises
-   * that old shape before returning. */
+   * be appended without replacing an older seal while the Keychain is locked. */
   pendingRevokeCredentialsEnc?: string[];
   /** The account this Mac is signed into. */
   accountUid: string;
-  /** The key_prefixes (public identifiers, not secrets) of sessions this Mac
-   * signed out of but could not retire — see `retireUnretiredSession`. */
-  unretiredKeyPrefixes?: string[];
   /** This installation's server-authored MCP endpoint. */
   mcpUrl: string;
   /** The last-selected main-window tab, restored across launches.
@@ -282,16 +277,13 @@ export function loadSettings(home: string): Settings {
   for (const key of retiredKeys) delete settings[key];
 
   const loaded = { ...defaults, ...settings };
-  const pendingWasLegacySeal = typeof settings.pendingRevokeCredentialsEnc === "string";
   const plaintextPendingOnDisk = Array.isArray(settings.pendingRevokeCredentials) &&
     settings.pendingRevokeCredentials.some(
       (value) => typeof value === "string" && value.trim() !== "",
     );
   // The encrypted field wins where it exists. A decrypt that fails is treated
-  // as signed out rather than as a crash, and the unreadable value is cleared
-  // below along with the account-local display state.
-  // 0 users; a session that can't be revoked idles out in 180 days; revisit
-  // when there's a fleet.
+  // as signed out rather than as a crash; its opaque seal joins the revocation
+  // queue below so a temporarily locked Keychain can recover it later.
   const sealed = typeof loaded.relayCredentialEnc === "string" ? loaded.relayCredentialEnc : "";
   let unreadableSeal = false;
   if (sealed) {
@@ -303,13 +295,12 @@ export function loadSettings(home: string): Settings {
       loaded.mcpUrl = "";
     }
   }
-  const pendingSeals = typeof loaded.pendingRevokeCredentialsEnc === "string"
-    ? [loaded.pendingRevokeCredentialsEnc]
-    : Array.isArray(loaded.pendingRevokeCredentialsEnc)
-      ? loaded.pendingRevokeCredentialsEnc.filter(
-          (value): value is string => typeof value === "string" && value.trim() !== "",
-        )
-      : [];
+  const pendingSeals = Array.isArray(loaded.pendingRevokeCredentialsEnc)
+    ? loaded.pendingRevokeCredentialsEnc.filter(
+        (value): value is string => typeof value === "string" && value.trim() !== "",
+      )
+    : [];
+  if (unreadableSeal) pendingSeals.push(sealed);
   const pendingCredentials = Array.isArray(loaded.pendingRevokeCredentials)
     ? loaded.pendingRevokeCredentials.filter(
         (value): value is string => typeof value === "string" && value.trim() !== "",
@@ -321,21 +312,8 @@ export function loadSettings(home: string): Settings {
     try {
       if (!pendingCodec) throw new Error("credential codec unavailable");
       const plain = pendingCodec.decrypt(pendingSeal);
-      // Before ciphertexts became independently appendable, the whole queue
-      // was one sealed JSON array. Accept both formats during the migration.
-      let decoded: unknown = plain;
-      try {
-        decoded = JSON.parse(plain) as unknown;
-      } catch {}
-      if (Array.isArray(decoded)) {
-        pendingCredentials.push(...decoded.filter(
-          (value): value is string => typeof value === "string" && value.trim() !== "",
-        ));
-      } else if (typeof decoded === "string" && decoded.trim() !== "") {
-        pendingCredentials.push(decoded);
-      } else {
-        throw new Error("pending revoke seal has no credential");
-      }
+      if (!plain.trim()) throw new Error("pending revoke seal has no credential");
+      pendingCredentials.push(plain);
     } catch {
       // Unlike the active login, an unreadable pending revoke does not gate
       // the app. Preserve its exact bytes so a temporarily locked Keychain can
@@ -363,7 +341,7 @@ export function loadSettings(home: string): Settings {
   // disk. Decoding it for the caller must remain a read, not synchronously
   // re-encrypt and fsync settings on every hot-path `loadSettings` call.
   const pendingNeedsSealing =
-    (pendingWasLegacySeal || plaintextPendingOnDisk) && active !== null;
+    plaintextPendingOnDisk && active !== null;
   if (retired || needsSealing || pendingNeedsSealing || unreadableSeal) {
     saveSettings(home, loaded);
   }
@@ -394,9 +372,7 @@ export function saveSettings(home: string, settings: Settings): void {
     ? settings.pendingRevokeCredentialsEnc.filter(
         (value): value is string => typeof value === "string" && value.trim() !== "",
       )
-    : typeof settings.pendingRevokeCredentialsEnc === "string"
-      ? [settings.pendingRevokeCredentialsEnc]
-      : [];
+    : [];
   const newlySealed: string[] = [];
   const pendingInClear: string[] = [];
   for (const pendingCredential of pendingCredentials) {

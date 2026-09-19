@@ -11,11 +11,15 @@
  */
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 import { InferenceStatus, inferenceStatus } from "./reviewPolicy.js";
-import { PlowApi, PlowApiError } from "./plowApi.js";
+import { PlowApiError } from "./plowApi.js";
 
-/** One process's retry budget. The queue itself survives after this budget and
- * is tried again on the next launch or successful relay connection. */
-export const PENDING_REVOKE_RETRY_DELAYS_MS = [0, 5_000, 30_000, 120_000, 600_000] as const;
+export function queuePendingRevoke(settings: Settings, credential: string): void {
+  const pending = credential.trim();
+  if (!pending) return;
+  if (!settings.pendingRevokeCredentials.includes(pending)) {
+    settings.pendingRevokeCredentials.push(pending);
+  }
+}
 
 function forgetPendingRevoke(home: string, credential: string): void {
   update(home, (s) => {
@@ -23,78 +27,30 @@ function forgetPendingRevoke(home: string, credential: string): void {
   });
 }
 
-/** Retire every queued session without ever handing its credential to the UI.
- * A 401 means the credential is already unusable, which is the desired end
- * state. Other failures consume this process's bounded retry budget and leave
- * the queue on disk for a later launch. */
-export async function retryPendingRevokes(
-  home: string,
-  revoke: (credential: string) => Promise<unknown>,
-  options: {
-    delaysMs?: readonly number[];
-    wait?: (delayMs: number) => Promise<void>;
-    warnOnExhausted?: boolean;
-  } = {},
-): Promise<boolean> {
-  const delays = options.delaysMs ?? PENDING_REVOKE_RETRY_DELAYS_MS;
-  const wait = options.wait ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
-  const warnOnExhausted = options.warnOnExhausted ?? true;
-
-  for (const delayMs of delays) {
-    if (delayMs > 0) await wait(delayMs);
-    const pending = [...loadSettings(home).pendingRevokeCredentials];
-    if (pending.length === 0) return true;
-
-    for (const credential of pending) {
-      try {
-        await revoke(credential);
-        forgetPendingRevoke(home, credential);
-      } catch (error) {
-        if (error instanceof PlowApiError && error.kind === "unauthorized") {
-          forgetPendingRevoke(home, credential);
-        }
-      }
-    }
-  }
-
-  if (loadSettings(home).pendingRevokeCredentials.length === 0) return true;
-  if (warnOnExhausted) console.warn("[settings] pending session revoke retries exhausted");
-  return false;
-}
-
-/** One retry owner per app process. Launch, sign-out, and relay recovery can
- * all ask for a flush; they share the same flight so no credential is sent by
- * two overlapping loops. */
+/** One immediate pass over the durable queue. Callers provide the cadence:
+ * launch, sign-out, relay recovery, and main's existing one-minute heartbeat.
+ * Overlapping callers share one flight. */
 export class PendingRevokeRetrier {
-  private flight: Promise<boolean> | null = null;
-  private requestedDelays: readonly number[] | null = null;
+  private flight: Promise<void> | null = null;
 
   constructor(
     private readonly home: string,
     private readonly revoke: (credential: string) => Promise<unknown>,
-    private readonly wait: (delayMs: number) => Promise<void> =
-      (delayMs) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)),
   ) {}
 
-  start(delaysMs: readonly number[] = PENDING_REVOKE_RETRY_DELAYS_MS): Promise<boolean> {
-    // A request arriving during the final snapshot of an existing flight may
-    // represent a credential that flight has never seen. Remember one follow-
-    // up schedule; later triggers can coalesce into it, but none are dropped.
-    this.requestedDelays = delaysMs;
+  start(): Promise<void> {
     if (this.flight) return this.flight;
     const current = (async () => {
-      let retired = true;
-      while (this.requestedDelays) {
-        const requestedDelays = this.requestedDelays;
-        this.requestedDelays = null;
-        retired = await retryPendingRevokes(this.home, this.revoke, {
-          delaysMs: requestedDelays,
-          wait: this.wait,
-          warnOnExhausted: false,
-        });
+      for (const credential of [...loadSettings(this.home).pendingRevokeCredentials]) {
+        try {
+          await this.revoke(credential);
+          forgetPendingRevoke(this.home, credential);
+        } catch (error) {
+          if (error instanceof PlowApiError && error.kind === "unauthorized") {
+            forgetPendingRevoke(this.home, credential);
+          }
+        }
       }
-      if (!retired) console.warn("[settings] pending session revoke retries exhausted");
-      return retired;
     })();
     const wrapped = current.finally(() => {
       if (this.flight === wrapped) this.flight = null;
@@ -120,6 +76,15 @@ export function readInference(home: string): InferenceStatus {
 /** What the owner wrote about what agents are for. Empty until they write it. */
 export function readAgentPurpose(home: string): string {
   return loadSettings(home).agentPurpose ?? "";
+}
+
+function clearPlowSession(settings: Settings): void {
+  settings.relayCredential = "";
+  settings.relayCredentialEnc = undefined;
+  settings.accountUid = "";
+  settings.mcpUrl = "";
+  settings.setupComplete = false;
+  settings.onboardingResumeStep = undefined;
 }
 
 /**
@@ -151,18 +116,7 @@ export function setAgentPurpose(home: string, purpose: unknown): string {
  * their back on sign-out was never the honest way to say so.
  */
 export function signOutOfPlow(home: string): void {
-  update(home, (s) => {
-    s.relayCredential = "";
-    s.relayCredentialEnc = undefined;
-    s.accountUid = "";
-    s.mcpUrl = "";
-    s.setupComplete = false;
-    s.onboardingResumeStep = undefined;
-  });
-}
-
-function forgetUnretired(home: string, retired: readonly string[]): void {
-  update(home, (s) => (s.unretiredKeyPrefixes = s.unretiredKeyPrefixes?.filter((p) => !retired.includes(p))));
+  update(home, clearPlowSession);
 }
 
 /**
@@ -181,77 +135,17 @@ export function isSignedIn(home: string): boolean {
 }
 
 /**
- * Sign out: forget the credential here, and ask Plow to retire it.
+ * Sign out locally and retain the credential only in the retirement queue.
  *
- * LOCAL FIRST, and synchronously, before this function's first `await`. Erasing
- * the on-disk copy is the only half the app can guarantee on its own; revoking
- * is a network round-trip. Putting the round-trip in front would make "signed
- * out" depend on reaching a server, and a Mac that cannot reach Plow is the one
- * whose owner most wants the local copy gone.
- *
- * The immediate revoke is best effort. Offline, API down, route not deployed,
- * any error at all: the local clear has already happened, and the retiring
- * credential stays encrypted in the pending queue. A background retrier owns
- * the remaining process budget; launch and relay recovery try the durable queue
- * again, so quitting mid-flight does not lose the work.
- *
- * `revoke` is injected for one reason: it is what makes "sign-out always clears
- * locally, even when the revoke fails" executable by a test. `main.ts` cannot
- * be imported under vitest, so that property is only provable while this lives
- * here.
+ * The network executor is deliberately elsewhere. This atomic disk mutation
+ * makes sign-out immediate; the shared retrier runs right after it and again
+ * from launch, relay recovery, and the app heartbeat.
  */
-export async function revokeAndSignOut(
-  home: string,
-  revoke: (credential: string) => Promise<unknown>,
-): Promise<boolean> {
-  let credential = "";
+export function queueRevokeAndSignOut(home: string): void {
   update(home, (s) => {
-    credential = (s.relayCredential ?? "").trim();
-    if (credential && !s.pendingRevokeCredentials.includes(credential)) {
-      s.pendingRevokeCredentials.push(credential);
-    }
-    s.relayCredential = "";
-    s.relayCredentialEnc = undefined;
-    s.accountUid = "";
-    s.mcpUrl = "";
-    s.setupComplete = false;
-    s.onboardingResumeStep = undefined;
+    queuePendingRevoke(s, s.relayCredential);
+    clearPlowSession(s);
   });
-  if (!credential) return true;
-  try {
-    await revoke(credential);
-    forgetPendingRevoke(home, credential);
-    return true;
-  } catch (error) {
-    if (error instanceof PlowApiError && error.kind === "unauthorized") {
-      forgetPendingRevoke(home, credential);
-      return true;
-    }
-    console.warn("[settings] session revoke pending; will retry");
-    return false;
-  }
-}
-
-/**
- * Retire every session `revokeAndSignOut` recorded but couldn't reach — Plow
- * refuses to register this Mac's device to a new session while an old one is
- * still live (409). Errors propagate: the relay client's own backoff retries
- * `beforeConnect`, and the records stay on disk for that retry.
- */
-export async function retireUnretiredSession(
-  home: string,
-  api: Pick<PlowApi, "listApiKeys" | "revokeApiKey">,
-): Promise<void> {
-  const settings = loadSettings(home);
-  const prefixes = settings.unretiredKeyPrefixes ?? [];
-  const credential = (settings.relayCredential ?? "").trim();
-  if (!prefixes.length || !credential) return;
-  const keys = await api.listApiKeys(credential);
-  for (const key of keys) {
-    if (key.is_active && key.key_prefix && prefixes.includes(key.key_prefix)) await api.revokeApiKey(credential, key.id);
-  }
-  // Only this account's keys are listed; another account's prefix waits for it.
-  forgetUnretired(home, prefixes.filter((prefix) => keys.some((key) => key.key_prefix === prefix)));
 }
 
 /**
