@@ -537,7 +537,7 @@ function grantRow(grant) {
   if (grant.met) {
     control = el("span", { class: "item-chip" }, [
       icon("checkmark", { strokeWidth: "1.7" }),
-      document.createTextNode("Granted"),
+      document.createTextNode(grant.done),
     ]);
   } else if (grant.relaunch) {
     line = statusLine("done", "Granted: relaunch to finish");
