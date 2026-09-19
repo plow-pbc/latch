@@ -97,6 +97,12 @@ export class FdaGrantFlow {
   private height = PANEL_HEIGHT;
   /** Where System Settings last was, so a height change can re-snap. */
   private lastSettingsFrame: Rect | null = null;
+  /** Whether the current flow's grant has landed, read by stop() when it settles the outcome. */
+  private granted = false;
+  /** Resolves the current flow's outcome; stop() is the only place that calls it. */
+  private settle: ((granted: boolean) => void) | null = null;
+  /** The current flow's outcome, returned to every caller pointing at the same panel. */
+  private outcome: Promise<boolean> | null = null;
 
   constructor(private readonly deps: FdaGrantFlowDeps) {}
 
@@ -111,20 +117,25 @@ export class FdaGrantFlow {
    * re-opens the pane and keeps the one panel — PermissionFlow keeps a single
    * floating panel for the same reason. A click for a DIFFERENT switch while
    * one is up ends that flow and starts this one: one panel, one switch.
+   *
+   * Resolves when the flow ENDS — granted (or already there), dismissed,
+   * timed out, or replaced by a different switch — with whether the grant
+   * landed. A second call pointing at the same switch while its panel is up
+   * returns that same pending outcome rather than starting a new one.
    */
-  async start(target: GrantTarget = this.deps.fullDisk): Promise<void> {
+  async start(target: GrantTarget = this.deps.fullDisk): Promise<boolean> {
     if (this.panel && this.target && this.target.key !== target.key) this.stop();
     this.target = target;
     // The deep link (re-)fronts System Settings; with a tracker running that
     // is also what brings an existing panel back on screen.
     void this.deps.openSettings(target.pane);
-    if (this.panel) return;
+    if (this.panel) return this.outcome!;
     // Already granted: nothing to guide. The pane still opens — that's where
     // the grant is viewed or revoked — but a panel asking for what is already
     // given would only confuse. (Re-checked after the await: a second click
     // may have built the panel while the probe ran.)
-    if (await target.probe()) return;
-    if (this.panel) return;
+    if (await target.probe()) return true;
+    if (this.panel) return this.outcome!;
 
     const workArea = screen.getPrimaryDisplay().workArea;
     this.height = PANEL_HEIGHT;
@@ -132,6 +143,10 @@ export class FdaGrantFlow {
     const bounds = fallbackPanelFrame(workArea, {
       width: FALLBACK_PANEL_WIDTH,
       height: this.height,
+    });
+    this.granted = false;
+    this.outcome = new Promise<boolean>((resolve) => {
+      this.settle = resolve;
     });
     const panel = new BrowserWindow({
       ...bounds,
@@ -191,6 +206,7 @@ export class FdaGrantFlow {
 
     this.probeTimer = setInterval(() => void this.checkGranted(), PROBE_INTERVAL_MS);
     this.timeoutTimer = setTimeout(() => this.stop(), FLOW_TIMEOUT_MS);
+    return this.outcome;
   }
 
   stop(): void {
@@ -206,6 +222,12 @@ export class FdaGrantFlow {
     const panel = this.panel;
     this.panel = null;
     if (panel && !panel.isDestroyed()) panel.destroy();
+    const settle = this.settle;
+    const granted = this.granted;
+    this.settle = null;
+    this.outcome = null;
+    this.granted = false;
+    settle?.(granted);
   }
 
   /**
@@ -301,6 +323,7 @@ export class FdaGrantFlow {
   private async checkGranted(): Promise<void> {
     const target = this.target;
     if (!target || !(await target.probe())) return;
+    this.granted = true;
     // Let the panel's own poll paint the granted state, then leave.
     if (this.probeTimer) clearInterval(this.probeTimer);
     this.probeTimer = null;
