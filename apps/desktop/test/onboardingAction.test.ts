@@ -39,12 +39,13 @@ describe("onboarding renderer actions", () => {
     expect(await run(async () => ++calls)).toBe(1);
   });
 
-  // A focus refresh asked before a switch flips can answer after it: the
-  // older answer must not overwrite the newer one on screen.
+  // A focus refresh asked before a switch flips read the old switches: once
+  // the switch is asked, the refresh's answer never reaches the screen,
+  // whichever answers first.
   it.each([
-    ["a newer answer landing first keeps an older one off the screen", ["write", "read"], ["write"]],
-    ["answers landing in order both show, newest last", ["read", "write"], ["read", "write"]],
-  ])("%s", async (_name, order, shown) => {
+    ["the newer answering first", ["write", "read"]],
+    ["the older answering first", ["read", "write"]],
+  ])("shows only the newest request's answer, %s", async (_name, order) => {
     const landed: string[] = [];
     const show = latestOnly((answer: string) => landed.push(answer));
     const release: Record<string, () => void> = {};
@@ -55,7 +56,7 @@ describe("onboarding renderer actions", () => {
       release[name]!();
       await asked[name as keyof typeof asked];
     }
-    expect(landed).toEqual(shown);
+    expect(landed).toEqual(["write"]);
     // Each caller still gets its own answer, shown or not.
     expect([await asked.read, await asked.write]).toEqual(["read", "write"]);
   });
