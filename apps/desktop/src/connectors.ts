@@ -40,7 +40,7 @@ export interface ConnectorsDeps {
   openExternal: (url: string) => Promise<void>;
   recordAudit: (event: string, fields: Record<string, string>) => void;
   onChange?: () => void;
-  wait?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  wait?: (milliseconds: number) => Promise<void>;
 }
 
 type ConnectorAction = {
@@ -55,6 +55,8 @@ export class Connectors {
   private notice: Pick<ConnectorsState, "message" | "noteKind"> = { message: "", noteKind: "error" };
   private connecting = false;
   private accounts: ConnectorAccount[] = [];
+  /** The first successful connector snapshot is a baseline, not an event. */
+  private hydrated = false;
   private generation = 0;
   private actionAbort: AbortController | null = null;
 
@@ -97,11 +99,10 @@ export class Connectors {
     }
     if (generation !== this.generation) return;
     const accounts = overview.google.accounts.map((account) => ({ ...account }));
-    if (JSON.stringify(accounts) === JSON.stringify(this.accounts)) return;
-    const knownEmails = new Set(this.accounts.map((account) => account.email));
-    const newEmails = accounts
-      .map((account) => account.email)
-      .filter((email) => !knownEmails.has(email));
+    const changed = JSON.stringify(accounts) !== JSON.stringify(this.accounts);
+    const newEmails = this.hydrated ? addedAccountEmails(this.accounts, accounts) : [];
+    this.hydrated = true;
+    if (!changed) return;
     this.accounts = accounts;
     if (newEmails.length > 0) {
       if (
@@ -139,7 +140,7 @@ export class Connectors {
         elapsed += CONNECTOR_POLL_INTERVAL_MS
       ) {
         try {
-          await this.wait(CONNECTOR_POLL_INTERVAL_MS, action, pollingSignal);
+          await this.wait(CONNECTOR_POLL_INTERVAL_MS, action);
         } catch (error) {
           this.assertCurrent(action);
           if (pollingDeadline.aborted) break;
@@ -154,7 +155,7 @@ export class Connectors {
           if (pollingDeadline.aborted) break;
           throw error;
         }
-        const connected = connectedAccount(before, after);
+        const [connected] = addedAccountEmails(before.google.accounts, after.google.accounts);
         if (connected) {
           this.deps.recordAudit("connector_connected", {
             provider: "google",
@@ -201,6 +202,7 @@ export class Connectors {
     this.actionAbort?.abort();
     this.actionAbort = null;
     this.accounts = [];
+    this.hydrated = false;
     this.notice = { message: "", noteKind: "error" };
     this.busy = false;
     this.connecting = false;
@@ -259,6 +261,7 @@ export class Connectors {
     const overview = await this.deps.api.listConnectors(credential, signal);
     this.assertCurrent(action);
     this.accounts = overview.google.accounts.map((account) => ({ ...account }));
+    this.hydrated = true;
     this.publish();
     return overview;
   }
@@ -283,10 +286,9 @@ export class Connectors {
   private async wait(
     milliseconds: number,
     action: ConnectorAction,
-    signal: AbortSignal = action.controller.signal,
   ): Promise<void> {
     if (this.deps.wait) {
-      await this.deps.wait(milliseconds, signal);
+      await this.deps.wait(milliseconds);
       this.assertCurrent(action);
       return;
     }
@@ -296,11 +298,11 @@ export class Connectors {
         reject(STALE_ACTION);
       };
       const timer = setTimeout(() => {
-        signal.removeEventListener("abort", onAbort);
+        action.controller.signal.removeEventListener("abort", onAbort);
         resolve();
       }, milliseconds);
-      if (signal.aborted) return onAbort();
-      signal.addEventListener("abort", onAbort, { once: true });
+      if (action.controller.signal.aborted) return onAbort();
+      action.controller.signal.addEventListener("abort", onAbort, { once: true });
     });
     this.assertCurrent(action);
   }
@@ -319,13 +321,14 @@ export class Connectors {
   }
 }
 
-function connectedAccount(
-  before: ConnectorsOverview,
-  after: ConnectorsOverview,
-): string | null {
-  if (after.google.accounts.length <= before.google.accounts.length) return null;
-  const previous = new Set(before.google.accounts.map((account) => account.email));
-  return after.google.accounts.find((account) => !previous.has(account.email))?.email ?? null;
+/** Account identity changes are a set delta; callers decide whether that
+ * delta is an owner action to audit or a baseline to adopt silently. */
+export function addedAccountEmails(
+  previous: readonly ConnectorAccount[],
+  next: readonly ConnectorAccount[],
+): string[] {
+  const knownEmails = new Set(previous.map((account) => account.email));
+  return next.map((account) => account.email).filter((email) => !knownEmails.has(email));
 }
 
 function messageOf(error: unknown): string {

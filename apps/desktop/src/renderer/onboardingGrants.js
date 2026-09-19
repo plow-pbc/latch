@@ -6,38 +6,12 @@ function openGrants(grants, skipped) {
   return grants.filter((g) => g.status === "open" && !skipped.has(g.id));
 }
 
-/** The serialized entry point uses this distinct value for a click it ignored;
- * `undefined` remains a failed/malformed bridge result the row must explain. */
-export const ACTION_IGNORED = Symbol("action ignored");
-
-/** One serialized requirement action, shared by the primary run and a met
- * row's repeat action. A second click while one is in flight is ignored, so
- * only its own completion clears the running row. */
-export function grantAction({ act, setRunning }) {
-  let pending = false;
-  return async (id) => {
-    if (pending) return ACTION_IGNORED;
-    pending = true;
-    setRunning(id);
-    try {
-      return await act(id);
-    } finally {
-      pending = false;
-      setRunning(null);
-    }
-  };
-}
-
-/** What an action result leaves for its row to explain. The same account can
- * remain met after another-account sign-in fails, so errors are independent
- * of the row's fresh status. */
-export function actionMiss(id, result, kind = null, baseline = null) {
-  if (result === ACTION_IGNORED) return null;
-  if (!result) return { id, error: null, ...(kind ? { kind } : {}), ...(typeof baseline === "number" ? { progress: baseline } : {}) };
+/** What an action result leaves for its row to explain. */
+export function actionMiss(id, result) {
+  if (!result) return { id, error: null };
   const fresh = result.grants.find((grant) => grant.id === id);
-  const progress = kind === "repeat" ? baseline ?? fresh?.progress : fresh?.progress ?? baseline;
   return fresh?.status === "open" || result.error
-    ? { id, error: result.error, ...(kind ? { kind } : {}), ...(typeof progress === "number" ? { progress } : {}) }
+    ? { id, error: result.error }
     : null;
 }
 
@@ -45,25 +19,13 @@ export function actionMiss(id, result, kind = null, baseline = null) {
  * Keep the notice only while the fresh list still calls that row open. */
 export function clearMissed(missed, grants) {
   const fresh = grants.find((grant) => grant.id === missed?.id);
-  if (missed?.kind === "repeat") {
-    return typeof missed.progress === "number" && typeof fresh?.progress === "number" && fresh.progress > missed.progress
-      ? null
-      : missed;
-  }
   return missed && fresh?.status !== "open" ? null : missed;
-}
-
-/** A repeat action's answer may already contain progress that arrived while
- * the connector was timing out. Reconcile before installing its row notice;
- * an unchanged count still preserves the actionable failure. */
-export function repeatMiss(id, result, baseline, grants) {
-  return clearMissed(actionMiss(id, result, "repeat", baseline), grants);
 }
 
 /**
  * Each open grant's flow in list order, one at a time, reading from the fresh
  * state whether it landed. `act(id)` shows that state and answers with it plus
- * `error`; `setRunning` is told the id whose flow is running, then null.
+ * `error`.
  * Resolves with the grant that did not land ({ id, error }) — a throw is a
  * miss like any other, and so is a landing with an error the owner must read
  * (Safari's setting on, Safari not reopened) — or null once nothing is left,
@@ -78,7 +40,6 @@ export async function runGrants({ act, getState, stillHere }, skipped) {
     if (!next || grants.some((g) => g.status === "relaunch")) return null;
     const result = await act(next.id).catch(() => null);
     if (!stillHere()) return null;
-    if (result === ACTION_IGNORED) return null;
     const missed = actionMiss(next.id, result);
     if (missed) return missed;
   }

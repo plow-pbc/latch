@@ -873,6 +873,10 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   color: var(--clay-soft);
 }
 
+.item-status.neutral {
+  color: var(--muted-2);
+}
+
 .item-status.skipped {
   color: var(--muted-2);
 }

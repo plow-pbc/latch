@@ -13,6 +13,13 @@ export type PluginStatus = "off" | "needs-setup" | "ready";
  *  row with no manifest at all. The badge the renderer used to hardcode. */
 export type PluginKind = "CLI" | "Browser";
 
+/** A state owner can attach its current explanation to a requirement without
+ * teaching the renderer which connector or permission produced it. */
+export interface RequirementNotice {
+  message: string;
+  noteKind: "neutral" | "error";
+}
+
 export interface Requirement {
   id: string;
   /** The row's words, like the button's: what is missing ("Safari") and the
@@ -33,9 +40,8 @@ export interface Requirement {
   /** An optional model-owned action that remains useful after this
    *  requirement is met, such as connecting another account. */
   repeatAction?: string;
-  /** Model-owned progress for a repeatable requirement. Account requirements
-   *  carry their connected-account count; permissions carry none. */
-  progress?: number;
+  /** An optional state-owned explanation associated with this requirement. */
+  notice?: RequirementNotice;
   /** "relaunch": granted, but only a relaunch lets this app's children
    *  inherit it — the button relaunches rather than acting. */
   status: "open" | "met" | "relaunch";
@@ -65,9 +71,8 @@ export interface PluginsInput {
   plugins: { manifest: PluginManifest; enabled: boolean; description?: string | null }[];
   /** Connector ids the owner has connected, e.g. "google". */
   connectedAccounts: string[];
-  /** Per-connector account counts, used to tell a later account from a
-   *  same-account reauthorization without exposing account identities. */
-  accountProgress?: Record<string, number>;
+  /** Current connector notices, associated with their requirements. */
+  accountNotices?: Record<string, RequirementNotice>;
   /** Permission keys this Mac's inventory reads as granted. */
   grantedPermissions: string[];
   /** Permission keys granted during this run that a relaunch will finish. */
@@ -100,7 +105,7 @@ function permissionRequirement(key: string, met: boolean, relaunch: boolean): Re
 
 /** `ACCOUNT_IDS` in manifest.ts is `{google}` only, so the fixed Google
  *  title and copy are right for every account requirement today. */
-function accountRequirement(id: string, met: boolean, progress: number): Requirement {
+function accountRequirement(id: string, met: boolean, notice?: RequirementNotice): Requirement {
   return {
     id: accountRequirementId(id),
     title: "Google account",
@@ -108,9 +113,9 @@ function accountRequirement(id: string, met: boolean, progress: number): Require
     action: "Connect Google",
     waiting: "Finish signing in with Google in your browser.",
     done: "Connected",
-    progress,
     status: met ? "met" : "open",
     ...(met ? { repeatAction: "Add another" } : {}),
+    ...(notice ? { notice } : {}),
   };
 }
 
@@ -128,7 +133,7 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
   return input.plugins.map(({ manifest, enabled, description }) => {
     const requirements: Requirement[] = [
       ...manifest.requires.permissions.map((key) => permissionRequirement(key, granted.has(key), pending.has(key))),
-      ...manifest.requires.accounts.map((id) => accountRequirement(id, accounts.has(id), input.accountProgress?.[id] ?? (accounts.has(id) ? 1 : 0))),
+      ...manifest.requires.accounts.map((id) => accountRequirement(id, accounts.has(id), input.accountNotices?.[id])),
     ];
     return {
       name: manifest.name,

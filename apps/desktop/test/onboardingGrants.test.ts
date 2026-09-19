@@ -4,15 +4,14 @@
    onboarding.js's does over main's requirements:act; whether a grant landed
    is read from that answer. */
 import { describe, expect, it } from "vitest";
-import { ACTION_IGNORED, accessPrimary, actionMiss, clearMissed, grantAction, repeatMiss, runGrants } from "../src/renderer/onboardingGrants.js";
+import { accessPrimary, actionMiss, clearMissed, runGrants } from "../src/renderer/onboardingGrants.js";
 
 interface Grant {
   id: string;
   status: "open" | "met" | "relaunch";
-  progress?: number;
 }
 
-const grant = (id: string, status: Grant["status"] = "open", progress?: number): Grant => ({ id, status, ...(progress === undefined ? {} : { progress }) });
+const grant = (id: string, status: Grant["status"] = "open"): Grant => ({ id, status });
 
 /** "warn": the grant lands, but the act still has something to say. */
 type Outcome = "met" | "relaunch" | "miss" | "warn" | "throw";
@@ -22,31 +21,23 @@ type Outcome = "met" | "relaunch" | "miss" | "warn" | "throw";
 function run(grants: Grant[], outcomes: Record<string, Outcome> = {}, skipped: string[] = [], leaveOn?: string) {
   let state = { grants };
   let here = true;
-  let running: string | null = null;
   const walked: string[] = [];
-  const runningDuringAct: (string | null)[] = [];
-  const act = grantAction({
-    act: async (id: string) => {
-      walked.push(id);
-      runningDuringAct.push(running);
-      if (id === leaveOn) here = false;
-      const how = outcomes[id] ?? "met";
-      if (how === "throw") throw new Error("the bridge went away");
-      const status = how === "warn" ? "met" : how;
-      state = { grants: state.grants.map((g) => (g.id !== id || status === "miss" ? g : { ...g, status })) };
-      const error = { miss: "Sign-in didn't finish.", warn: "Safari did not relaunch — open it yourself." }[how as string] ?? null;
-      return { ...state, error };
-    },
-    setRunning: (id: string | null) => {
-      running = id;
-    },
-  });
+  const act = async (id: string) => {
+    walked.push(id);
+    if (id === leaveOn) here = false;
+    const how = outcomes[id] ?? "met";
+    if (how === "throw") throw new Error("the bridge went away");
+    const status = how === "warn" ? "met" : how;
+    state = { grants: state.grants.map((g) => (g.id !== id || status === "miss" ? g : { ...g, status })) };
+    const error = { miss: "Sign-in didn't finish.", warn: "Safari did not relaunch — open it yourself." }[how as string] ?? null;
+    return { ...state, error };
+  };
   const missed = runGrants({
     act,
     getState: () => state,
     stillHere: () => here,
   }, new Set(skipped));
-  return missed.then((result: unknown) => ({ missed: result, walked, runningDuringAct, runningAfter: running }));
+  return missed.then((result: unknown) => ({ missed: result, walked }));
 }
 
 describe("the Access run", () => {
@@ -73,19 +64,15 @@ describe("the Access run", () => {
   ] as const)("%s", async (_name, grants, outcomes, skipped, leaveOn, expected) => {
     const result = await run([...grants], outcomes, [...skipped], leaveOn);
     expect({ missed: result.missed, walked: result.walked }).toEqual(expected);
-    // The row that shows the live line is the one whose flow is open, and
-    // nothing reads as running once the run ends.
-    expect(result.runningDuringAct).toEqual(expected.walked);
-    expect(result.runningAfter).toBeNull();
   });
 
-  it("stops cleanly when the serialized action ignores its entry", async () => {
+  it("stops on a blocked action's missing result instead of entering another grant", async () => {
     let calls = 0;
     let state = { grants: [grant("fda"), grant("safari")] };
     const result = await runGrants({
       act: async () => {
         calls += 1;
-        if (calls === 1) return ACTION_IGNORED;
+        if (calls === 1) return undefined;
         state = { grants: [] };
         return { ...state, error: null };
       },
@@ -93,56 +80,8 @@ describe("the Access run", () => {
       stillHere: () => true,
     }, new Set());
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ id: "fda", error: null });
     expect(calls).toBe(1);
-  });
-});
-
-describe("an individual Access action", () => {
-  it("runs a met requirement's repeat action once without walking other open grants", async () => {
-    const acted: string[] = [];
-    const running: Array<string | null> = [];
-    const act = grantAction({
-      act: async (id: string) => {
-        acted.push(id);
-        return { grants: [grant("fda"), grant("account:google", "met")], error: null };
-      },
-      setRunning: (id: string | null) => running.push(id),
-    });
-    const result = await act("account:google");
-
-    expect(result).toEqual({ grants: [grant("fda"), grant("account:google", "met")], error: null });
-    expect(acted).toEqual(["account:google"]);
-    expect(running).toEqual(["account:google", null]);
-  });
-
-  it.each([
-    ["a repeated click", "account:google"],
-    ["another row's repeat click", "account:calendar"],
-  ])("ignores %s while the first action is pending", async (_name, secondId) => {
-    const acted: string[] = [];
-    const running: Array<string | null> = [];
-    let finish!: (result: { grants: Grant[]; error: null }) => void;
-    const act = grantAction({
-      act: (id: string) => {
-        acted.push(id);
-        return new Promise((resolve) => {
-          finish = resolve;
-        });
-      },
-      setRunning: (id: string | null) => running.push(id),
-    });
-
-    const first = act("account:google");
-    const repeated = await act(secondId);
-
-    expect(acted).toEqual(["account:google"]);
-    expect(running).toEqual(["account:google"]);
-    expect(repeated).toBe(ACTION_IGNORED);
-
-    finish({ grants: [grant("fda"), grant("account:google", "met")], error: null });
-    await expect(first).resolves.toEqual({ grants: [grant("fda"), grant("account:google", "met")], error: null });
-    expect(running).toEqual(["account:google", null]);
   });
 });
 
@@ -150,7 +89,6 @@ describe("an individual action result", () => {
   it.each([
     ["returned failure", { grants: [grant("account:google", "met")], error: "Sign-in didn't finish." }, { id: "account:google", error: "Sign-in didn't finish." }],
     ["thrown or missing result", null, { id: "account:google", error: null }],
-    ["ignored pending action", ACTION_IGNORED, null],
     ["undefined bridge result", undefined, { id: "account:google", error: null }],
     ["successful repeat", { grants: [grant("account:google", "met")], error: null }, null],
   ])("keeps a repeat row actionable after a %s", (_name, result, expected) => {
@@ -166,52 +104,6 @@ describe("a refreshed Access list", () => {
     expect(clearMissed(missed, [grant("fda"), grant("account:google")])).toEqual(missed);
   });
 
-  it("keeps a repeat failure on its met row until a successful retry clears it", () => {
-    const failed = actionMiss(
-      "account:google",
-      { grants: [grant("account:google", "met")], error: "Sign-in didn't finish." },
-      "repeat",
-    );
-
-    expect(failed).toEqual({ id: "account:google", error: "Sign-in didn't finish.", kind: "repeat" });
-    expect(clearMissed(failed, [grant("account:google", "met")])).toEqual(failed);
-    const missing = actionMiss("account:google", null, "repeat");
-    expect(missing).toEqual({ id: "account:google", error: null, kind: "repeat" });
-    expect(clearMissed(missing, [grant("account:google", "met")])).toEqual(missing);
-    expect(actionMiss("account:google", { grants: [grant("account:google", "met")], error: null }, "repeat")).toBeNull();
-  });
-
-  it("clears a repeat failure only when its model progress advances", () => {
-    const failed = actionMiss(
-      "account:google",
-      { grants: [grant("account:google", "met", 1)], error: "Sign-in didn't finish." },
-      "repeat",
-      1,
-    );
-
-    expect(failed).toEqual({ id: "account:google", error: "Sign-in didn't finish.", kind: "repeat", progress: 1 });
-    expect(clearMissed(failed, [grant("account:google", "met", 1)])).toEqual(failed);
-    expect(clearMissed(failed, [grant("account:google", "met", 2)])).toBeNull();
-    const advancedBeforeActionAnswered = actionMiss(
-      "account:google",
-      { grants: [grant("account:google", "met", 2)], error: "Sign-in didn't finish." },
-      "repeat",
-      1,
-    );
-    expect(advancedBeforeActionAnswered).toMatchObject({ progress: 1 });
-    expect(clearMissed(advancedBeforeActionAnswered, [grant("account:google", "met", 2)])).toBeNull();
-  });
-
-  it("settles a timeout against progress already visible when the action answers", () => {
-    const fresh = [grant("account:google", "met", 2)];
-
-    expect(repeatMiss(
-      "account:google",
-      { grants: fresh, error: "We couldn't see a new account." },
-      1,
-      fresh,
-    )).toBeNull();
-  });
 });
 
 describe("the Access button", () => {

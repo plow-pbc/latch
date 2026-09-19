@@ -217,49 +217,6 @@ describe("connecting a Google account", () => {
     expect(state.noteKind).toBe("neutral");
   });
 
-  it("ends an interval wait when the five-minute polling deadline expires", async () => {
-    vi.useFakeTimers();
-    const plow = new FakePlow();
-    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
-      const controller = new AbortController();
-      setTimeout(() => {
-        controller.abort(new DOMException("The operation was aborted.", "TimeoutError"));
-      }, milliseconds);
-      return controller.signal;
-    });
-    plow.pollGate = async (_signal, call) => {
-      if (call !== 100) return overview();
-      return new Promise((resolve) => {
-        setTimeout(() => resolve(overview()), 2_000);
-      });
-    };
-    const connectors = new Connectors({
-      api: plow,
-      credential: () => CREDENTIAL,
-      openExternal: async () => {},
-      recordAudit: () => {},
-    });
-    let state: ConnectorsState | undefined;
-    const connecting = connectors.connect().then((result) => {
-      state = result;
-    });
-
-    try {
-      await vi.advanceTimersByTimeAsync(5 * 60 * 1_000);
-
-      expect(state).toMatchObject({
-        busy: false,
-        message: CONNECTOR_TIMEOUT_NOTE,
-        noteKind: "neutral",
-        google: { connecting: false },
-      });
-      expect(plow.listCredentials).toHaveLength(100);
-    } finally {
-      await vi.advanceTimersByTimeAsync(CONNECTOR_POLL_INTERVAL_MS);
-      await connecting;
-    }
-  });
-
   it("accepts an account returned as the polling deadline expires", async () => {
     const polling = new AbortController();
     vi.spyOn(AbortSignal, "timeout").mockImplementation(() => polling.signal);
@@ -444,6 +401,21 @@ describe("connector account lifecycle", () => {
     expect(publishedStates.at(-1)).toEqual(signedOut);
     expect(audits).toEqual([]);
   });
+
+  it("resets the initial-poll baseline on sign-out", async () => {
+    const oldAccount = account("old@example.com", { isDefault: true });
+    const newAccount = account("new@example.com", { isDefault: true });
+    const plow = new FakePlow();
+    plow.listAnswers = [overview([oldAccount]), overview([newAccount])];
+    const { connectors, audits } = build(plow);
+
+    await connectors.poll();
+    connectors.signedOut();
+    await connectors.poll();
+
+    expect(connectors.state().google.accounts).toEqual([newAccount]);
+    expect(audits).toEqual([]);
+  });
 });
 
 /**
@@ -451,6 +423,25 @@ describe("connector account lifecycle", () => {
  * account connected outside the app without ever being the owner's action.
  */
 describe("a background poll", () => {
+  it("establishes an initial account baseline without auditing existing accounts, then audits later additions", async () => {
+    const one = account("one@example.com", { isDefault: true });
+    const two = account("two@example.com");
+    const plow = new FakePlow();
+    plow.listAnswers = [overview([one]), overview([one, two])];
+    const { connectors, audits } = build(plow);
+
+    await connectors.poll();
+    expect(connectors.state().google.accounts).toEqual([one]);
+    expect(audits).toEqual([]);
+
+    await connectors.poll();
+    expect(connectors.state().google.accounts).toEqual([one, two]);
+    expect(audits).toEqual([{
+      event: "connector_connected",
+      fields: { provider: "google", account: "two@example.com" },
+    }]);
+  });
+
   it("reconciles accounts connected after a timeout without a busy flicker", async () => {
     const plow = new FakePlow();
     let published = 0;

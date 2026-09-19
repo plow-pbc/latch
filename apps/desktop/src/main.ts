@@ -1609,10 +1609,11 @@ function connectedAccountIds(): string[] {
   return (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [];
 }
 
-/** The count, rather than an account identity, is enough for setup to tell a
- * newly added account from a same-account reauthorization. */
-function connectedAccountProgress(): Record<string, number> {
-  return { google: connectors?.state().google.accounts.length ?? 0 };
+/** Connector state owns its own failure/late-success explanation; setup only
+ * associates that explanation with the corresponding model requirement. */
+function connectorAccountNotices(): Record<string, { message: string; noteKind: "neutral" | "error" }> {
+  const state = connectors?.state();
+  return state?.message ? { google: { message: state.message, noteKind: state.noteKind } } : {};
 }
 
 /** The whole tab, fresh: what is staged, what each plugin still needs, and
@@ -1639,7 +1640,7 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
       description: device?.pluginDescription(p.manifest.name) ?? null,
     })),
     connectedAccounts: connectedAccountIds(),
-    accountProgress: connectedAccountProgress(),
+    accountNotices: connectorAccountNotices(),
     grantedPermissions: granted,
     relaunchPending,
   });

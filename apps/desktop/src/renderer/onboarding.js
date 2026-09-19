@@ -7,7 +7,7 @@ import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
-import { ACTION_IGNORED, accessPrimary, clearMissed, grantAction, repeatMiss, runGrants } from "./onboardingGrants.js";
+import { accessPrimary, clearMissed, runGrants } from "./onboardingGrants.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -573,21 +573,27 @@ async function refreshPlugins() {
 }
 
 /** Access's one button: the list's flows in order; a grant that did not land
- * stops the run on its row. */
-function setGrantRunning(id) {
-  running = id;
-  render();
-}
+ * stops the run on its row. The renderer's shared single-flight gate owns
+ * every requirement action, including met-row repeats. */
+const actRequirement = singleFlight(() => running !== null);
 
-const actRequirement = grantAction({
-  act: (id) => whenAnswered(window.domo.requirementsAct(id), showPlugins),
-  setRunning: setGrantRunning,
-});
+function runRequirement(id) {
+  return actRequirement(async () => {
+    running = id;
+    render();
+    try {
+      return await whenAnswered(window.domo.requirementsAct(id), showPlugins);
+    } finally {
+      running = null;
+      render();
+    }
+  });
+}
 
 async function startGrants() {
   missed = null; // the run's first redraw must not still show the last miss
   missed = await runGrants({
-    act: actRequirement,
+    act: runRequirement,
     getState: () => pluginsState,
     stillHere: () => state?.step === "access",
   }, skipped);
@@ -597,10 +603,7 @@ async function startGrants() {
 /** A met requirement can offer another action without restarting Access's
  * open-grant runner. Its id and label both come from the model. */
 async function repeatGrant(id) {
-  const baseline = pluginsState?.grants.find((grant) => grant.id === id)?.progress;
-  const result = await actRequirement(id).catch(() => null);
-  if (result !== ACTION_IGNORED) missed = repeatMiss(id, result, baseline, pluginsState?.grants ?? []);
-  render();
+  await runRequirement(id).catch(() => null);
 }
 
 async function refreshAvailability() {
@@ -781,7 +784,7 @@ function grantRow(grant) {
       document.createTextNode(grant.done),
       repeat,
     ]);
-    if (missed?.id === grant.id) line = statusLine("error", missed.error || "That didn't finish, so nothing changed.");
+    if (grant.notice) line = statusLine(grant.notice.noteKind, grant.notice.message);
   } else if (grant.status === "relaunch") {
     line = statusLine("done", "Granted: relaunch to finish");
   } else if (running === grant.id) {
