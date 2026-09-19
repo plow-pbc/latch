@@ -1,7 +1,6 @@
 import AppKit
 import CoreImage
 import QuickLookThumbnailing
-import UniformTypeIdentifiers
 
 private enum IconError: Error, CustomStringConvertible {
     case badArguments

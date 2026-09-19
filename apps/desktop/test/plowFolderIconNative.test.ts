@@ -33,8 +33,6 @@ describe.runIf(process.platform === "darwin")("native Plow folder icon", () => {
         "AppKit",
         "-framework",
         "QuickLookThumbnailing",
-        "-framework",
-        "UniformTypeIdentifiers",
       ],
       { encoding: "utf8" },
     );

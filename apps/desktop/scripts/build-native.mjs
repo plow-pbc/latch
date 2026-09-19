@@ -175,7 +175,6 @@ const compileUniversal = (tmp, output, { sources, target, extraArgs = [] }) => {
       extraArgs: [
         "-framework", "AppKit",
         "-framework", "QuickLookThumbnailing",
-        "-framework", "UniformTypeIdentifiers",
       ],
     });
     fs.chmodSync(output, 0o755);
