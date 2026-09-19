@@ -4,7 +4,7 @@ export const PURPOSE_LABEL =
 
 /** An example that demonstrates both the work to allow and the boundary around it. */
 export const PURPOSE_PLACEHOLDER =
-  "For example: You manage Instacart grocery ordering and delivery tracking on my behalf, including signing in to instacart.com with my saved login. You have no business with anything else on this computer — no files, no other sites.";
+  "For example: Allow my assistant to manage Instacart grocery ordering and delivery tracking, including signing in to instacart.com with my saved login. Keep it out of everything else on this computer — no files, no other sites.";
 
 /**
  * What has to be said next to that field, both halves of it.

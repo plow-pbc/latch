@@ -27,7 +27,7 @@ describe("approvals card", () => {
     expect(PURPOSE_PLACEHOLDER).toContain("signing in to instacart.com with my saved login");
     expect(PURPOSE_PLACEHOLDER).not.toMatch(/DoorDash|Product Hunt/);
     expect(PURPOSE_PLACEHOLDER).toMatch(
-      /You have no business with anything else on this computer — no files, no other sites\.$/,
+      /Keep it out of everything else on this computer — no files, no other sites\.$/,
     );
   });
 });
