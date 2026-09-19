@@ -42,8 +42,11 @@ class FakeWindow {
     return this.destroyed;
   }
 
+  // `closed` arrives after destroy() has returned, as a real window's can —
+  // by then a replacing flow may own the panel slot.
   destroy(): void {
     this.destroyed = true;
+    setTimeout(() => this.listeners.get("closed")?.forEach((cb) => cb()), 0);
   }
 }
 
@@ -116,6 +119,7 @@ describe("FdaGrantFlow.start", () => {
       },
     ],
     ["the owner dismisses it", (flow) => flow.stop()],
+    ["the panel is closed from outside", () => FakeWindow.instances[0].destroy()],
     ["it times out", () => vi.advanceTimersByTimeAsync(FLOW_TIMEOUT_MS)],
   ])("ends, destroying the panel, when %s", async (_name, end) => {
     let granted = false;
@@ -140,6 +144,7 @@ describe("FdaGrantFlow.start", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     const b = track(flow.start(makeTarget("b", () => false)));
+    // Also delivers A's late `closed`, which must leave B's flow alone.
     await vi.advanceTimersByTimeAsync(0);
 
     expect(a.ended).toBe(true);

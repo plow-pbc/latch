@@ -216,9 +216,9 @@ export class FdaGrantFlow {
     // the panel loses nothing by skipping it.
     panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     panel.on("closed", () => {
-      // Closed from outside (or by the person somehow): tear the rest down.
-      this.panel = null;
-      this.stop();
+      // Closed from outside (or by the person somehow): tear the rest down —
+      // unless this is a replaced panel, whose flow already ended.
+      if (this.panel === panel) this.stop();
     });
     void panel.loadFile(path.join(this.deps.rendererDir, "fdapanel.html"));
     this.startTracker();
