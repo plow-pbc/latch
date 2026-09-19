@@ -359,7 +359,9 @@ async function refreshPlugins() {
 async function startGrants() {
   missed = null; // the run's first redraw must not still show the last miss
   missed = await runGrants({
-    act: (id) => showPlugins(() => window.domo.requirementsAct(id)),
+    // Main reads the state an act answers with when its flow ends, so the act
+    // takes its number then: a refresh asked while the flow ran is older.
+    act: (id) => window.domo.requirementsAct(id).then((answer) => showPlugins(() => answer)),
     getState: () => pluginsState,
     stillHere: () => state?.step === "access",
     setRunning: (id) => {

@@ -39,8 +39,9 @@ describe("onboarding renderer actions", () => {
     expect(await run(async () => ++calls)).toBe(1);
   });
 
-  // A focus refresh asked before a switch flips can answer after it: the
-  // older answer must not overwrite the newer one on screen.
+  // A focus refresh asked before a switch flips (or while a grant's flow runs:
+  // its act takes its number on answering) can answer after it: the older
+  // answer must not overwrite the newer one on screen.
   it.each([
     ["a newer answer landing first keeps an older one off the screen", ["write", "read"], ["write"]],
     ["answers landing in order both show, newest last", ["read", "write"], ["read", "write"]],
