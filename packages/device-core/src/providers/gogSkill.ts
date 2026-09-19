@@ -126,8 +126,10 @@ booked: say so, without redirecting the conversation elsewhere.
 Here that check is a \`calendar create\` with timed \`--from\`/\`--to\`, and the
 refusal carries the BUSY TIMES per account plus any account that could not be
 checked — no titles, so read the window yourself if you want the names. A
-calendar Google would not read is named in the create's own result
-(\`could_not_check\`) rather than refused on.
+calendar Google will never read (no access) is named in the created event's
+own result (\`could_not_check\`) rather than refused on; one that failed for a
+reason that might clear, or an account where nothing answered at all, is a
+refusal like any other.
 All-day (date-only) events skip the check.
 
 \`--account\` and \`--confirm-conflict\` are plow-gog's own arguments and never
