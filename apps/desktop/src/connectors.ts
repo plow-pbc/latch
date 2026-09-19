@@ -13,7 +13,7 @@ import {
 } from "./plowApi.js";
 
 export const CONNECTOR_POLL_INTERVAL_MS = 3_000;
-export const CONNECTOR_TIMEOUT_MS = 30_000;
+export const CONNECTOR_TIMEOUT_MS = 5 * 60 * 1_000;
 export const CONNECTOR_TIMEOUT_NOTE =
   "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
 
@@ -98,7 +98,22 @@ export class Connectors {
     if (generation !== this.generation) return;
     const accounts = overview.google.accounts.map((account) => ({ ...account }));
     if (JSON.stringify(accounts) === JSON.stringify(this.accounts)) return;
+    const knownEmails = new Set(this.accounts.map((account) => account.email));
+    const newEmails = accounts
+      .map((account) => account.email)
+      .filter((email) => !knownEmails.has(email));
     this.accounts = accounts;
+    if (newEmails.length > 0) {
+      if (
+        this.notice.message === CONNECTOR_TIMEOUT_NOTE
+        && this.notice.noteKind === "neutral"
+      ) {
+        this.notice = { message: "", noteKind: "error" };
+      }
+      for (const email of newEmails) {
+        this.deps.recordAudit("connector_connected", { provider: "google", account: email });
+      }
+    }
     this.publish();
   }
 
@@ -112,9 +127,9 @@ export class Connectors {
       this.assertCurrent(action);
       await this.openConnectUrl(connectUrl);
       this.assertCurrent(action);
-      // One deadline for the whole poll, including HTTP time. Without it, ten
-      // individually bounded requests could turn a 30-second connect into
-      // minutes when Plow accepts each request and then goes quiet.
+      // One deadline for the whole poll, including HTTP time. Without it,
+      // individually bounded requests could turn a five-minute connect into
+      // much longer when Plow accepts each request and then goes quiet.
       const pollingDeadline = AbortSignal.timeout(CONNECTOR_TIMEOUT_MS);
       const pollingSignal = AbortSignal.any([action.controller.signal, pollingDeadline]);
 
@@ -133,15 +148,15 @@ export class Connectors {
           if (pollingDeadline.aborted) break;
           throw error;
         }
-        if (pollingDeadline.aborted) break;
         const connected = connectedAccount(before, after);
-        if (!connected) continue;
-
-        this.deps.recordAudit("connector_connected", {
-          provider: "google",
-          account: connected,
-        });
-        return;
+        if (connected) {
+          this.deps.recordAudit("connector_connected", {
+            provider: "google",
+            account: connected,
+          });
+          return;
+        }
+        if (pollingDeadline.aborted) break;
       }
 
       this.assertCurrent(action);
