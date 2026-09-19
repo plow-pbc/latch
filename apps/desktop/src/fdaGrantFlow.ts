@@ -101,12 +101,11 @@ export class FdaGrantFlow {
   private height = PANEL_HEIGHT;
   /** Where System Settings last was, so a height change can re-snap. */
   private lastSettingsFrame: Rect | null = null;
-  /** Whether the current flow's grant has landed, read by stop() when it settles the outcome. */
-  private granted = false;
-  /** Resolves the current flow's outcome; stop() is the only place that calls it. */
-  private settle: ((granted: boolean) => void) | null = null;
-  /** The current flow's outcome, returned to every caller pointing at the same panel. */
-  private outcome: Promise<boolean> | null = null;
+  /** Ends the current flow's promise; stop() is the only place that calls it. */
+  private settle: (() => void) | null = null;
+  /** The flow in flight, if any: the promise every caller for its switch
+   *  awaits, and the token a continuation checks to know it still owns it. */
+  private outcome: Promise<void> | null = null;
 
   constructor(private readonly deps: FdaGrantFlowDeps) {}
 
@@ -122,148 +121,118 @@ export class FdaGrantFlow {
    * floating panel for the same reason. A click for a DIFFERENT switch while
    * one is up ends that flow and starts this one: one panel, one switch.
    *
-   * Resolves when the flow ENDS — granted (or already there), dismissed,
-   * timed out, or replaced by a different switch — with whether the grant
-   * landed. A second call pointing at the same switch while a flow for it
-   * is already in progress (its panel built or not) returns that exact same
-   * pending outcome (not merely an equal one) rather than starting a second
-   * one, so start() cannot be `async`: an async function always wraps its
-   * return in a fresh promise, even a same-tick `return this.outcome`,
-   * which would break that identity.
+   * Resolves when the flow ENDS: the grant landed (or was already there), or
+   * the flow was dismissed, timed out, or replaced by a different switch. A
+   * same-switch call while its flow is in flight, panel built or not, gets
+   * that same promise rather than starting a competing one — which is why
+   * start() is not `async`: that would wrap it in a fresh promise.
    */
-  start(target: GrantTarget = this.deps.fullDisk): Promise<boolean> {
-    const previous = this.target;
-    if (this.panel && previous && previous.key !== target.key) this.stop();
+  start(target: GrantTarget = this.deps.fullDisk): Promise<void> {
+    if (this.outcome && this.target?.key !== target.key) this.stop();
     this.target = target;
     // The deep link (re-)fronts System Settings; with a tracker running that
     // is also what brings an existing panel back on screen.
     void this.deps.openSettings(target.pane);
-    // A flow already in flight for this exact switch shares its pending
-    // outcome, whether or not its panel has been built yet — a same-switch
-    // double call must not start a second, competing pursue().
-    if (this.outcome && previous && previous.key === target.key) return this.outcome;
-
-    this.granted = false;
-    let settle!: (granted: boolean) => void;
-    const outcome = new Promise<boolean>((resolve) => {
-      settle = resolve;
+    if (this.outcome) return this.outcome;
+    const outcome = new Promise<void>((resolve) => {
+      this.settle = resolve;
     });
-    this.settle = settle;
     this.outcome = outcome;
-    void this.pursue(target, settle);
+    void this.pursue(target, outcome);
     return outcome;
   }
 
   /**
-   * The async continuation of start(): probe for an existing grant, then (if
-   * not already there) build the floating panel. Takes the target and its
-   * own settle function so a stale continuation can tell whether it still
-   * owns the flow by comparing `settle` to `this.settle` after the await,
-   * rather than reading `this.target`/`this.settle` directly: a newer
-   * start() (same switch or a different one) or a stop() call — which
-   * leaves `this.target` untouched — both replace `this.settle`, and either
-   * way this continuation settles false and builds nothing.
+   * start()'s continuation: probe for an existing grant, then build the
+   * panel. `outcome` is the flow this call belongs to — a stop(), or a
+   * different switch's start(), during the probe replaces this.outcome, and a
+   * continuation that finds it replaced builds nothing.
    */
-  private async pursue(target: GrantTarget, settle: (granted: boolean) => void): Promise<void> {
+  private async pursue(target: GrantTarget, outcome: Promise<void>): Promise<void> {
     try {
       // Already granted: nothing to guide. The pane still opens — that's
       // where the grant is viewed or revoked — but a panel asking for what
       // is already given would only confuse.
       const granted = await target.probe();
-      if (this.settle !== settle) {
-        settle(false);
-        return;
-      }
-      if (granted) {
-        settle(true);
-        this.settle = null;
-        this.outcome = null;
-        return;
-      }
-
-      const workArea = screen.getPrimaryDisplay().workArea;
-      this.height = PANEL_HEIGHT;
-      this.lastSettingsFrame = null;
-      const bounds = fallbackPanelFrame(workArea, {
-        width: FALLBACK_PANEL_WIDTH,
-        height: this.height,
-      });
-      const panel = new BrowserWindow({
-        ...bounds,
-        frame: false,
-        resizable: false,
-        minimizable: false,
-        maximizable: false,
-        closable: true,
-        // Non-activating: System Settings stays the visible focus owner, like
-        // PermissionFlow's .nonactivatingPanel. A native drag works fine from
-        // an unfocused window. `type: "panel"` is what makes a CLICK
-        // non-activating too — without it, mousing down on the tile brought
-        // this app forward, Settings lost frontmost, and the tracker hid the
-        // panel out from under the drag.
-        type: "panel",
-        focusable: false,
-        alwaysOnTop: true,
-        skipTaskbar: true,
-        hasShadow: true,
-        // The chrome is the renderer's rounded card (PermissionFlow's 18pt
-        // rounded material panel); the window itself stays clear so the corners
-        // actually round.
-        transparent: true,
-        show: false,
-        title: `Grant ${target.label}`,
-        webPreferences: {
-          preload: this.deps.preloadPath,
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-        },
-      });
-      this.panel = panel;
-      panel.setAlwaysOnTop(true, "floating");
-      // skipTransformProcessType: without it Electron implements
-      // visibleOnFullScreen by turning the WHOLE PROCESS into a UIElement
-      // (accessory) app, which removes the Dock tile, and only turns it back
-      // on a later setVisibleOnAllWorkspaces(false) that this flow never makes
-      // (the panel is destroyed). System Settings has no full-screen mode, so
-      // the panel loses nothing by skipping it.
-      panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
-      panel.on("closed", () => {
-        // Closed from outside (or by the person somehow): tear the rest down.
-        this.panel = null;
-        this.stop();
-      });
-      void panel.loadFile(path.join(this.deps.rendererDir, "fdapanel.html"));
-      this.startTracker();
-      // With no tracker there is no frontmost signal, so the fallback panel
-      // just shows; with one, it appears the first time Settings is reported
-      // front.
-      this.panelReady = false;
-      this.wantVisible = this.helper === null;
-      panel.once("ready-to-show", () => {
-        this.panelReady = true;
-        this.applyVisibility();
-      });
-
-      this.probeTimer = setInterval(() => void this.checkGranted(), PROBE_INTERVAL_MS);
-      this.timeoutTimer = setTimeout(() => this.stop(), FLOW_TIMEOUT_MS);
+      if (this.outcome !== outcome) return;
+      if (granted) this.stop();
+      else this.openPanel(target);
     } catch (err) {
-      // A throwing probe, a BrowserWindow that fails to construct, or
-      // anything else in between: fail the flow rather than leaving the
-      // caller's promise hanging forever — start() is no longer async, so
-      // nothing else awaits this rejection.
+      // A throwing probe, or a panel that fails partway through setup: end
+      // the flow rather than leave its caller waiting forever. stop() tears
+      // down whatever got built, and settles.
       console.error("FdaGrantFlow: flow failed", err);
-      if (this.settle === settle) {
-        // Still current: stop() is the existing teardown for whatever got
-        // built before the throw (panel, tracker, timers) — the panel might
-        // already exist at this point — and it settles the outcome too.
-        this.stop();
-      } else {
-        // A newer flow has since taken over; settle only this stale call's
-        // own promise, without touching state that belongs to it now.
-        settle(false);
-      }
+      if (this.outcome === outcome) this.stop();
     }
+  }
+
+  /** The floating panel beside the pane, and the probe that watches for the grant. */
+  private openPanel(target: GrantTarget): void {
+    const workArea = screen.getPrimaryDisplay().workArea;
+    this.height = PANEL_HEIGHT;
+    this.lastSettingsFrame = null;
+    const bounds = fallbackPanelFrame(workArea, {
+      width: FALLBACK_PANEL_WIDTH,
+      height: this.height,
+    });
+    const panel = new BrowserWindow({
+      ...bounds,
+      frame: false,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      closable: true,
+      // Non-activating: System Settings stays the visible focus owner, like
+      // PermissionFlow's .nonactivatingPanel. A native drag works fine from
+      // an unfocused window. `type: "panel"` is what makes a CLICK
+      // non-activating too — without it, mousing down on the tile brought
+      // this app forward, Settings lost frontmost, and the tracker hid the
+      // panel out from under the drag.
+      type: "panel",
+      focusable: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      hasShadow: true,
+      // The chrome is the renderer's rounded card (PermissionFlow's 18pt
+      // rounded material panel); the window itself stays clear so the corners
+      // actually round.
+      transparent: true,
+      show: false,
+      title: `Grant ${target.label}`,
+      webPreferences: {
+        preload: this.deps.preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    this.panel = panel;
+    panel.setAlwaysOnTop(true, "floating");
+    // skipTransformProcessType: without it Electron implements
+    // visibleOnFullScreen by turning the WHOLE PROCESS into a UIElement
+    // (accessory) app, which removes the Dock tile, and only turns it back
+    // on a later setVisibleOnAllWorkspaces(false) that this flow never makes
+    // (the panel is destroyed). System Settings has no full-screen mode, so
+    // the panel loses nothing by skipping it.
+    panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    panel.on("closed", () => {
+      // Closed from outside (or by the person somehow): tear the rest down.
+      this.panel = null;
+      this.stop();
+    });
+    void panel.loadFile(path.join(this.deps.rendererDir, "fdapanel.html"));
+    this.startTracker();
+    // With no tracker there is no frontmost signal, so the fallback panel just
+    // shows; with one, it appears the first time Settings is reported front.
+    this.panelReady = false;
+    this.wantVisible = this.helper === null;
+    panel.once("ready-to-show", () => {
+      this.panelReady = true;
+      this.applyVisibility();
+    });
+
+    this.probeTimer = setInterval(() => void this.checkGranted(), PROBE_INTERVAL_MS);
+    this.timeoutTimer = setTimeout(() => this.stop(), FLOW_TIMEOUT_MS);
   }
 
   stop(): void {
@@ -281,12 +250,9 @@ export class FdaGrantFlow {
     const panel = this.panel;
     this.panel = null;
     if (panel && !panel.isDestroyed()) panel.destroy();
-    const settle = this.settle;
-    const granted = this.granted;
+    this.settle?.();
     this.settle = null;
     this.outcome = null;
-    this.granted = false;
-    settle?.(granted);
   }
 
   /**
@@ -388,7 +354,6 @@ export class FdaGrantFlow {
     const outcome = this.outcome;
     if (!target || !(await target.probe())) return;
     if (this.outcome !== outcome) return;
-    this.granted = true;
     // Let the panel's own poll paint the granted state, then leave.
     if (this.probeTimer) clearInterval(this.probeTimer);
     this.probeTimer = null;
