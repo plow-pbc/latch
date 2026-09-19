@@ -7,7 +7,7 @@ import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
-import { ACTION_IGNORED, accessPrimary, actionMiss, clearMissed, grantAction, runGrants } from "./onboardingGrants.js";
+import { ACTION_IGNORED, accessPrimary, clearMissed, grantAction, repeatMiss, runGrants } from "./onboardingGrants.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -599,7 +599,7 @@ async function startGrants() {
 async function repeatGrant(id) {
   const baseline = pluginsState?.grants.find((grant) => grant.id === id)?.progress;
   const result = await actRequirement(id).catch(() => null);
-  if (result !== ACTION_IGNORED) missed = actionMiss(id, result, "repeat", baseline);
+  if (result !== ACTION_IGNORED) missed = repeatMiss(id, result, baseline, pluginsState?.grants ?? []);
   render();
 }
 

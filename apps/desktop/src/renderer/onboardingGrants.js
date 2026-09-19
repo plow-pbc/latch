@@ -53,6 +53,13 @@ export function clearMissed(missed, grants) {
   return missed && fresh?.status !== "open" ? null : missed;
 }
 
+/** A repeat action's answer may already contain progress that arrived while
+ * the connector was timing out. Reconcile before installing its row notice;
+ * an unchanged count still preserves the actionable failure. */
+export function repeatMiss(id, result, baseline, grants) {
+  return clearMissed(actionMiss(id, result, "repeat", baseline), grants);
+}
+
 /**
  * Each open grant's flow in list order, one at a time, reading from the fresh
  * state whether it landed. `act(id)` shows that state and answers with it plus

@@ -4,7 +4,7 @@
    onboarding.js's does over main's requirements:act; whether a grant landed
    is read from that answer. */
 import { describe, expect, it } from "vitest";
-import { ACTION_IGNORED, accessPrimary, actionMiss, clearMissed, grantAction, runGrants } from "../src/renderer/onboardingGrants.js";
+import { ACTION_IGNORED, accessPrimary, actionMiss, clearMissed, grantAction, repeatMiss, runGrants } from "../src/renderer/onboardingGrants.js";
 
 interface Grant {
   id: string;
@@ -200,6 +200,17 @@ describe("a refreshed Access list", () => {
     );
     expect(advancedBeforeActionAnswered).toMatchObject({ progress: 1 });
     expect(clearMissed(advancedBeforeActionAnswered, [grant("account:google", "met", 2)])).toBeNull();
+  });
+
+  it("settles a timeout against progress already visible when the action answers", () => {
+    const fresh = [grant("account:google", "met", 2)];
+
+    expect(repeatMiss(
+      "account:google",
+      { grants: fresh, error: "We couldn't see a new account." },
+      1,
+      fresh,
+    )).toBeNull();
   });
 });
 
