@@ -4,8 +4,8 @@
  * what to show and the setup flow (Task 5+) walks `grantList()` to ask for
  * what is still missing.
  */
-import { automationApp, BROWSER_PLUGIN, type PluginManifest } from "@domo/device-core";
-import { paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
+import { BROWSER_PLUGIN, type PluginManifest } from "@domo/device-core";
+import { paneFor, permissionTitle } from "./capabilitiesModel.js";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
@@ -60,8 +60,7 @@ export interface PluginsInput {
 export const accountRequirementId = (id: string): string => `account:${id}`;
 
 function permissionRequirement(key: string, met: boolean): Requirement {
-  const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
-  const title = app ? `Automation for ${app.name}` : (PERMISSION_TITLES[key] ?? key);
+  const title = permissionTitle(key);
   return {
     id: key,
     title,

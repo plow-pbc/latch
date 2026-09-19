@@ -62,7 +62,7 @@ import { AuditIndex, AuditQuery } from "./auditIndex.js";
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
+import { capabilitiesView, CapabilitiesView, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
 import { browserPluginRow, grantList, pluginRows, type GrantItem, type PluginRow } from "./pluginsModel.js";
 import { actOnRequirement } from "./requirements.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
@@ -1439,7 +1439,7 @@ function grantTargetFor(key: string): GrantTarget | null {
   const pane = paneFor(key);
   if (!pane) return null;
   const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
-  const label = app ? `Automation for ${app.name}` : (PERMISSION_TITLES[key] ?? key);
+  const label = permissionTitle(key);
   const probes = device?.hostProbes ?? null;
   const probe = async (): Promise<boolean> => {
     if (key === "full_disk_access") return probeFullDiskAccess();

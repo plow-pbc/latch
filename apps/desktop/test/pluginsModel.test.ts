@@ -62,15 +62,15 @@ it("names an unmet account requirement with the action that fixes it, and flips 
   ]);
 });
 
-it("names an unmet permission requirement, and flips met once granted", () => {
+it.each([
+  ["full_disk_access", { title: "Full Disk Access", detail: "Drag Plow Latch into the list in System Settings.", action: "Grant Full Disk Access" }],
+  // An Automation pair names its app — the same words the grant panel shows.
+  ["automation:com.apple.MobileSMS", { title: "Automation for Messages", detail: "Allow it when macOS asks, or in System Settings.", action: "Grant Automation for Messages" }],
+])("names an unmet %s requirement, and flips met once granted", (key, words) => {
   const requirements = (granted: string[]) =>
-    pluginRows(build({ requires: { permissions: ["full_disk_access"] }, enabled: true, granted }))[0]!.requirements;
-  expect(requirements([])).toEqual([
-    { id: "full_disk_access", title: "Full Disk Access", detail: "Drag Plow Latch into the list in System Settings.", action: "Grant Full Disk Access", met: false },
-  ]);
-  expect(requirements(["full_disk_access"])).toEqual([
-    { id: "full_disk_access", title: "Full Disk Access", detail: "Drag Plow Latch into the list in System Settings.", action: "Grant Full Disk Access", met: true },
-  ]);
+    pluginRows(build({ requires: { permissions: [key] }, enabled: true, granted }))[0]!.requirements;
+  expect(requirements([])).toEqual([{ id: key, ...words, met: false }]);
+  expect(requirements([key])).toEqual([{ id: key, ...words, met: true }]);
 });
 
 it("keeps a disabled plugin's status off, but still lists its requirements — hiding them is the tab's business", () => {

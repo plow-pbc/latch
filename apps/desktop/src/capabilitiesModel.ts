@@ -121,6 +121,12 @@ export const PERMISSION_TITLES: Record<string, string> = {
   screen_recording: "Screen & System Audio Recording",
 };
 
+/** A switch's name as the owner reads it: an Automation pair names its app. */
+export function permissionTitle(key: string): string {
+  const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
+  return app ? `Automation for ${app.name}` : (PERMISSION_TITLES[key] ?? key);
+}
+
 /**
  * Where each switch lives, as the deep link System Settings answers. The
  * panel flow opens the pane and floats beside it; whether the pane also
