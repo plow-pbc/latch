@@ -1021,13 +1021,21 @@ export class PlowApi {
 }
 
 /**
+ * The public `key_prefix` a token carries: `token[5:13]`, the eight
+ * characters AFTER the `plow_` scheme, not including it (plow's
+ * `api/plow/auth.py`). Plow stores this server-side per key, so it identifies
+ * a session without ever holding its secret.
+ */
+export function keyPrefixOf(credential: string): string {
+  return credential.slice(5, 13);
+}
+
+/**
  * Is this row the credential this Mac holds?
  *
- * Plow stores `token[5:13]` as the public `key_prefix` — the eight characters
- * AFTER the `plow_` scheme, not including it (plow's `api/plow/auth.py`). So a
- * prefix never starts the token it came from, and comparing with `startsWith`
- * matched nothing in production while looking right against a hand-written
- * fixture.
+ * A prefix never starts the token it came from, so comparing with
+ * `startsWith` matched nothing in production while looking right against a
+ * hand-written fixture.
  *
  * Equality against that same fixed-width slice is the whole check: a string of
  * any other length cannot equal it, so nothing here guesses at a partial
@@ -1036,5 +1044,5 @@ export class PlowApi {
  */
 export function isDeviceCredential(prefix: string | null, credential: string): boolean {
   if (!prefix || !credential) return false;
-  return credential.slice(5, 13) === prefix;
+  return keyPrefixOf(credential) === prefix;
 }

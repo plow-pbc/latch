@@ -11,6 +11,7 @@
  */
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 import { InferenceStatus, inferenceStatus } from "./reviewPolicy.js";
+import { keyPrefixOf, PlowApi } from "./plowApi.js";
 
 /** Read-modify-write. What the user chose is what stays on disk. */
 function update(home: string, mutate: (settings: Settings) => void): Settings {
@@ -103,6 +104,15 @@ export function isSignedIn(home: string): boolean {
  * locally, even when the revoke fails" executable by a test. `main.ts` cannot
  * be imported under vitest, so that property is only provable while this lives
  * here.
+ *
+ * A revoke that never completes — offline, a quit mid-flight — leaves the old
+ * login session live on the account, and Plow refuses to register this Mac's
+ * device to a NEW session while that one still is (409). So the credential's
+ * `key_prefix`, a public identifier and never the secret, is recorded as
+ * `unretiredKeyPrefix` in THIS SAME synchronous section, before the local
+ * sign-out's first `await` — so it survives a quit exactly as reliably as the
+ * local erase does. A successful revoke clears it; a failed one leaves it for
+ * `retireUnretiredSession` to retry on the next sign-in.
  */
 export async function revokeAndSignOut(
   home: string,
@@ -111,13 +121,55 @@ export async function revokeAndSignOut(
   const credential = (loadSettings(home).relayCredential ?? "").trim();
   signOutOfPlow(home);
   if (!credential) return true;
+  const prefix = keyPrefixOf(credential);
+  update(home, (s) => (s.unretiredKeyPrefix = prefix));
   try {
     await revoke(credential);
+    // Only clear a record that still names THIS attempt — the guard `update`
+    // applies everywhere else, kept here even though nothing else can write
+    // this field between the line above and this one.
+    update(home, (s) => {
+      if (s.unretiredKeyPrefix === prefix) s.unretiredKeyPrefix = undefined;
+    });
     return true;
   } catch {
     console.warn("[settings] session revoke failed; already signed out locally");
     return false;
   }
+}
+
+/**
+ * Retire the session an earlier offline sign-out recorded but could not
+ * reach — the fix for the 409 above. Called at the top of every relay
+ * registration attempt, so a Mac stuck saying "Plow returned 409" clears
+ * itself on the very next connect rather than staying wedged until the old
+ * session idles out.
+ *
+ * Nothing to do (no pending record, or no credential to act with) is not an
+ * error — most connects have nothing to retire, and this must not itself
+ * demand a credential. Otherwise: find the still-active key wearing that
+ * prefix and revoke it, then clear the record so a Mac that has nothing left
+ * to retire stops asking.
+ *
+ * Errors propagate rather than being swallowed here: the relay client that
+ * calls this already backs off and retries `beforeConnect`, and the record
+ * stays on disk for that retry — unlike `revokeAndSignOut`, this is not
+ * itself the best-effort boundary.
+ */
+export async function retireUnretiredSession(
+  home: string,
+  api: Pick<PlowApi, "listApiKeys" | "revokeApiKey">,
+): Promise<void> {
+  const settings = loadSettings(home);
+  const prefix = settings.unretiredKeyPrefix;
+  const credential = (settings.relayCredential ?? "").trim();
+  if (!prefix || !credential) return;
+  const keys = await api.listApiKeys(credential);
+  const stale = keys.find((key) => key.is_active && key.key_prefix === prefix);
+  if (stale) await api.revokeApiKey(credential, stale.id);
+  update(home, (s) => {
+    if (s.unretiredKeyPrefix === prefix) s.unretiredKeyPrefix = undefined;
+  });
 }
 
 /**

@@ -101,6 +101,7 @@ import {
   readAgentPurpose,
   readInference,
   setAgentPurpose,
+  retireUnretiredSession,
   revokeAndSignOut,
   setApprovalMode,
   signOutOfPlow,
@@ -709,7 +710,8 @@ async function signOutThisMac(): Promise<void> {
   await startRelay();
   if (!(await revoking)) {
     onboarding?.showMessage(
-      "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
+      "Signed out on this Mac. Plow could not be reached to revoke the session — " +
+        "Plow Latch revokes it the next time this Mac signs in, or revoke it now in Plow's account settings.",
     );
   }
 }
@@ -2069,9 +2071,19 @@ async function startRelay(): Promise<void> {
     credential,
     deviceId,
     beforeConnect: async () => {
+      // One instance, logged through `loggingFetch`: `plow-wire.log` is the
+      // only on-disk account of what Plow answered, and a 409 here is exactly
+      // the failure it must be possible to read back after the fact.
+      const api = new PlowApi(apiBaseUrl, loggingFetch(home));
+      // A Mac that signed out offline may still be holding Plow's account
+      // for an old session it could never revoke — and Plow refuses to
+      // register this Mac's device to a new one while that old one is live
+      // (409). Clear it before every registration attempt, so a Mac stuck at
+      // "Plow returned 409" un-sticks itself on the very next connect.
+      await retireUnretiredSession(home, api);
       let registered;
       try {
-        registered = await new PlowApi(apiBaseUrl).registerRelayDevice(credential, deviceId, hostName());
+        registered = await api.registerRelayDevice(credential, deviceId, hostName());
       } catch (error) {
         if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
         if (loadSettings(home).relayCredential.trim() !== credential) return;

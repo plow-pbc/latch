@@ -136,6 +136,13 @@ export interface Settings {
   relayCredential: string;
   /** The account this Mac is signed into. */
   accountUid: string;
+  /**
+   * The key_prefix (a public identifier, never the secret) of a login session
+   * this Mac signed out of but could not retire server-side. Plow refuses to
+   * register this Mac's device to a NEW session while that one is still live,
+   * so the next sign-in retires it first — see `retireUnretiredSession`.
+   */
+  unretiredKeyPrefix?: string;
   /** This installation's server-authored MCP endpoint. */
   mcpUrl: string;
   /** The last-selected main-window tab, restored across launches.
