@@ -183,8 +183,7 @@ describe("signing out retires the credential server-side, best effort", () => {
 
     expect(onDiskWhenAsked).toBe("");
     expectSignedOutWithAdversarial(home);
-    // The record is written in the SAME synchronous section as the local
-    // erase — a quit mid-revoke must not lose it.
+    // Same synchronous section as the local erase — a quit mid-revoke keeps it.
     expect(stored(home).unretiredKeyPrefix).toBe(keyPrefixOf(PLOW_CREDENTIAL));
   });
 
@@ -223,27 +222,12 @@ describe("signing out retires the credential server-side, best effort", () => {
 describe("retireUnretiredSession clears the session an offline sign-out could not reach", () => {
   const PREFIX = keyPrefixOf(PLOW_CREDENTIAL);
 
-  function keyInfo(overrides: Partial<KeyInfo> = {}): KeyInfo {
-    return {
-      id: 1,
-      key_prefix: null,
-      name: null,
-      scopes: [],
-      tokens_used: 0,
-      is_active: true,
-      last_seen_at: null,
-      created_at: null,
-      agent_uid: null,
-      chat_uids: [],
-      device: null,
-      relay_resource_uid: null,
-      ...overrides,
-    };
-  }
+  const keyInfo = (overrides: Partial<KeyInfo> = {}): KeyInfo => ({
+    id: 1, key_prefix: null, name: null, scopes: [], tokens_used: 0,
+    is_active: true, last_seen_at: null, created_at: null, agent_uid: null,
+    chat_uids: [], device: null, relay_resource_uid: null, ...overrides,
+  });
 
-  /** Records revoked ids rather than counting calls, so the assertion reads
-   * the observable outcome (which key died) instead of how many times a
-   * method fired. */
   function fakeApi(keys: KeyInfo[]) {
     const revoked: number[] = [];
     const api = {
@@ -257,38 +241,15 @@ describe("retireUnretiredSession clears the session an offline sign-out could no
   }
 
   it.each([
-    {
-      name: "an active key holding the pending prefix, among others",
-      pending: true,
-      keys: [
-        keyInfo({ id: 10, key_prefix: "other001", is_active: true }),
-        keyInfo({ id: 20, key_prefix: PREFIX, is_active: true }),
-      ],
-      expectRevoked: [20],
-      expectListed: true,
-    },
-    {
-      name: "only an inactive or other-prefix key",
-      pending: true,
-      keys: [
-        keyInfo({ id: 10, key_prefix: PREFIX, is_active: false }),
-        keyInfo({ id: 30, key_prefix: "other002", is_active: true }),
-      ],
-      expectRevoked: [],
-      expectListed: true,
-    },
-    {
-      name: "no pending session recorded at all",
-      pending: false,
-      keys: [],
-      expectRevoked: [],
-      expectListed: false,
-    },
+    { name: "an active key holding the pending prefix, among others", pending: true,
+      keys: [keyInfo({ id: 10, key_prefix: "other001" }), keyInfo({ id: 20, key_prefix: PREFIX })],
+      expectRevoked: [20], expectListed: true },
+    { name: "only an inactive or other-prefix key", pending: true,
+      keys: [keyInfo({ id: 10, key_prefix: PREFIX, is_active: false }), keyInfo({ id: 30, key_prefix: "other002" })],
+      expectRevoked: [], expectListed: true },
+    { name: "no pending session recorded at all", pending: false, keys: [], expectRevoked: [], expectListed: false },
   ])("$name", async ({ pending, keys, expectRevoked, expectListed }) => {
-    const home = homeWith({
-      relayCredential: PLOW_CREDENTIAL,
-      ...(pending ? { unretiredKeyPrefix: PREFIX } : {}),
-    });
+    const home = homeWith({ relayCredential: PLOW_CREDENTIAL, ...(pending ? { unretiredKeyPrefix: PREFIX } : {}) });
     const { api, revoked } = fakeApi(keys);
 
     await retireUnretiredSession(home, api);
@@ -298,14 +259,9 @@ describe("retireUnretiredSession clears the session an offline sign-out could no
     expect(stored(home).unretiredKeyPrefix).toBeUndefined();
   });
 
-  it("keeps the record and lets a listing failure propagate, so the relay client's own retry tries again", async () => {
+  it("keeps the record when listing fails, and lets the rejection propagate", async () => {
     const home = homeWith({ relayCredential: PLOW_CREDENTIAL, unretiredKeyPrefix: PREFIX });
-    const api = {
-      listApiKeys: vi.fn(async () => {
-        throw new Error("offline");
-      }),
-      revokeApiKey: vi.fn(),
-    };
+    const api = { listApiKeys: vi.fn(async () => { throw new Error("offline"); }), revokeApiKey: vi.fn() };
 
     await expect(retireUnretiredSession(home, api)).rejects.toThrow("offline");
 
