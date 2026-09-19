@@ -1463,7 +1463,8 @@ function grantTargetFor(key: string): GrantTarget | null {
  * is on afterwards is the caller's fresh read.
  */
 async function actOnPermission(key: string): Promise<void> {
-  const view = await capabilitiesNow();
+  const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
+  const view = await capabilitiesNow(device ? await device.hostInventory({ automationTargets: app ? [app.name] : [] }) : null);
   const row = view.sections.flatMap((s) => s.rows).find((r) => r.key === key);
   if (!row || !device) return;
   const inPanel = async (): Promise<void> => {
@@ -1481,7 +1482,6 @@ async function actOnPermission(key: string): Promise<void> {
       break;
     }
     case "request": {
-      const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
       if (app) {
         const status = await requestAutomation(app.bundleId, osascriptRunner());
         if (status === "granted" || status === "denied" || status === "not_asked") {
