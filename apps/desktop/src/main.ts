@@ -1525,9 +1525,11 @@ async function actOnPermission(key: string): Promise<boolean> {
 }
 
 /**
- * Bring the window that asked back to the front once its flow ends — the
+ * Bring the window that asked back to the front once its grant lands — the
  * owner was last in System Settings, a browser or Safari. This app's port of
- * PermissionFlow's `closePanel(returnToPreviousApp:)`.
+ * PermissionFlow's `closePanel(returnToPreviousApp:)`: upstream returns when
+ * its panel closes, this returns only on a grant, so an owner still working
+ * in a bare pane or mid sign-in is not pulled away from it.
  */
 function returnToCaller(sender: Electron.WebContents): void {
   const win = BrowserWindow.fromWebContents(sender);
@@ -1538,8 +1540,7 @@ function returnToCaller(sender: Electron.WebContents): void {
 }
 
 ipcMain.handle("capabilities:act", async (e, rawKey: unknown) => {
-  await actOnPermission(typeof rawKey === "string" ? rawKey : "");
-  returnToCaller(e.sender);
+  if (await actOnPermission(typeof rawKey === "string" ? rawKey : "")) returnToCaller(e.sender);
   return capabilitiesNow();
 });
 // "Not now" on a row: off the badge until a block newer than this lands.
@@ -1584,10 +1585,16 @@ function connectedAccountIds(): string[] {
 /** The whole tab, fresh: what is staged, what each plugin still needs, and
  *  the one ordered list of it setup walks. A permission is met when Settings'
  *  own Permissions section reads it granted — one answer, so the two tabs
- *  cannot disagree. */
-async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; error: string | null }> {
+ *  cannot disagree. The inventory asks only about the Automation pairs a
+ *  staged plugin declares: this runs on every refresh, and the full sweep
+ *  waits out a probe timeout on any app not answering Apple events. */
+async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
-  const inventory = device ? await device.hostInventory() : null;
+  const automationTargets = stagedPlugins
+    .flatMap((p) => p.manifest.requires.permissions)
+    .filter((key) => key.startsWith("automation:"))
+    .map((key) => automationApp(key.slice("automation:".length))!.name);
+  const inventory = device ? await device.hostInventory({ automationTargets }) : null;
   const view = await capabilitiesNow(inventory);
   const granted = view.sections.flatMap((s) => s.rows).filter((r) => r.status === "granted").map((r) => r.key);
   const rows = pluginRows({
@@ -1606,7 +1613,7 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; e
     fullDiskAccess: granted.includes("full_disk_access"),
     description: device?.skills.skill(BROWSING_SKILL.name)?.description ?? BROWSING_SKILL.description,
   }));
-  return { rows, grants: grantList(rows), error: null };
+  return { rows, grants: grantList(rows) };
 }
 
 ipcMain.handle("plugins:get", async () => pluginsNow());
@@ -1626,22 +1633,22 @@ ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
   return pluginsNow();
 });
 
-/** Every requirement button in the app: the act runs to its flow's end, the
- *  owner is brought back here, and the answer is the fresh tab with whether
- *  it landed. */
+/** A plugin requirement's button, by id: the act runs to its flow's end, a
+ *  grant that landed brings the owner back here, and the answer is the fresh
+ *  tab with whether it landed. Settings' rows share its permission half
+ *  through capabilities:act. */
 ipcMain.handle("requirements:act", async (e, id: unknown) => {
   const result = await actOnRequirement(typeof id === "string" ? id : "", {
     permission: actOnPermission,
-    connectAccount: async () => {
+    connectAccount: async (account) => {
       await connectors?.connect();
-      return connectedAccountIds().includes("google");
+      return connectedAccountIds().includes(account);
     },
     fullDiskAccess: probeFullDiskAccess,
     enableSafari: () => enableSafariJavaScript(unsandboxedRunner),
   });
-  returnToCaller(e.sender);
-  const now = await pluginsNow();
-  return { ...now, granted: result.granted, error: result.error ?? now.error };
+  if (result.granted) returnToCaller(e.sender);
+  return { ...(await pluginsNow()), granted: result.granted, error: result.error };
 });
 // The floating panel's poll: has the switch it points at landed?
 ipcMain.handle("grant:state", async () => {

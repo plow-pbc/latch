@@ -1,8 +1,9 @@
 /**
- * The one grant seam every button in the app goes through (main's
- * `requirements:act`): a requirement id from pluginsModel.ts, run to the
- * end of its flow, answering whether it is met afterwards. Pure over its
- * deps, which main binds to the panel, the connectors and Safari.
+ * What a plugin requirement's button does (main's `requirements:act`): a
+ * requirement id from pluginsModel.ts, run to the end of its flow, answering
+ * whether it is met afterwards. A permission goes to the same act Settings'
+ * rows use. Pure over its deps, which main binds to the panel, the
+ * connectors and Safari.
  */
 import { accountRequirementId, SAFARI_JAVASCRIPT } from "./pluginsModel.js";
 

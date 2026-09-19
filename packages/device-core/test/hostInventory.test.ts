@@ -175,6 +175,23 @@ describe("hostInventory", () => {
   });
 });
 
+describe("DeviceAgent.hostInventory", () => {
+  // The Plugins tab reads the inventory on every refresh and asks only about
+  // the Automation pairs a staged plugin declares — never the whole sweep,
+  // where one app that does not answer Apple events costs a probe timeout.
+  it.each<[string, readonly string[] | undefined, readonly string[]]>([
+    ["every target by default", undefined, AUTOMATION_TARGETS],
+    ["only the targets asked about", ["Messages"], ["Messages"]],
+    ["none when none are asked about", [], []],
+  ])("reports %s", async (_name, automationTargets, reported) => {
+    const home = tempDir();
+    const probes = scriptedProbes({ automation: { Messages: "granted" } });
+    const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }), null, home, null, [], null, probes);
+    const inv = await device.hostInventory({ automationTargets });
+    expect(inv.automation.map((a) => a.target)).toEqual(reported);
+  });
+});
+
 describe.skipIf(!ON_MAC)("DeviceAgent.hostInventory through the real executor", () => {
   it("proves sandbox-exec spawns, and leaves no run in the audit log", async () => {
     const home = tempDir();

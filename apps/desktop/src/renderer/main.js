@@ -2307,37 +2307,24 @@ async function renderPlugins() {
   };
   const reload = async () => draw(await window.domo.pluginsGet());
 
-  /** A requirement's button, while it is doing its one thing. */
-  const busy = async (button, label, act) => {
-    button.disabled = true;
-    const was = button.textContent;
-    button.textContent = label;
-    try {
-      await act();
-      await reload();
-    } catch {
-      button.disabled = false;
-      button.textContent = was;
-    }
-  };
-
   // A row with no action (e.g. the Browser row's missing runtime) shows
   // just the sub text; one with an action gets a button that runs that
-  // requirement by id, whatever kind it is.
+  // requirement by id, whatever kind it is, and waits for its flow to end.
+  // The answer is the fresh tab, with the act's error line when it has one.
   const unmetRow = (u) => {
     const action = u.action
       ? el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } })
       : null;
-    if (action) {
-      action.addEventListener("click", () =>
-        busy(action, "Waiting…", async () => {
-          // A failed act's error line is drawn BEFORE throwing — busy()'s
-          // catch only resets this button, which draw() has by then replaced.
-          const v = await window.domo.requirementsAct(u.id);
-          draw(v);
-          if (v.error) throw new Error(v.error);
-        }));
-    }
+    action?.addEventListener("click", async () => {
+      action.disabled = true;
+      action.textContent = "Waiting…";
+      try {
+        draw(await window.domo.requirementsAct(u.id));
+      } catch {
+        action.disabled = false;
+        action.textContent = u.action;
+      }
+    });
     return el("div", { class: "cap-row plugin-req" }, [
       el("span", { class: "status-dot off" }),
       el("div", {}, [

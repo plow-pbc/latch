@@ -55,6 +55,7 @@ import {
   hostInventory,
   HostInventory,
   HostProbes,
+  InventoryDeps,
   isHostGate,
   nodeProbes,
   stderrHint,
@@ -553,10 +554,14 @@ export class DeviceAgent {
    * The sandbox rows go through the REAL executor with a throwaway profile:
    * a read-only run, no network, no writes, so it is also reapable — and
    * `/usr/bin/true` exits at once regardless.
+   *
+   * `automationTargets` narrows the Automation sweep for a caller that needs
+   * only some pairs (the Plugins tab); everything else is always probed.
    */
-  async hostInventory(): Promise<HostInventory> {
+  async hostInventory(scope: Pick<InventoryDeps, "automationTargets"> = {}): Promise<HostInventory> {
     const vaultDir = this.vaultDir;
     return hostInventory({
+      ...scope,
       probes: this.hostProbes,
       ownerHome: this.ownerHome,
       runSandboxed:
