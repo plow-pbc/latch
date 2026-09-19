@@ -1415,6 +1415,11 @@ async function capabilitiesNow(inventory?: HostInventory | null): Promise<Capabi
   const settings = loadSettings(home);
   return capabilitiesView({
     inventory: inv,
+    // Every inventory read feeds the one watch, so Settings, the Plugins tab
+    // and the grant panel tell a relaunch from a broken grant the same way.
+    fullDisk: inv
+      ? fullDisk?.observe(inv.full_disk_access.granted, inv.full_disk_access.granted && inv.child_attribution.status === "ok")
+      : undefined,
     automation: automationRows(inv),
     // The log as the live index holds it — not read off disk again.
     events: device ? ensureAuditIndex().events() : [],
@@ -1601,8 +1606,6 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
   const inventory = device ? await device.hostInventory({ automationTargets }) : null;
   const view = await capabilitiesNow(inventory);
   const granted = view.sections.flatMap((s) => s.rows).filter((r) => r.status === "granted").map((r) => r.key);
-  // A read that sees the app without it tells a later return from a broken grant.
-  if (inventory) fullDisk?.observe(inventory.full_disk_access.granted, granted.includes("full_disk_access"));
   const rows = pluginRows({
     plugins: stagedPlugins.map((p) => ({
       manifest: p.manifest,

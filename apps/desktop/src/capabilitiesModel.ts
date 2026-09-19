@@ -323,6 +323,9 @@ export interface CapabilitiesInput {
   /** Whether Contacts and Calendars can be asked for in process (the addon
    *  is loaded). Without it their button is honest and points at the pane. */
   canRequestInProcess?: boolean;
+  /** Full Disk Access over this run (FullDiskWatch), when main is watching:
+   *  it alone tells a re-added grant waiting on a relaunch from a broken one. */
+  fullDisk?: FullDiskState;
 }
 
 const FOLDERS: readonly ("files_desktop" | "files_documents" | "files_downloads")[] = [
@@ -405,7 +408,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       // Granted-but-not-inherited reads "denied" deliberately — a plugin may
       // require this switch directly, so the status is a readiness answer, and
       // a grant a child cannot use is not access.
-      fda === true && !inherited
+      (input.fullDisk ? input.fullDisk === "broken" : fda === true && !inherited)
         ? "Granted to this app, but a sandboxed run cannot inherit it — remove Plow Latch from the list and add it again."
         : "Quit and reopen after granting.",
     ),
