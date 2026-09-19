@@ -42,6 +42,8 @@ let doneAgent = null;
  * in place, so typing never loses its focus to a redraw. */
 let gatekeeper = null;
 let gatekeeperPresets = null;
+/** The deck last shown, so an edited draft comes back from Plugins with its own examples. */
+let lastDeck = null;
 const PREVIEW_PAUSE_MS = 1000;
 const mutate = singleFlight(() => state?.busy === true);
 
@@ -296,7 +298,7 @@ function schedulePreview() {
 
 function choosePreset(key) {
   const g = gatekeeper;
-  g.deck = key;
+  g.deck = lastDeck = key;
   g.text = gatekeeperPresets[key].text;
   g.results = gatekeeperPresets[key].rows.map(() => null);
   g.view = null; // render() rebuilds a screen with no view
@@ -385,7 +387,7 @@ function gatekeeperScreen() {
 async function enterGatekeeper() {
   gatekeeperPresets ??= await window.domo.gatekeeperPresets();
   if (state?.step !== "gatekeeper" || !gatekeeperPresets) return;
-  const deck = presetFor(state.purpose, gatekeeperPresets) ?? "home";
+  const deck = lastDeck = presetFor(state.purpose, gatekeeperPresets) ?? lastDeck ?? "home";
   gatekeeper = {
     deck,
     text: state.purpose,
