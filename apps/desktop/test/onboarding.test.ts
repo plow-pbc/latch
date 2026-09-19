@@ -298,11 +298,9 @@ describe("wizard steps around the existing verification flow", () => {
     expect((await onboarding.advance()).step).toBe("availability");
   });
 
-  it("defaults the plugins once, entering from Privacy", async () => {
+  it("defaults the plugins once, entering from Privacy — a switch flipped back on survives a relaunch", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    let applied = 0;
     const applyPluginDefault = async () => {
-      applied += 1;
       const live = loadSettings(home);
       live.disabledPlugins = ["cant-work-yet"];
       saveSettings(home, live);
@@ -314,14 +312,18 @@ describe("wizard steps around the existing verification flow", () => {
     expect(onboarding.state().step).toBe("privacy");
 
     expect((await onboarding.advance()).step).toBe("plugins");
-    expect(applied).toBe(1);
     expect(loadSettings(home).disabledPlugins).toEqual(["cant-work-yet"]);
 
+    // The owner turns the defaulted-off plugin back on.
+    const live = loadSettings(home);
+    live.disabledPlugins = [];
+    saveSettings(home, live);
+
     // A relaunch resumes directly on Plugins — Privacy is never re-entered —
-    // so the default must not run again.
+    // so the default must not run again and flip it back off.
     const relaunched = build({ applyPluginDefault });
     expect(relaunched.state().step).toBe("plugins");
-    expect(applied).toBe(1);
+    expect(loadSettings(home).disabledPlugins).toEqual([]);
   });
 
   it("keeps the owner on Privacy when the plugin default throws, and retries it on the next advance", async () => {
@@ -348,59 +350,58 @@ describe("wizard steps around the existing verification flow", () => {
     expect(applied).toBe(2);
   });
 
-  it("does not resume into Access when reset() lands during accessNeeded, and leaves telemetry unsaved", async () => {
-    let release: (needsAccess: boolean) => void = () => {};
-    const pending = new Promise<boolean>((resolve) => {
-      release = resolve;
-    });
-    const settings = loadSettings(home);
-    settings.relayCredential = DEVICE_TOKEN;
-    saveSettings(home, settings);
-    const onboarding = build({ accessNeeded: () => pending });
-    onboarding.setTelemetryEnabled(false);
-
-    const advancing = onboarding.advance();
-    expect(onboarding.state().busy).toBe(true);
-
-    // Sign-out lands while accessNeeded is still in flight.
-    signOutOfPlow(home);
-    expect(onboarding.reset().step).toBe("welcome");
-
-    release(true);
-    const settled = await advancing;
-
-    // The reset is left alone — not overwritten with Access — and the pending
-    // telemetry choice from the signed-out session was never written.
-    expect(settled.step).toBe("welcome");
-    expect(onboarding.state().step).toBe("welcome");
-    expect(loadSettings(home).telemetryEnabled).toBe(true);
-  });
-
-  it("does not resume into Plugins when reset() lands during applyPluginDefault", async () => {
+  it.each<{
+    name: string;
+    deps: (pending: Promise<void>) => Partial<OnboardingDeps>;
+    enter: (onboarding: Onboarding) => Promise<void>;
+    after?: () => void;
+  }>([
+    {
+      name: "accessNeeded",
+      deps: (pending) => ({ accessNeeded: async () => { await pending; return true; } }),
+      enter: async (onboarding) => {
+        const settings = loadSettings(home);
+        settings.relayCredential = DEVICE_TOKEN;
+        saveSettings(home, settings);
+        onboarding.setTelemetryEnabled(false);
+      },
+      after: () => {
+        // The pending telemetry choice from the signed-out session was never written.
+        expect(loadSettings(home).telemetryEnabled).toBe(true);
+      },
+    },
+    {
+      name: "applyPluginDefault",
+      deps: (pending) => ({ applyPluginDefault: () => pending }),
+      enter: async (onboarding) => {
+        plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+        await onboarding.advance();
+        await settle();
+        expect(onboarding.state().step).toBe("privacy");
+      },
+    },
+  ])("does not resume past reset() lands during $name", async ({ deps, enter, after }) => {
     let release: () => void = () => {};
     const pending = new Promise<void>((resolve) => {
       release = resolve;
     });
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    const onboarding = build({ applyPluginDefault: () => pending });
-
-    await onboarding.advance();
-    await settle();
-    expect(onboarding.state().step).toBe("privacy");
+    const onboarding = build(deps(pending));
+    await enter(onboarding);
 
     const advancing = onboarding.advance();
     expect(onboarding.state().busy).toBe(true);
 
-    // Sign-out lands while the plugin default is still in flight.
+    // Sign-out lands while the dep is still in flight.
     signOutOfPlow(home);
     expect(onboarding.reset().step).toBe("welcome");
 
     release();
     const settled = await advancing;
 
-    // The reset is left alone — not overwritten with Plugins.
+    // The reset is left alone — not overwritten with wherever the dep resumes.
     expect(settled.step).toBe("welcome");
     expect(onboarding.state().step).toBe("welcome");
+    after?.();
   });
 
   it("does not publish an ignored telemetry choice", () => {
