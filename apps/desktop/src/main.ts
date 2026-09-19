@@ -2073,10 +2073,10 @@ async function startRelay(): Promise<void> {
     beforeConnect: async () => {
       // Logged, so a 409 here lands in plow-wire.log.
       const api = new PlowApi(apiBaseUrl, loggingFetch(home));
-      // Clears a session an earlier offline sign-out couldn't reach.
-      await retireUnretiredSession(home, api);
       let registered;
       try {
+        // Clears a session an earlier offline sign-out couldn't reach.
+        await retireUnretiredSession(home, api);
         registered = await api.registerRelayDevice(credential, deviceId, hostName());
       } catch (error) {
         if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
