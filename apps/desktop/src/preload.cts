@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld("domo", {
   // path never touches the renderer either — main runs the open dialog and
   // reads the file itself.
   vaultImportSources: () => ipcRenderer.invoke("vault:importSources"),
+  vaultImportRequested: () => ipcRenderer.invoke("vault:importRequested"),
+  vaultImportAcknowledged: () => ipcRenderer.invoke("vault:importAcknowledged"),
   vaultImportInspect: (text: string) => ipcRenderer.invoke("vault:importInspect", text),
   vaultImportFile: () => ipcRenderer.invoke("vault:importFile"),
   // The 1Password vaults the owner kept, by id: main re-stages just their rows
@@ -185,7 +187,7 @@ contextBridge.exposeInMainWorld("domo", {
   // so the renderer never has to build it or be trusted with it.
   onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
   onboardingNewCode: () => ipcRenderer.invoke("onboarding:newCode"),
-  onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
+  onboardingFinish: (destination?: string) => ipcRenderer.invoke("onboarding:finish", destination),
   onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
 
   // Connected accounts. OAuth stays in main: these calls carry only the

@@ -4,7 +4,7 @@
    onboarding.js's does over main's requirements:act; whether a grant landed
    is read from that answer. */
 import { describe, expect, it } from "vitest";
-import { accessPrimary, runGrants } from "../src/renderer/onboardingGrants.js";
+import { accessPrimary, actionMiss, clearMissed, runGrants } from "../src/renderer/onboardingGrants.js";
 
 interface Grant {
   id: string;
@@ -21,28 +21,23 @@ type Outcome = "met" | "relaunch" | "miss" | "warn" | "throw";
 function run(grants: Grant[], outcomes: Record<string, Outcome> = {}, skipped: string[] = [], leaveOn?: string) {
   let state = { grants };
   let here = true;
-  let running: string | null = null;
   const walked: string[] = [];
-  const runningDuringAct: (string | null)[] = [];
+  const act = async (id: string) => {
+    walked.push(id);
+    if (id === leaveOn) here = false;
+    const how = outcomes[id] ?? "met";
+    if (how === "throw") throw new Error("the bridge went away");
+    const status = how === "warn" ? "met" : how;
+    state = { grants: state.grants.map((g) => (g.id !== id || status === "miss" ? g : { ...g, status })) };
+    const error = { miss: "Sign-in didn't finish.", warn: "Safari did not relaunch — open it yourself." }[how as string] ?? null;
+    return { ...state, error };
+  };
   const missed = runGrants({
-    act: async (id: string) => {
-      walked.push(id);
-      runningDuringAct.push(running);
-      if (id === leaveOn) here = false;
-      const how = outcomes[id] ?? "met";
-      if (how === "throw") throw new Error("the bridge went away");
-      const status = how === "warn" ? "met" : how;
-      state = { grants: state.grants.map((g) => (g.id !== id || status === "miss" ? g : { ...g, status })) };
-      const error = { miss: "Sign-in didn't finish.", warn: "Safari did not relaunch — open it yourself." }[how as string] ?? null;
-      return { ...state, error };
-    },
+    act,
     getState: () => state,
     stillHere: () => here,
-    setRunning: (id: string | null) => {
-      running = id;
-    },
   }, new Set(skipped));
-  return missed.then((result: unknown) => ({ missed: result, walked, runningDuringAct, runningAfter: running }));
+  return missed.then((result: unknown) => ({ missed: result, walked }));
 }
 
 describe("the Access run", () => {
@@ -69,11 +64,46 @@ describe("the Access run", () => {
   ] as const)("%s", async (_name, grants, outcomes, skipped, leaveOn, expected) => {
     const result = await run([...grants], outcomes, [...skipped], leaveOn);
     expect({ missed: result.missed, walked: result.walked }).toEqual(expected);
-    // The row that shows the live line is the one whose flow is open, and
-    // nothing reads as running once the run ends.
-    expect(result.runningDuringAct).toEqual(expected.walked);
-    expect(result.runningAfter).toBeNull();
   });
+
+  it("stops on a blocked action's missing result instead of entering another grant", async () => {
+    let calls = 0;
+    let state = { grants: [grant("fda"), grant("safari")] };
+    const result = await runGrants({
+      act: async () => {
+        calls += 1;
+        if (calls === 1) return undefined;
+        state = { grants: [] };
+        return { ...state, error: null };
+      },
+      getState: () => state,
+      stillHere: () => true,
+    }, new Set());
+
+    expect(result).toEqual({ id: "fda", error: null });
+    expect(calls).toBe(1);
+  });
+});
+
+describe("an individual action result", () => {
+  it.each([
+    ["returned failure", { grants: [grant("account:google", "met")], error: "Sign-in didn't finish." }, { id: "account:google", error: "Sign-in didn't finish." }],
+    ["thrown or missing result", null, { id: "account:google", error: null }],
+    ["undefined bridge result", undefined, { id: "account:google", error: null }],
+    ["successful repeat", { grants: [grant("account:google", "met")], error: null }, null],
+  ])("keeps a repeat row actionable after a %s", (_name, result, expected) => {
+    expect(actionMiss("account:google", result)).toEqual(expected);
+  });
+});
+
+describe("a refreshed Access list", () => {
+  it("clears a transient miss once its requirement is no longer open", () => {
+    const missed = { id: "account:google", error: "Sign-in didn't finish." };
+
+    expect(clearMissed(missed, [grant("fda"), grant("account:google", "met")])).toBeNull();
+    expect(clearMissed(missed, [grant("fda"), grant("account:google")])).toEqual(missed);
+  });
+
 });
 
 describe("the Access button", () => {

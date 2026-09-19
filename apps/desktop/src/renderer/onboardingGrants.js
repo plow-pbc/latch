@@ -6,10 +6,26 @@ function openGrants(grants, skipped) {
   return grants.filter((g) => g.status === "open" && !skipped.has(g.id));
 }
 
+/** What an action result leaves for its row to explain. */
+export function actionMiss(id, result) {
+  if (!result) return { id, error: null };
+  const fresh = result.grants.find((grant) => grant.id === id);
+  return fresh?.status === "open" || result.error
+    ? { id, error: result.error }
+    : null;
+}
+
+/** A refresh can resolve a flow after its foreground action said it missed.
+ * Keep the notice only while the fresh list still calls that row open. */
+export function clearMissed(missed, grants) {
+  const fresh = grants.find((grant) => grant.id === missed?.id);
+  return missed && fresh?.status !== "open" ? null : missed;
+}
+
 /**
  * Each open grant's flow in list order, one at a time, reading from the fresh
  * state whether it landed. `act(id)` shows that state and answers with it plus
- * `error`; `setRunning` is told the id whose flow is running, then null.
+ * `error`.
  * Resolves with the grant that did not land ({ id, error }) — a throw is a
  * miss like any other, and so is a landing with an error the owner must read
  * (Safari's setting on, Safari not reopened) — or null once nothing is left,
@@ -17,18 +33,15 @@ function openGrants(grants, skipped) {
  * then this app's children can't use it, so a later flow (Safari's write)
  * would only fail.
  */
-export async function runGrants({ act, getState, stillHere, setRunning }, skipped) {
+export async function runGrants({ act, getState, stillHere }, skipped) {
   for (;;) {
     const { grants } = getState();
     const next = openGrants(grants, skipped)[0];
     if (!next || grants.some((g) => g.status === "relaunch")) return null;
-    setRunning(next.id);
     const result = await act(next.id).catch(() => null);
-    setRunning(null);
     if (!stillHere()) return null;
-    if (!result) return { id: next.id, error: null };
-    const fresh = result.grants.find((g) => g.id === next.id);
-    if (fresh?.status === "open" || result.error) return { id: next.id, error: result.error };
+    const missed = actionMiss(next.id, result);
+    if (missed) return missed;
   }
 }
 

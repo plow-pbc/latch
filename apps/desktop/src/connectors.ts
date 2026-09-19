@@ -13,7 +13,7 @@ import {
 } from "./plowApi.js";
 
 export const CONNECTOR_POLL_INTERVAL_MS = 3_000;
-export const CONNECTOR_TIMEOUT_MS = 30_000;
+export const CONNECTOR_TIMEOUT_MS = 5 * 60 * 1_000;
 export const CONNECTOR_SETUP_WAIT_MS = 2_000;
 export const CONNECTOR_TIMEOUT_NOTE =
   "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
@@ -56,7 +56,10 @@ export class Connectors {
   private notice: Pick<ConnectorsState, "message" | "noteKind"> = { message: "", noteKind: "error" };
   private connecting = false;
   private accounts: ConnectorAccount[] = [];
+  /** The first successful connector snapshot is a baseline, not an event. */
+  private hydrated = false;
   private generation = 0;
+  private pollGeneration = 0;
   private actionAbort: AbortController | null = null;
 
   constructor(private readonly deps: ConnectorsDeps) {}
@@ -90,16 +93,31 @@ export class Connectors {
     const credential = this.deps.credential().trim();
     if (this.busy || !credential) return;
     const generation = this.generation;
+    const pollGeneration = ++this.pollGeneration;
     let overview: ConnectorsOverview;
     try {
       overview = await this.deps.api.listConnectors(credential, AbortSignal.timeout(CONNECTOR_TIMEOUT_MS));
     } catch {
       return;
     }
-    if (generation !== this.generation) return;
+    if (generation !== this.generation || pollGeneration !== this.pollGeneration) return;
     const accounts = overview.google.accounts.map((account) => ({ ...account }));
-    if (JSON.stringify(accounts) === JSON.stringify(this.accounts)) return;
+    const changed = JSON.stringify(accounts) !== JSON.stringify(this.accounts);
+    const newEmails = this.hydrated ? addedAccountEmails(this.accounts, accounts) : [];
+    this.hydrated = true;
+    if (!changed) return;
     this.accounts = accounts;
+    if (newEmails.length > 0) {
+      if (
+        this.notice.message === CONNECTOR_TIMEOUT_NOTE
+        && this.notice.noteKind === "neutral"
+      ) {
+        this.notice = { message: "", noteKind: "error" };
+      }
+      for (const email of newEmails) {
+        this.deps.recordAudit("connector_connected", { provider: "google", account: email });
+      }
+    }
     this.publish();
   }
 
@@ -113,9 +131,9 @@ export class Connectors {
       this.assertCurrent(action);
       await this.openConnectUrl(connectUrl);
       this.assertCurrent(action);
-      // One deadline for the whole poll, including HTTP time. Without it, ten
-      // individually bounded requests could turn a 30-second connect into
-      // minutes when Plow accepts each request and then goes quiet.
+      // One deadline for the whole poll, including HTTP time. Without it,
+      // individually bounded requests could turn a five-minute connect into
+      // much longer when Plow accepts each request and then goes quiet.
       const pollingDeadline = AbortSignal.timeout(CONNECTOR_TIMEOUT_MS);
       const pollingSignal = AbortSignal.any([action.controller.signal, pollingDeadline]);
 
@@ -124,7 +142,13 @@ export class Connectors {
         elapsed < CONNECTOR_TIMEOUT_MS;
         elapsed += CONNECTOR_POLL_INTERVAL_MS
       ) {
-        await this.wait(CONNECTOR_POLL_INTERVAL_MS, action);
+        try {
+          await this.wait(CONNECTOR_POLL_INTERVAL_MS, action);
+        } catch (error) {
+          this.assertCurrent(action);
+          if (pollingDeadline.aborted) break;
+          throw error;
+        }
         if (pollingDeadline.aborted) break;
         let after: ConnectorsOverview;
         try {
@@ -134,15 +158,15 @@ export class Connectors {
           if (pollingDeadline.aborted) break;
           throw error;
         }
+        const [connected] = addedAccountEmails(before.google.accounts, after.google.accounts);
+        if (connected) {
+          this.deps.recordAudit("connector_connected", {
+            provider: "google",
+            account: connected,
+          });
+          return;
+        }
         if (pollingDeadline.aborted) break;
-        const connected = connectedAccount(before, after);
-        if (!connected) continue;
-
-        this.deps.recordAudit("connector_connected", {
-          provider: "google",
-          account: connected,
-        });
-        return;
       }
 
       this.assertCurrent(action);
@@ -181,6 +205,7 @@ export class Connectors {
     this.actionAbort?.abort();
     this.actionAbort = null;
     this.accounts = [];
+    this.hydrated = false;
     this.notice = { message: "", noteKind: "error" };
     this.busy = false;
     this.connecting = false;
@@ -239,6 +264,7 @@ export class Connectors {
     const overview = await this.deps.api.listConnectors(credential, signal);
     this.assertCurrent(action);
     this.accounts = overview.google.accounts.map((account) => ({ ...account }));
+    this.hydrated = true;
     this.publish();
     return overview;
   }
@@ -260,7 +286,10 @@ export class Connectors {
     }
   }
 
-  private async wait(milliseconds: number, action: ConnectorAction): Promise<void> {
+  private async wait(
+    milliseconds: number,
+    action: ConnectorAction,
+  ): Promise<void> {
     if (this.deps.wait) {
       await this.deps.wait(milliseconds);
       this.assertCurrent(action);
@@ -295,13 +324,14 @@ export class Connectors {
   }
 }
 
-function connectedAccount(
-  before: ConnectorsOverview,
-  after: ConnectorsOverview,
-): string | null {
-  if (after.google.accounts.length <= before.google.accounts.length) return null;
-  const previous = new Set(before.google.accounts.map((account) => account.email));
-  return after.google.accounts.find((account) => !previous.has(account.email))?.email ?? null;
+/** Account identity changes are a set delta; callers decide whether that
+ * delta is an owner action to audit or a baseline to adopt silently. */
+export function addedAccountEmails(
+  previous: readonly ConnectorAccount[],
+  next: readonly ConnectorAccount[],
+): string[] {
+  const knownEmails = new Set(previous.map((account) => account.email));
+  return next.map((account) => account.email).filter((email) => !knownEmails.has(email));
 }
 
 function messageOf(error: unknown): string {

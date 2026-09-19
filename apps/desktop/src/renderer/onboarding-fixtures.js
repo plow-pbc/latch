@@ -60,8 +60,14 @@ export function onboardingFixtures(now) {
     done: "On",
     status: "open",
   };
+  const examples = {
+    gog: "Can you find three times that work and send them?",
+    messages: "Do you see my thread with the contractor? Are we all paid up?",
+    wiki: "What should I know before replying to this guest about the cabin?",
+    browser: "How much is in my rental account—and did the tenants pay?",
+  };
   const row = (name, title, summary, kind, status, requirements) =>
-    ({ name, title, summary, kind, description: null, status, requirements });
+    ({ name, title, summary, kind, description: null, example: examples[name] ?? null, status, requirements });
   const gmail = "Gmail and Google Calendar";
   const iMessage = "iMessage history";
   /** The four rows, with Gmail's and iMessage's switch states and how this
@@ -76,6 +82,13 @@ export function onboardingFixtures(now) {
   const picked = {
     rows: rows("needs-setup", "needs-setup", fullDisk),
     grants: [{ ...fullDisk, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
+  };
+  const browserReady = {
+    rows: rows("off", "off", fullDisk).map((plugin) =>
+      plugin.name === "browser"
+        ? { ...plugin, status: "ready", requirements: [{ ...safari, status: "met" }] }
+        : plugin),
+    grants: [{ ...safari, status: "met", plugins: ["Browser use"] }],
   };
   const fullDiskDone = {
     rows: rows("needs-setup", "ready", fullDiskMet),
@@ -398,20 +411,19 @@ export function onboardingFixtures(now) {
       cloud: noAgents,
       plugins: onlyWiki,
       expect: [
-        "Choose your plugins",
-        "Switch on what your agents can use on this Mac",
+        "Give your agents superpowers",
+        "Plugins teach your agent how to reliably use your Mac",
+        "Can you find three times that work and send them?",
         gmail,
         iMessage,
         "Obsidian-style wiki",
         "Browser use",
-        "You'll grant next",
-        "Nothing to grant. These work as soon as setup finishes.",
         "Share usage data so we can improve Plow",
         "Never your messages or your data",
         "Back",
         "Continue",
       ],
-      reject: [`for ${iMessage}`],
+      reject: ["You'll grant next", "Nothing to grant", "Required:", `for ${iMessage}`],
       expectFocus: "Continue",
       expectDotCount: 6,
     },
@@ -421,17 +433,14 @@ export function onboardingFixtures(now) {
       cloud: noAgents,
       plugins: picked,
       expect: [
-        "Choose your plugins",
-        "You'll grant next",
-        "Full Disk Access",
-        `for ${iMessage}`,
-        "Google account",
-        `for ${gmail}`,
+        "Give your agents superpowers",
+        "Required: Full Disk Access",
+        "Required: Google account",
         "Share usage data so we can improve Plow",
         "Back",
         "Continue",
       ],
-      reject: ["Nothing to grant. These work as soon as setup finishes."],
+      reject: ["You'll grant next", "Nothing to grant", `for ${iMessage}`, `for ${gmail}`],
       expectFocus: "Continue",
       expectDotCount: 6,
     },
@@ -440,7 +449,7 @@ export function onboardingFixtures(now) {
       state: { ...base, step: "plugins", message: "Something went wrong. Try again.", noteKind: "error" },
       cloud: noAgents,
       plugins: onlyWiki,
-      expect: ["Choose your plugins", "Something went wrong. Try again."],
+      expect: ["Give your agents superpowers", "Something went wrong. Try again."],
       reject: ["Talking to Plow"],
       expectFocus: "Continue",
       expectDotCount: 6,
@@ -531,14 +540,42 @@ export function onboardingFixtures(now) {
       name: "done-agent",
       state: { ...base, step: "done" },
       cloud: elm,
-      expect: ["You're all set", "Text Elm", "Explore the app"],
+      plugins: browserReady,
+      expect: [
+        "Put your passwords to work",
+        "Import passwords so your agents can securely sign in and get things done in your browser.",
+        "Reconcile bank deposits and catch payment problems.",
+        "Negotiate and verify an Amazon credit.",
+        "Arrange follow-up care through Kaiser.",
+        "Cancel Hipcamp bookings before their refund deadlines.",
+        "Import passwords",
+        "Text Elm",
+        "Not now",
+      ],
     },
     {
       name: "done-noagent",
       state: { ...base, step: "done" },
       cloud: noAgents,
-      expect: ["You're all set", "Explore the app"],
+      plugins: browserReady,
+      expect: ["Put your passwords to work", "Import passwords", "Not now"],
       reject: ["Text Elm"],
+    },
+    {
+      name: "done-browser-off",
+      state: { ...base, step: "done" },
+      cloud: noAgents,
+      plugins: onlyWiki,
+      expect: ["Put your passwords to work", "Enable Browser & import passwords", "Not now"],
+      reject: ["Text Elm"],
+    },
+    {
+      name: "done-browser-loading",
+      state: { ...base, step: "done" },
+      cloud: noAgents,
+      pluginsPending: true,
+      expect: ["Put your passwords to work", "Import passwords", "Not now"],
+      reject: ["Text Elm", "Enable Browser & import passwords"],
     },
   ];
 }
