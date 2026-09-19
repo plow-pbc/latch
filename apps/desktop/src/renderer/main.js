@@ -2051,7 +2051,7 @@ function permissionsPane() {
   const act = async (key, button) => {
     button.disabled = true;
     const was = button.textContent;
-    button.textContent = "Asking macOS…";
+    button.textContent = "Waiting…";
     try {
       draw(await window.domo.capabilitiesAct(key));
     } catch {

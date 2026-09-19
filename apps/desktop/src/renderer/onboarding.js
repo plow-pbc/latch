@@ -469,7 +469,7 @@ function dataScreen() {
     permissionControl.disabled = true;
   } else {
     permissionControl = button(
-      fullDiskRequestBusy || fullDiskAccess === null ? "Checking…" : "Request…",
+      fullDiskRequestBusy ? "Waiting…" : fullDiskAccess === null ? "Checking…" : "Request…",
       "req-btn",
       fullDiskRequestBusy || fullDiskAccess === null ? null : requestFullDiskAccess,
     );

@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 class FakeWindow {
   static instances: FakeWindow[] = [];
   // Lets a test simulate a window that fails partway through setup, after
-  // the panel already exists (setAlwaysOnTop is the first call pursue()
+  // the panel already exists (setAlwaysOnTop is the first call openPanel()
   // makes on a freshly constructed panel).
   static throwOnSetAlwaysOnTop: Error | null = null;
   readonly title: string | undefined;
