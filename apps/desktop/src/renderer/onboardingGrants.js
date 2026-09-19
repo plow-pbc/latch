@@ -11,12 +11,15 @@ function openGrants(grants, skipped) {
  * state whether it landed. `act(id)` answers with that state plus `error`;
  * `setRunning` is told the id whose flow is running, then null. Resolves with
  * the grant that did not land ({ id, error }) — a throw is a miss like any
- * other — or null once nothing is left, or once the owner left the step.
+ * other — or null once nothing is left, once the owner left the step, or once
+ * a grant waits on a relaunch: until then this app's children can't use it,
+ * so a later flow (Safari's write) would only fail.
  */
 export async function runGrants({ act, getState, setState, stillHere, setRunning }, skipped) {
   for (;;) {
-    const next = openGrants(getState().grants, skipped)[0];
-    if (!next) return null;
+    const { grants } = getState();
+    const next = openGrants(grants, skipped)[0];
+    if (!next || grants.some((g) => g.relaunch)) return null;
     setRunning(next.id);
     const result = await act(next.id).catch(() => null);
     setRunning(null);
@@ -30,14 +33,16 @@ export async function runGrants({ act, getState, setState, stillHere, setRunning
 
 /**
  * Access's primary button: its label and what it does — "run" the list,
- * "relaunch", "advance", or null while a flow runs. Try again only while the
- * miss is still open (a grant made in System Settings meanwhile moves on).
+ * "relaunch", "advance", or null while a flow runs. A pending relaunch comes
+ * first, as it stops the run; setup reopens on Plugins, and Access runs the
+ * rest. Try again only while the miss is still open (a grant made in System
+ * Settings meanwhile moves on).
  */
 export function accessPrimary({ grants, skipped, running, missed }) {
   const open = openGrants(grants, skipped);
-  if (missed && open.some((g) => g.id === missed.id)) return { label: "Try again", kind: "run" };
   if (running) return { label: "Setting up…", kind: null };
-  if (open.length) return { label: `Set up all ${open.length}`, kind: "run" };
   if (grants.some((g) => g.relaunch)) return { label: "Relaunch to finish", kind: "relaunch" };
+  if (missed && open.some((g) => g.id === missed.id)) return { label: "Try again", kind: "run" };
+  if (open.length) return { label: `Set up all ${open.length}`, kind: "run" };
   return { label: "Continue", kind: "advance" };
 }
