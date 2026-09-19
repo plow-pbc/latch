@@ -504,9 +504,9 @@ describe("wizard steps around the existing verification flow", () => {
 });
 
 describe("the gatekeeper's instructions", () => {
-  async function toGatekeeper(extra: Partial<OnboardingDeps> = {}) {
+  async function toGatekeeper() {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    const onboarding = build(extra);
+    const onboarding = build();
     await onboarding.advance();
     await settle();
     expect(onboarding.state().step).toBe("privacy");
@@ -523,40 +523,28 @@ describe("the gatekeeper's instructions", () => {
     expect(loadSettings(home).agentPurpose).toBe(PRESET_TEXT.home);
   });
 
-  it("saves what the owner wrote, trimmed, without redrawing while they type", async () => {
-    let notifications = 0;
-    const onboarding = await toGatekeeper({ onChange: () => { notifications += 1; } });
-    notifications = 0;
-
-    const typed = onboarding.setPurpose("  Allow my assistant to read my calendar.  ");
-    expect(typed.purpose).toBe("  Allow my assistant to read my calendar.  ");
-    expect(notifications).toBe(0);
-    expect(loadSettings(home).agentPurpose).toBe("");
-
-    await onboarding.advance();
+  it("saves the owner's draft on Continue, trimmed, and brings it back from Plugins", async () => {
+    const onboarding = await toGatekeeper();
+    expect((await onboarding.advance("  Allow my assistant to read my calendar.  ")).step).toBe("plugins");
     expect(loadSettings(home).agentPurpose).toBe("Allow my assistant to read my calendar.");
+    expect((await onboarding.back()).step).toBe("gatekeeper");
+    expect(onboarding.state().purpose).toBe("Allow my assistant to read my calendar.");
   });
 
   it("keeps an emptied field empty — no instructions is a choice", async () => {
     const onboarding = await toGatekeeper();
-    onboarding.setPurpose("   ");
-    await onboarding.advance();
+    await onboarding.advance("   ");
     expect(loadSettings(home).agentPurpose).toBe("");
+    await onboarding.back();
+    expect(onboarding.state().purpose).toBe("");
   });
 
-  it("ignores instructions sent from any other step, or that are not text", async () => {
+  it("ignores a draft that is not text, or sent from any other step", async () => {
     const onboarding = await toGatekeeper();
-    expect(onboarding.setPurpose(42).purpose).toBe(PRESET_TEXT.home);
-    await onboarding.advance();
-    expect(onboarding.setPurpose("late").purpose).toBe(PRESET_TEXT.home);
-  });
-
-  it("brings back what was saved when the owner steps back from Plugins", async () => {
-    const onboarding = await toGatekeeper();
-    onboarding.setPurpose("Allow my assistant to manage my calendar.");
-    await onboarding.advance();
-    expect((await onboarding.back()).step).toBe("gatekeeper");
-    expect(onboarding.state().purpose).toBe("Allow my assistant to manage my calendar.");
+    await onboarding.advance(42);
+    await onboarding.advance("late");
+    expect(loadSettings(home).agentPurpose).toBe(PRESET_TEXT.home);
+    expect(onboarding.state().purpose).toBe(PRESET_TEXT.home);
   });
 
   it("opens a re-setup on the instructions already stored", async () => {

@@ -175,10 +175,9 @@ contextBridge.exposeInMainWorld("domo", {
   // renders from one shape and never has to reconcile two.
   onboardingGet: () => ipcRenderer.invoke("onboarding:get"),
   onboardingBegin: () => ipcRenderer.invoke("onboarding:begin"),
-  onboardingAdvance: () => ipcRenderer.invoke("onboarding:advance"),
+  onboardingAdvance: (draft?: string) => ipcRenderer.invoke("onboarding:advance", draft),
   onboardingBack: () => ipcRenderer.invoke("onboarding:back"),
   onboardingSetTelemetry: (on: boolean) => ipcRenderer.invoke("onboarding:setTelemetry", on),
-  onboardingSetPurpose: (text: string) => ipcRenderer.invoke("onboarding:setPurpose", text),
   gatekeeperPresets: () => ipcRenderer.invoke("onboarding:gatekeeperPresets"),
   gatekeeperPreview: (preset: string, index: number, draft: string) =>
     ipcRenderer.invoke("onboarding:gatekeeperPreview", preset, index, draft),

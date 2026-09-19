@@ -136,8 +136,8 @@ export interface OnboardingState {
   activationStale: boolean;
   /** The plugins screen's pending choice. It is persisted only on Continue. */
   telemetryEnabled: boolean;
-  /** The gatekeeper's instructions as the owner is writing them. Persisted
-   * (trimmed) only on Continue from that step. */
+  /** The gatekeeper's instructions the step opens on. The owner's draft is
+   * saved (trimmed) only on Continue from that step. */
   purpose: string;
 }
 
@@ -217,8 +217,9 @@ export class Onboarding {
   }
 
   /** Advance the presentational steps, commit the plugins-screen choice, and
-   * save the gatekeeper's instructions on the way out of that step. */
-  async advance(): Promise<OnboardingState> {
+   * save the gatekeeper's `draft` on the way out of that step — the only step
+   * that reads it. It comes from the renderer, so it is checked here. */
+  async advance(draft?: unknown): Promise<OnboardingState> {
     if (this.busy) return this.state();
     if (this.step === "welcome") {
       // Returning from verification keeps the live activation and its watcher.
@@ -241,8 +242,9 @@ export class Onboarding {
     }
     if (this.step === "gatekeeper") {
       const settings = this.settings();
-      settings.agentPurpose = this.purpose.trim();
+      settings.agentPurpose = (typeof draft === "string" ? draft : this.purpose).trim();
       this.save(settings);
+      this.purpose = settings.agentPurpose;
       this.step = "plugins";
       return this.publish();
     }
@@ -292,16 +294,6 @@ export class Onboarding {
       this.telemetryEnabled = enabled;
       return this.publish();
     }
-    return this.state();
-  }
-
-  /**
-   * The owner is typing the gatekeeper's instructions. Stored, and deliberately
-   * NOT published: the renderer holds the live text, and a publish would redraw
-   * the screen under their cursor. Continue is its only disk write.
-   */
-  setPurpose(text: unknown): OnboardingState {
-    if (this.step === "gatekeeper" && typeof text === "string") this.purpose = text;
     return this.state();
   }
 

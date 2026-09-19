@@ -403,10 +403,7 @@ async function enterGatekeeper() {
 }
 
 function continueFromGatekeeper() {
-  return update(async () => {
-    await window.domo.onboardingSetPurpose(gatekeeper?.text ?? state.purpose);
-    return window.domo.onboardingAdvance();
-  });
+  return update(() => window.domo.onboardingAdvance(gatekeeper?.text ?? state.purpose));
 }
 
 function copyButton(value) {

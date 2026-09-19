@@ -71,10 +71,6 @@ ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
   current = { ...current, telemetryEnabled: enabled === true };
   return current;
 });
-ipcMain.handle("onboarding:setPurpose", async (_event, text) => {
-  current = { ...current, purpose: String(text) };
-  return current;
-});
 ipcMain.handle("onboarding:gatekeeperPresets", async () => currentFixture.gatekeeper?.presets ?? null);
 // "pending" holds every row on Checking.
 ipcMain.handle("onboarding:gatekeeperPreview", async (_event, _preset, index) => {
