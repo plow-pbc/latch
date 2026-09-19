@@ -3,7 +3,12 @@
    persistent shell. The page is sandboxed and receives no Node primitives. */
 
 import { el, icon, switchEl } from "./dom.js";
-import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
+import {
+  latestOnly,
+  relaunchAfterPreparingOnboarding,
+  singleFlight,
+  whenAnswered,
+} from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
@@ -869,7 +874,15 @@ function footerForStep() {
   }
   if (step === "access") {
     const { label, kind } = accessPrimary({ grants: pluginsState?.grants ?? [], skipped, running, missed });
-    const actions = { run: startGrants, relaunch: () => window.domo.appRelaunch(), advance };
+    const actions = {
+      run: startGrants,
+      relaunch: () =>
+        relaunchAfterPreparingOnboarding(
+          () => window.domo.onboardingPrepareRelaunch(),
+          () => window.domo.appRelaunch(),
+        ),
+      advance,
+    };
     return {
       back: true,
       dot: 4,

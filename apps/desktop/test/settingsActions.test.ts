@@ -77,6 +77,17 @@ describe("Plow sign-out forgets the credential and leaves the mode alone", () =>
     expect(stored(home).setupComplete).toBe(false);
   });
 
+  it("forgets a pending onboarding relaunch checkpoint", () => {
+    const home = homeWith({
+      relayCredential: PLOW_CREDENTIAL,
+      onboardingResumeStep: "access",
+    });
+
+    signOutOfPlow(home);
+
+    expect(stored(home).onboardingResumeStep).toBeUndefined();
+  });
+
   it("signing out with Adversarial selected leaves the mode alone", () => {
     const home = homeWith({
       approvalMode: "adversarial",

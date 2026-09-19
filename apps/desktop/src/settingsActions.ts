@@ -66,6 +66,7 @@ export function signOutOfPlow(home: string, unretiredPrefix?: string): void {
     s.accountUid = "";
     s.mcpUrl = "";
     s.setupComplete = false;
+    s.onboardingResumeStep = undefined;
     if (unretiredPrefix) s.unretiredKeyPrefixes = [...(s.unretiredKeyPrefixes ?? []), unretiredPrefix];
   });
 }

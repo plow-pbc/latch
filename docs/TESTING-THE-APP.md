@@ -354,8 +354,8 @@ what the smoke prints). Expected values are the `diagnosis` fields.
 | Setup: Access, the walk | from Plugins, Continue into Access, click "Set up all N" | each grant runs in turn — the Full Disk Access drag panel, Safari's JavaScript-from-Apple-Events setting, then Google's sign-in in the browser — with "Setting up…" shown meanwhile |
 | Setup: Access, a miss | close the panel (or decline) on one grant mid-walk | that row shows the miss and a Skip control; Skip moves past it, and the button reads "Try again" while the miss is still open |
 | Setup: Access, Full Disk Access granted fresh | grant Full Disk Access for the first time during the walk | its row reads "Granted: relaunch to finish"; the walk stops there, and the button becomes "Relaunch to finish" even with other grants still open |
-| Setup: relaunch mid-setup | relaunch from there | the window reopens on Plugins, not Welcome, with whatever was already granted still met |
-| Setup: Full Disk Access after that relaunch | re-enter Access | Full Disk Access itself reads granted right away — no longer relaunch-pending — and the Safari item runs on its own turn next. **Untested:** Safari's write is a child of the app, so if a child cannot use a grant the app only just gained, Safari keeps missing until the owner relaunches again — needs a human on the test Mac |
+| Setup: relaunch mid-setup | relaunch from there | the window reopens directly on Grant access, not Plugins or Welcome; Full Disk Access reads granted right away — no longer relaunch-pending — and the next outstanding grant is available |
+| Setup: Full Disk Access after that relaunch | continue the Access walk | the granted Full Disk Access row stays met and the Safari item runs on its own turn next. **Untested:** Safari's write is a child of the app, so if a child cannot use a grant the app only just gained, Safari keeps missing until the owner relaunches again — needs a human on the test Mac |
 
 A row whose real answer disagrees with the tree is a bug in the tree, and the audit line's `probes`
 say which branch: fix the branch, add the case to `hostGate.test.ts` with those facts, and re-run

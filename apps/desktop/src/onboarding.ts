@@ -264,13 +264,14 @@ export class Onboarding {
       });
     }
     if (this.step === "access") {
+      this.clearResumeStep();
       this.step = "availability";
       return this.publish();
     }
     if (this.step === "availability") {
       const settings = this.settings();
       settings.setupComplete = true;
-      this.save(settings);
+      this.clearResumeStep(settings);
       this.step = "done";
       return this.publish();
     }
@@ -281,10 +282,22 @@ export class Onboarding {
   async back(): Promise<OnboardingState> {
     if (this.busy) return this.state();
     if (this.step === "activate" || this.step === "waiting") this.step = "welcome";
-    else if (this.step === "access" || this.step === "availability") this.step = "plugins";
+    else if (this.step === "access") {
+      this.clearResumeStep();
+      this.step = "plugins";
+    } else if (this.step === "availability") this.step = "plugins";
     else if (this.step === "plugins") this.step = "gatekeeper";
     else return this.state();
     return this.publish();
+  }
+
+  /** Persist the one setup location whose own grant flow requires a relaunch. */
+  prepareRelaunch(): OnboardingState {
+    if (this.step !== "access") return this.state();
+    const settings = this.settings();
+    settings.onboardingResumeStep = "access";
+    this.save(settings);
+    return this.state();
   }
 
   /** Change the pending choice; Continue from plugins is its only disk write. */
@@ -567,6 +580,7 @@ export class Onboarding {
     this.noteKind = "error";
     this.busy = false;
     const settings = this.settings();
+    this.clearResumeStep(settings);
     this.telemetryEnabled = settings.telemetryEnabled;
     this.purpose = this.storedPurpose(settings);
     this.step = this.initialStep(settings);
@@ -662,9 +676,16 @@ export class Onboarding {
     saveSettings(this.deps.home, settings);
   }
 
+  /** Clear a consumed or abandoned navigation intent and persist its peers. */
+  private clearResumeStep(settings: Settings = this.settings()): void {
+    settings.onboardingResumeStep = undefined;
+    this.save(settings);
+  }
+
   private initialStep(settings: Settings): OnboardingStep {
     if (!settings.relayCredential.trim()) return "welcome";
-    return settings.setupComplete ? "done" : "plugins";
+    if (settings.setupComplete) return "done";
+    return settings.onboardingResumeStep === "access" ? "access" : "plugins";
   }
 
   private now(): number {

@@ -35,6 +35,7 @@ window.domo = {
   onboardingBegin: currentState,
   onboardingAdvance: currentState,
   onboardingBack: currentState,
+  onboardingPrepareRelaunch: currentState,
   onboardingOpenMessages: currentState,
   onboardingNewCode: currentState,
   onboardingSetTelemetry: async (enabled) =>
