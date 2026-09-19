@@ -40,7 +40,7 @@ export interface ConnectorsDeps {
   openExternal: (url: string) => Promise<void>;
   recordAudit: (event: string, fields: Record<string, string>) => void;
   onChange?: () => void;
-  wait?: (milliseconds: number) => Promise<void>;
+  wait?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
 }
 
 type ConnectorAction = {
@@ -138,7 +138,13 @@ export class Connectors {
         elapsed < CONNECTOR_TIMEOUT_MS;
         elapsed += CONNECTOR_POLL_INTERVAL_MS
       ) {
-        await this.wait(CONNECTOR_POLL_INTERVAL_MS, action);
+        try {
+          await this.wait(CONNECTOR_POLL_INTERVAL_MS, action, pollingSignal);
+        } catch (error) {
+          this.assertCurrent(action);
+          if (pollingDeadline.aborted) break;
+          throw error;
+        }
         if (pollingDeadline.aborted) break;
         let after: ConnectorsOverview;
         try {
@@ -274,9 +280,13 @@ export class Connectors {
     }
   }
 
-  private async wait(milliseconds: number, action: ConnectorAction): Promise<void> {
+  private async wait(
+    milliseconds: number,
+    action: ConnectorAction,
+    signal: AbortSignal = action.controller.signal,
+  ): Promise<void> {
     if (this.deps.wait) {
-      await this.deps.wait(milliseconds);
+      await this.deps.wait(milliseconds, signal);
       this.assertCurrent(action);
       return;
     }
@@ -286,11 +296,11 @@ export class Connectors {
         reject(STALE_ACTION);
       };
       const timer = setTimeout(() => {
-        action.controller.signal.removeEventListener("abort", onAbort);
+        signal.removeEventListener("abort", onAbort);
         resolve();
       }, milliseconds);
-      if (action.controller.signal.aborted) return onAbort();
-      action.controller.signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) return onAbort();
+      signal.addEventListener("abort", onAbort, { once: true });
     });
     this.assertCurrent(action);
   }
