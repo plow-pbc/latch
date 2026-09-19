@@ -2123,9 +2123,8 @@ function permissionsPane() {
   /* The Google connector in a switch row's clothes, so Connected Accounts
      reads like This Mac: the brand mark where a row keeps its icon, the
      bold name and a line under it, and an external-link button on the
-     right — connecting opens Google's consent page in the browser. The
-     setup wizard keeps its own card (connectorsCard.js); the state and the
-     actions are the same. Connected accounts list under the row. */
+     right — connecting opens Google's consent page in the browser.
+     Connected accounts list under the row. */
   /* Google's four-colour G, as on their own app icon: a white rounded tile
      with the standard sign-in mark. Built with createElementNS like every
      glyph in dom.js — nothing here goes through innerHTML. */

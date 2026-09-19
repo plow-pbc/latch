@@ -490,6 +490,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cap-default-pill { font-weight: 500; }
 .cap-account-email { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cap-account-menu-btn { padding: 5px 9px; font-size: 9px; letter-spacing: 1px; line-height: 1; }
+/* The connector's status line under Connected Accounts. */
+.settings-connectors + .connector-note { margin: 12px 0 0; color: var(--muted); }
+.settings-connectors + .connector-note.error { color: var(--red-fg); }
 
 /* A small popup menu (openMenu in main.js): a card floated over the page. */
 .menu {

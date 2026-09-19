@@ -1,5 +1,5 @@
 /* Shared on/off switch (switchEl in dom.js): a hidden checkbox, a track and
-   a knob. Each host maps its own design tokens onto it, as connectors.css
+   a knob. Each host maps its own design tokens onto it, as styles.css
    does; the fallbacks are setup's volt look on its dark surface. */
 .switch {
   position: relative;
