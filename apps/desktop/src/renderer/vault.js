@@ -846,12 +846,6 @@ const PTYPE_BLURB = {
    the box shows it — so nothing filters the list silently. */
 let vquery = "";
 
-/** One automatically opened import sheet at a time: renders can overlap (the
- * onboarding handoff, a credential exchange, and a tab click may land close
- * together), and two sheets fighting over the editor seat would cancel each
- * other's staging. */
-let importOpening = false;
-
 export async function renderVault(view, isCurrent = () => true) {
   /** Redraw this same pane — what every action hands to its callers. */
   const renderVaultIn = () => renderVault(view, isCurrent);
@@ -949,20 +943,14 @@ export async function renderVault(view, isCurrent = () => true) {
   // credentials that must be reviewed; either path still lands in
   // vimportSheet, so onboarding never owns a second import implementation.
   void (async () => {
-    if (importOpening) return;
-    importOpening = true;
-    try {
-      const exchange = await window.domo.vaultExchangePending().catch(() => null);
-      const requested = await window.domo.vaultImportRequested().catch(() => false);
-      if (!alive()) return;
-      const mounted = exchange ? await openImport(exchange)
-        : requested ? await openImport()
-        : false;
-      if (requested && mounted) {
-        await window.domo.vaultImportAcknowledged().catch(() => {});
-      }
-    } finally {
-      importOpening = false;
+    const exchange = await window.domo.vaultExchangePending().catch(() => null);
+    const requested = await window.domo.vaultImportRequested().catch(() => false);
+    if (!alive()) return;
+    const mounted = exchange ? await openImport(exchange)
+      : requested ? await openImport()
+      : false;
+    if (requested && mounted) {
+      await window.domo.vaultImportAcknowledged().catch(() => {});
     }
   })();
 

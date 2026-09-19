@@ -49,11 +49,20 @@ export interface PluginRow {
    *  Deliberately NOT a manifest field: a second place to write the same
    *  sentence is a second place for it to drift. */
   description: string | null;
+  /** A demonstrated owner query setup can rotate through. Null lets newly
+   *  staged plugins appear without onboarding inventing a promise for them. */
+  example: string | null;
   status: PluginStatus;
   /** Every requirement the manifest declares, met or not — status decides
    *  whether the plugin can run; hiding a met one is the tab's business. */
   requirements: Requirement[];
 }
+
+const PLUGIN_EXAMPLES: Readonly<Record<string, string>> = {
+  gog: "Can you find three times that work and send them?",
+  messages: "Do you see my thread with the contractor? Are we all paid up?",
+  wiki: "What should I know before replying to this guest about the cabin?",
+};
 
 export interface PluginsInput {
   plugins: { manifest: PluginManifest; enabled: boolean; description?: string | null }[];
@@ -125,6 +134,7 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
       summary: manifest.summary ?? null,
       kind: "CLI",
       description: description ?? null,
+      example: PLUGIN_EXAMPLES[manifest.name] ?? null,
       status: rowStatus(enabled, requirements),
       requirements,
     };
@@ -171,6 +181,7 @@ export function browserPluginRow(input: {
     summary: "Browse and fill in forms in a private browser, with Safari as a fallback.",
     kind: "Browser",
     description: input.description,
+    example: "How much is in my rental account—and did the tenants pay?",
     status: rowStatus(input.enabled, requirements),
     requirements,
   };

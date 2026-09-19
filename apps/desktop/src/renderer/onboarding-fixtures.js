@@ -60,8 +60,14 @@ export function onboardingFixtures(now) {
     done: "On",
     status: "open",
   };
+  const examples = {
+    gog: "Can you find three times that work and send them?",
+    messages: "Do you see my thread with the contractor? Are we all paid up?",
+    wiki: "What should I know before replying to this guest about the cabin?",
+    browser: "How much is in my rental account—and did the tenants pay?",
+  };
   const row = (name, title, summary, kind, status, requirements) =>
-    ({ name, title, summary, kind, description: null, status, requirements });
+    ({ name, title, summary, kind, description: null, example: examples[name] ?? null, status, requirements });
   const gmail = "Gmail and Google Calendar";
   const iMessage = "iMessage history";
   /** The four rows, with Gmail's and iMessage's switch states and how this
@@ -76,6 +82,13 @@ export function onboardingFixtures(now) {
   const picked = {
     rows: rows("needs-setup", "needs-setup", fullDisk),
     grants: [{ ...fullDisk, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
+  };
+  const browserReady = {
+    rows: rows("off", "off", fullDisk).map((plugin) =>
+      plugin.name === "browser"
+        ? { ...plugin, status: "ready", requirements: [{ ...safari, status: "met" }] }
+        : plugin),
+    grants: [{ ...safari, status: "met", plugins: ["Browser use"] }],
   };
   const fullDiskDone = {
     rows: rows("needs-setup", "ready", fullDiskMet),
@@ -527,6 +540,7 @@ export function onboardingFixtures(now) {
       name: "done-agent",
       state: { ...base, step: "done" },
       cloud: elm,
+      plugins: browserReady,
       expect: [
         "Put your passwords to work",
         "Import passwords so your agents can securely sign in and get things done in your browser.",
@@ -543,7 +557,16 @@ export function onboardingFixtures(now) {
       name: "done-noagent",
       state: { ...base, step: "done" },
       cloud: noAgents,
+      plugins: browserReady,
       expect: ["Put your passwords to work", "Import passwords", "Not now"],
+      reject: ["Text Elm"],
+    },
+    {
+      name: "done-browser-off",
+      state: { ...base, step: "done" },
+      cloud: noAgents,
+      plugins: onlyWiki,
+      expect: ["Put your passwords to work", "Enable Browser & import passwords", "Not now"],
       reject: ["Text Elm"],
     },
   ];

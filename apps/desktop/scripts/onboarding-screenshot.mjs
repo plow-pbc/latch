@@ -168,6 +168,15 @@ doneAgentFixture.prepare = async (win) => {
   }
 };
 
+const doneBrowserOffFixture = SCREENS.find((fixture) => fixture.name === "done-browser-off");
+doneBrowserOffFixture.prepare = async (win) => {
+  finishDestination = null;
+  await clickText(win, "Enable Browser & import passwords");
+  if (finishDestination !== "enable-browser-and-import") {
+    throw new Error(`Browser-off import handed off to ${String(finishDestination)}`);
+  }
+};
+
 failLoudly();
 
 app.whenReady().then(async () => {

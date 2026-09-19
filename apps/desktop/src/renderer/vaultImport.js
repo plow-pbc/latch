@@ -101,6 +101,10 @@ export async function vimportSheet(reload, host, exchange = null) {
   // before this sheet covers it.
   const seat = { dirty: () => false, close };
   if (!(await vtakeEditor(seat))) return false;
+  if (!alive()) {
+    vreleaseEditor(seat);
+    return false;
+  }
 
   /** The sheet closed while an answer was in flight: the answer is stale and
    * only DROPPED. close() already cancelled, and the epoch main captured at
