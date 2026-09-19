@@ -150,7 +150,7 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   example requests (built on this Mac, under the owner's home) with the
   owner's DRAFT instructions as the purpose, to preview verdicts; a preview is
   not an operation and records nothing — no audit line, no telemetry, no rule.
-  WHETHER it runs is decided in precedence order by
+  WHETHER the reviewer runs is decided in precedence order by
   `packages/device-core/src/policyEngine.ts`: a stored always-allow rule
   short-circuits Ask and Approve, while global AI Reviewer and Deny modes decide
   every request. What *is*
