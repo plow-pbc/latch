@@ -114,7 +114,7 @@ ipcMain.handle("plugins:setEnabled", async (_e, name, on) => {
   probePlugins[name] = on === true;
   return probePluginRows();
 });
-ipcMain.handle("requirements:act", async () => ({ ...probePluginRows(), granted: false, error: null }));
+ipcMain.handle("requirements:act", async () => ({ ...probePluginRows(), error: null }));
 // The drag-to-authorize tile's display data: a fake bundle name and a 1px
 // icon, so the tile renders in the probe without a real .app behind it.
 ipcMain.handle("fullDisk:dragInfo", async () => ({

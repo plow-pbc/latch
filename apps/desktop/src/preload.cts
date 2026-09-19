@@ -97,8 +97,8 @@ contextBridge.exposeInMainWorld("domo", {
   pluginsSetEnabled: (name: string, on: boolean) => ipcRenderer.invoke("plugins:setEnabled", name, on),
   // Any requirement's button, by id (requirements.ts): the panel, macOS's
   // dialog, Google sign-in or Safari's setting, awaited to the flow's end.
-  // Answers with the fresh Plugins state plus `granted`, and `error` when the
-  // act could not be done.
+  // Answers with the fresh Plugins state, and `error` when the act could not
+  // be done.
   requirementsAct: (id: string) => ipcRenderer.invoke("requirements:act", id),
   // A block by this Mac lands the tray item and the notification on its
   // switch (Settings), or on the Audit tab's Blocked view when it named none.

@@ -1454,33 +1454,31 @@ function grantTargetFor(key: string): GrantTarget | null {
 }
 
 /**
- * A row's one action, run to the end of its flow, answering whether the
- * switch is on afterwards. What it is was decided by the model (the button's
- * label said so); this is the doing: the panel flow beside the right pane,
- * macOS's own dialog raised on purpose (a service, or an Automation pair
- * through the gated osascript probe), or a folder touched so macOS asks.
- * Every one of these is behind a click on this Mac — the one condition
- * under which this app raises a consent dialog.
+ * A row's one action, run to the end of its flow. What it is was decided by
+ * the model (the button's label said so); this is the doing: the panel flow
+ * beside the right pane, macOS's own dialog raised on purpose (a service, or
+ * an Automation pair through the gated osascript probe), or a folder touched
+ * so macOS asks. Every one of these is behind a click on this Mac — the one
+ * condition under which this app raises a consent dialog. Whether the switch
+ * is on afterwards is the caller's fresh read.
  */
-async function actOnPermission(key: string): Promise<boolean> {
+async function actOnPermission(key: string): Promise<void> {
   const view = await capabilitiesNow();
   const row = view.sections.flatMap((s) => s.rows).find((r) => r.key === key);
-  if (!row || !device) return false;
-  const inPanel = async (): Promise<boolean> => {
+  if (!row || !device) return;
+  const inPanel = async (): Promise<void> => {
     const target = grantTargetFor(key);
-    return target ? fdaGrantFlow.start(target) : false;
+    if (target) await fdaGrantFlow.start(target);
   };
   switch (row.action) {
     case "grant":
     case "open": {
       const pane = paneFor(key);
       // A pane the panel can do nothing beside (Screen Recording, Automation) is just
-      // opened; the owner finds the switch themselves, and this app cannot watch it.
-      if (pane && pane.panel === false) {
-        await shell.openExternal(pane.url);
-        return false;
-      }
-      return inPanel();
+      // opened; the owner finds the switch themselves.
+      if (pane && pane.panel === false) await shell.openExternal(pane.url);
+      else await inPanel();
+      break;
     }
     case "request": {
       const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
@@ -1490,19 +1488,17 @@ async function actOnPermission(key: string): Promise<boolean> {
           const settings = loadSettings(home);
           saveSettings(home, { ...settings, automation: { ...(settings.automation ?? {}), [app.bundleId]: status } });
         }
-        return status === "granted";
-      }
-      if (key === "contacts" || key === "calendars" || key === "accessibility") {
+      } else if (key === "contacts" || key === "calendars" || key === "accessibility") {
         const status = await device.hostProbes.requestPermission(key as RequestablePermission);
         // Refused before, or no usage string in this build: macOS answered
         // without asking, and only the pane can change that now.
-        return status === "denied" ? inPanel() : status === "granted";
+        if (status === "denied") await inPanel();
       }
-      return false;
+      break;
     }
     case "ask": {
       const folder = CONSENT_FOLDERS.find((f) => f.permission === key);
-      if (!folder) return false;
+      if (!folder) break;
       const [result] = await requestFolderAccess(os.homedir(), { folders: [folder] });
       if (result && result.status !== "missing") {
         const settings = loadSettings(home);
@@ -1517,10 +1513,9 @@ async function actOnPermission(key: string): Promise<boolean> {
       }
       // macOS refused without asking — a Don't Allow it remembers — and
       // only the pane can undo that: float the panel beside it.
-      return result?.status === "denied" ? inPanel() : result?.status === "granted";
+      if (result?.status === "denied") await inPanel();
+      break;
     }
-    case "none":
-      return true;
   }
 }
 
@@ -1540,8 +1535,11 @@ function returnToCaller(sender: Electron.WebContents): void {
 }
 
 ipcMain.handle("capabilities:act", async (e, rawKey: unknown) => {
-  if (await actOnPermission(typeof rawKey === "string" ? rawKey : "")) returnToCaller(e.sender);
-  return capabilitiesNow();
+  const key = typeof rawKey === "string" ? rawKey : "";
+  await actOnPermission(key);
+  const view = await capabilitiesNow();
+  if (view.sections.flatMap((s) => s.rows).find((r) => r.key === key)?.status === "granted") returnToCaller(e.sender);
+  return view;
 });
 // "Not now" on a row: off the badge until a block newer than this lands.
 ipcMain.handle("capabilities:dismiss", async (_e, rawKey: unknown) => {
@@ -1634,21 +1632,22 @@ ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
 });
 
 /** A plugin requirement's button, by id: the act runs to its flow's end, a
- *  grant that landed brings the owner back here, and the answer is the fresh
- *  tab with whether it landed. Settings' rows share its permission half
- *  through capabilities:act. */
-ipcMain.handle("requirements:act", async (e, id: unknown) => {
-  const result = await actOnRequirement(typeof id === "string" ? id : "", {
+ *  requirement the fresh tab reads met brings the owner back here, and the
+ *  answer is that tab with the act's error line. Settings' rows share its
+ *  permission half through capabilities:act. */
+ipcMain.handle("requirements:act", async (e, rawId: unknown) => {
+  const id = typeof rawId === "string" ? rawId : "";
+  const { error } = await actOnRequirement(id, {
     permission: actOnPermission,
-    connectAccount: async (account) => {
+    connectAccount: async () => {
       await connectors?.connect();
-      return connectedAccountIds().includes(account);
     },
     fullDiskAccess: probeFullDiskAccess,
     enableSafari: () => enableSafariJavaScript(unsandboxedRunner),
   });
-  if (result.granted) returnToCaller(e.sender);
-  return { ...(await pluginsNow()), granted: result.granted, error: result.error };
+  const now = await pluginsNow();
+  if (now.rows.some((r) => r.requirements.some((q) => q.id === id && q.met))) returnToCaller(e.sender);
+  return { ...now, error };
 });
 // The floating panel's poll: has the switch it points at landed?
 ipcMain.handle("grant:state", async () => {
