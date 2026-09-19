@@ -39,11 +39,12 @@ const PANEL_HEIGHT = 100;
 const MIN_PANEL_HEIGHT = 80;
 const MAX_PANEL_HEIGHT = 240;
 const FALLBACK_PANEL_WIDTH = 420;
-const PROBE_INTERVAL_MS = 2000;
-const FLOW_TIMEOUT_MS = 3 * 60 * 1000;
+/** Exported for the test's own timer math — not consumed elsewhere. */
+export const PROBE_INTERVAL_MS = 2000;
+export const FLOW_TIMEOUT_MS = 3 * 60 * 1000;
 // Long enough for the panel's own 1.5s status poll to paint the granted
 // header, and for a human to read it, before the panel goes away.
-const GRANTED_LINGER_MS = 2500;
+export const GRANTED_LINGER_MS = 2500;
 
 /** One switch the panel can float beside. */
 export interface GrantTarget {
@@ -91,6 +92,9 @@ export class FdaGrantFlow {
   // never pin the panel open forever.
   private holdVisible = false;
   private holdTimer: NodeJS.Timeout | null = null;
+  /** The granted-linger delay armed by checkGranted(); stop() must cancel it
+   *  or a flow started inside that window inherits the old flow's stop(). */
+  private lingerTimer: NodeJS.Timeout | null = null;
   /** The switch the panel is currently pointing at. */
   private target: GrantTarget | null = null;
   /** The height the panel's content needs, as the renderer last measured it. */
@@ -121,21 +125,56 @@ export class FdaGrantFlow {
    * Resolves when the flow ENDS — granted (or already there), dismissed,
    * timed out, or replaced by a different switch — with whether the grant
    * landed. A second call pointing at the same switch while its panel is up
-   * returns that same pending outcome rather than starting a new one.
+   * returns that exact same pending outcome (not merely an equal one)
+   * rather than starting a new one, so start() cannot be `async`: an async
+   * function always wraps its return in a fresh promise, even a same-tick
+   * `return this.outcome`, which would break that identity.
    */
-  async start(target: GrantTarget = this.deps.fullDisk): Promise<boolean> {
+  start(target: GrantTarget = this.deps.fullDisk): Promise<boolean> {
     if (this.panel && this.target && this.target.key !== target.key) this.stop();
     this.target = target;
     // The deep link (re-)fronts System Settings; with a tracker running that
     // is also what brings an existing panel back on screen.
     void this.deps.openSettings(target.pane);
     if (this.panel) return this.outcome!;
+
+    this.granted = false;
+    let settle!: (granted: boolean) => void;
+    const outcome = new Promise<boolean>((resolve) => {
+      settle = resolve;
+    });
+    this.settle = settle;
+    this.outcome = outcome;
+    void this.pursue(target, settle);
+    return outcome;
+  }
+
+  /**
+   * The async continuation of start(): probe for an existing grant, then (if
+   * not already there) build the floating panel. Takes the target and its
+   * own settle function (rather than reading this.target/this.settle after
+   * the await) so a newer start() that has since taken over — this.target
+   * no longer matches — is told apart from this stale continuation, which
+   * settles this call's outcome false and builds nothing; the newer call
+   * owns the flow and builds its own panel.
+   */
+  private async pursue(target: GrantTarget, settle: (granted: boolean) => void): Promise<void> {
     // Already granted: nothing to guide. The pane still opens — that's where
     // the grant is viewed or revoked — but a panel asking for what is already
-    // given would only confuse. (Re-checked after the await: a second click
-    // may have built the panel while the probe ran.)
-    if (await target.probe()) return true;
-    if (this.panel) return this.outcome!;
+    // given would only confuse.
+    const granted = await target.probe();
+    if (this.target !== target) {
+      settle(false);
+      return;
+    }
+    if (granted) {
+      settle(true);
+      if (this.settle === settle) {
+        this.settle = null;
+        this.outcome = null;
+      }
+      return;
+    }
 
     const workArea = screen.getPrimaryDisplay().workArea;
     this.height = PANEL_HEIGHT;
@@ -143,10 +182,6 @@ export class FdaGrantFlow {
     const bounds = fallbackPanelFrame(workArea, {
       width: FALLBACK_PANEL_WIDTH,
       height: this.height,
-    });
-    this.granted = false;
-    this.outcome = new Promise<boolean>((resolve) => {
-      this.settle = resolve;
     });
     const panel = new BrowserWindow({
       ...bounds,
@@ -206,16 +241,17 @@ export class FdaGrantFlow {
 
     this.probeTimer = setInterval(() => void this.checkGranted(), PROBE_INTERVAL_MS);
     this.timeoutTimer = setTimeout(() => this.stop(), FLOW_TIMEOUT_MS);
-    return this.outcome;
   }
 
   stop(): void {
     if (this.probeTimer) clearInterval(this.probeTimer);
     if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
     if (this.holdTimer) clearTimeout(this.holdTimer);
+    if (this.lingerTimer) clearTimeout(this.lingerTimer);
     this.probeTimer = null;
     this.timeoutTimer = null;
     this.holdTimer = null;
+    this.lingerTimer = null;
     this.holdVisible = false;
     this.helper?.kill();
     this.helper = null;
@@ -322,11 +358,17 @@ export class FdaGrantFlow {
 
   private async checkGranted(): Promise<void> {
     const target = this.target;
+    // Captured before the await: a start() for a different switch (or a
+    // stop()) while this probe is in flight replaces this.outcome, and a
+    // stale "granted" from THIS probe must not arm the linger for whatever
+    // flow is current by the time it resolves.
+    const outcome = this.outcome;
     if (!target || !(await target.probe())) return;
+    if (this.outcome !== outcome) return;
     this.granted = true;
     // Let the panel's own poll paint the granted state, then leave.
     if (this.probeTimer) clearInterval(this.probeTimer);
     this.probeTimer = null;
-    setTimeout(() => this.stop(), GRANTED_LINGER_MS);
+    this.lingerTimer = setTimeout(() => this.stop(), GRANTED_LINGER_MS);
   }
 }
