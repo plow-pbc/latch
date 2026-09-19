@@ -37,8 +37,6 @@ const SCREENS = [
 ];
 let currentFixture = SCREENS[0];
 let current = currentFixture.state;
-let currentFullDiskAccess = false;
-let currentConnectors = null;
 let newCodeRequests = 0;
 let releaseInitialGet;
 let markInitialGetStarted;
@@ -69,8 +67,6 @@ ipcMain.handle("onboarding:newCode", async () => {
   };
   return current;
 });
-ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: currentFullDiskAccess }));
-ipcMain.handle("fullDisk:grantFlow", async () => {});
 ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
   current = { ...current, telemetryEnabled: enabled === true };
   return current;
@@ -88,10 +84,10 @@ ipcMain.handle("power:setKeepAwake", async (_event, on) => {
   currentAwake = { enabled: on === true };
   return currentAwake;
 });
-ipcMain.handle("connectors:refresh", async () => currentConnectors);
-ipcMain.handle("connectors:connect", async () => currentConnectors);
-ipcMain.handle("connectors:disconnect", async () => currentConnectors);
-ipcMain.handle("connectors:setDefault", async () => currentConnectors);
+ipcMain.handle("plugins:get", async () => currentFixture.plugins);
+ipcMain.handle("plugins:setEnabled", async () => currentFixture.plugins);
+ipcMain.handle("requirements:act", async () => ({ ...currentFixture.plugins, error: null }));
+ipcMain.handle("app:relaunch", async () => {});
 ipcMain.handle("cloud:agents", async () => currentFixture.cloud);
 ipcMain.handle("cloud:openMessages", async () => true);
 
@@ -153,15 +149,8 @@ app.whenReady().then(async () => {
     load: async (fixture) => {
       currentFixture = fixture;
       current = fixture.state;
-      currentFullDiskAccess = fixture.fullDiskAccess === true;
       currentLaunch = fixture.launch ?? { supported: true, openAtLogin: true };
       currentAwake = fixture.awake ?? { enabled: true };
-      currentConnectors = fixture.connectors ?? {
-        busy: false,
-        message: "",
-        noteKind: "error",
-        google: { accounts: [], connecting: false },
-      };
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
       // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
       // its resting state after the font and first-paint gate has also settled.

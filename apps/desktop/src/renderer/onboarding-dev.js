@@ -9,17 +9,9 @@ const params = new URLSearchParams(window.location.search);
 let initialGetDelayMs = Number(params.get("onboardingGetDelayMs")) || 0;
 let selected = fixturesByName.get(params.get("state")) ?? fixtures[0];
 let current = { ...selected.state };
-let fullDiskAccess = selected.fullDiskAccess === true;
 let launch = selected.launch ?? { supported: true, openAtLogin: true };
 let awake = selected.awake ?? { enabled: true };
-let connectors = structuredClone(selected.connectors ?? {
-  busy: false,
-  message: "",
-  noteKind: "error",
-  google: { accounts: [], connecting: false },
-});
 let changed = null;
-let connectorsChanged = null;
 
 function publish(next) {
   current = { ...next };
@@ -36,7 +28,7 @@ const onboardingGet = async () => {
   }
   return current;
 };
-const currentConnectors = async () => connectors;
+const plugins = async () => selected.plugins;
 
 window.domo = {
   onboardingGet,
@@ -47,10 +39,10 @@ window.domo = {
   onboardingNewCode: currentState,
   onboardingSetTelemetry: async (enabled) =>
     publish({ ...current, telemetryEnabled: enabled === true }),
-  capabilitiesGet: async () => ({ fullDiskAccess }),
-  fullDiskGrantFlow: async () => {
-    fullDiskAccess = true;
-  },
+  pluginsGet: plugins,
+  pluginsSetEnabled: plugins,
+  requirementsAct: async () => ({ ...selected.plugins, error: null }),
+  appRelaunch: async () => {},
   onboardingFinish: currentState,
   launchGet: async () => launch,
   launchSet: async (on) => {
@@ -62,41 +54,12 @@ window.domo = {
     awake = { enabled: on === true };
     return awake;
   },
-  connectorsRefresh: currentConnectors,
-  connectorsConnect: currentConnectors,
-  connectorsDisconnect: async (account) => {
-    connectors = {
-      ...connectors,
-      google: {
-        ...connectors.google,
-        accounts: connectors.google.accounts.filter((row) => row.email !== account),
-      },
-    };
-    connectorsChanged?.(connectors);
-    return connectors;
-  },
-  connectorsSetDefault: async (account) => {
-    connectors = {
-      ...connectors,
-      google: {
-        ...connectors.google,
-        accounts: connectors.google.accounts.map((row) => ({
-          ...row,
-          isDefault: row.email === account,
-        })),
-      },
-    };
-    connectorsChanged?.(connectors);
-    return connectors;
-  },
   cloudAgents: async () => selected.cloud,
   cloudOpenMessages: async () => true,
   onOnboardingChanged: (callback) => {
     changed = callback;
   },
-  onConnectorsChanged: (callback) => {
-    connectorsChanged = callback;
-  },
+  onConnectorsChanged: () => {},
 };
 
 const picker = document.getElementById("fixturePicker");

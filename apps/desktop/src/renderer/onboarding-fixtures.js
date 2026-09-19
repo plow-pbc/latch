@@ -22,14 +22,68 @@ export function onboardingFixtures(now) {
     cloudAgentsError: null,
     cloudAgents: [{ agentId: "agent_elm", name: "Elm", canMessage: true }],
   };
-  const connectorsEmpty = {
-    busy: false,
-    message: "",
-    noteKind: "error",
-    google: { accounts: [], connecting: false },
+  // The Plugins tab's state as main answers it (pluginsModel.ts): the shipped
+  // plugins as staged, then the browser, and the ordered grants setup walks.
+  const fullDisk = {
+    id: "full_disk_access",
+    title: "Full Disk Access",
+    detail: "Drag Plow Latch into the list in System Settings.",
+    action: "Grant Full Disk Access",
+    waiting: "Waiting for you in System Settings…",
+    done: "Granted",
+    met: false,
   };
-  const connectorTimeoutNote =
-    "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
+  const fullDiskMet = { ...fullDisk, met: true };
+  const fullDiskRelaunch = {
+    ...fullDisk,
+    detail: "Quit and reopen Plow Latch to finish.",
+    action: "Relaunch Plow Latch",
+    waiting: "",
+    relaunch: true,
+  };
+  const google = {
+    id: "account:google",
+    title: "Google account",
+    detail: "Sign in with Google in your browser.",
+    action: "Connect Google",
+    waiting: "Finish signing in with Google in your browser.",
+    done: "Connected",
+    met: false,
+  };
+  const safari = {
+    id: "safari-javascript-from-apple-events",
+    title: "Safari",
+    detail: "Allow JavaScript from Apple Events — Safari relaunches",
+    action: "Enable in Safari",
+    waiting: "Turning it on. Safari relaunches.",
+    done: "On",
+    met: false,
+  };
+  const row = (name, title, summary, kind, status, requirements) =>
+    ({ name, title, summary, kind, description: null, status, requirements });
+  const gmail = "Gmail and Google Calendar";
+  const iMessage = "iMessage history";
+  /** The four rows, with Gmail's and iMessage's switch states and how this
+   * Mac reads Full Disk Access. The browser stays off: Safari still needs it. */
+  const rows = (gmailStatus, iMessageStatus, fda) => [
+    row("gog", gmail, "Read and draft email; check and book your calendar.", "CLI", gmailStatus, [google]),
+    row("messages", iMessage, "Find and read your texts, right on this Mac.", "CLI", iMessageStatus, [fda]),
+    row("wiki", "Obsidian-style wiki", "A notebook your agents keep about the people and projects in your life.", "CLI", "ready", []),
+    row("browser", "Browser use", "Browse and fill in forms in a private browser, with Safari as a fallback.", "Browser", "off", [fda, safari]),
+  ];
+  const onlyWiki = { rows: rows("off", "off", fullDisk), grants: [] };
+  const picked = {
+    rows: rows("needs-setup", "needs-setup", fullDisk),
+    grants: [{ ...fullDisk, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
+  };
+  const fullDiskDone = {
+    rows: rows("needs-setup", "ready", fullDiskMet),
+    grants: [{ ...fullDiskMet, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
+  };
+  const relaunchLeft = {
+    rows: rows("off", "needs-setup", fullDiskRelaunch),
+    grants: [{ ...fullDiskRelaunch, plugins: [iMessage] }],
+  };
 
   return [
     {
@@ -159,39 +213,93 @@ export function onboardingFixtures(now) {
       expectFocus: "Continue",
     },
     {
-      name: "data-fda-off",
-      state: { ...base, step: "data" },
+      name: "plugins-fresh",
+      state: { ...base, step: "plugins" },
       cloud: noAgents,
-      fullDiskAccess: false,
+      plugins: onlyWiki,
       expect: [
-        "Your data & permissions",
-        "You can change any of these anytime in Settings",
-        "Help make Plow better",
+        "Choose your plugins",
+        "Switch on what your agents can use on this Mac",
+        gmail,
+        iMessage,
+        "Obsidian-style wiki",
+        "Browser use",
+        "You'll grant next",
+        "Nothing to grant. These work as soon as setup finishes.",
         "Share usage data so we can improve Plow",
-        "Permissions",
-        "Full Disk Access",
-        "Optional",
-        "Apple keeps Messages behind this permission",
-        "Request…",
+        "Never your messages or your data",
         "Continue",
       ],
+      reject: [`for ${iMessage}`],
       expectFocus: "Continue",
+      expectDotCount: 5,
     },
     {
-      name: "data-fda-on",
-      state: { ...base, step: "data" },
+      name: "plugins-picked",
+      state: { ...base, step: "plugins" },
       cloud: noAgents,
-      fullDiskAccess: true,
+      plugins: picked,
       expect: [
-        "Your data & permissions",
-        "Share usage data so we can improve Plow",
+        "Choose your plugins",
+        "You'll grant next",
         "Full Disk Access",
-        "Optional",
-        "Granted",
+        `for ${iMessage}`,
+        "Google account",
+        `for ${gmail}`,
+        "Share usage data so we can improve Plow",
         "Continue",
       ],
-      reject: ["Request…"],
+      reject: ["Nothing to grant. These work as soon as setup finishes."],
       expectFocus: "Continue",
+      expectDotCount: 5,
+    },
+    {
+      name: "access-ready",
+      state: { ...base, step: "access" },
+      cloud: noAgents,
+      plugins: picked,
+      expect: [
+        "Grant access",
+        "One at a time. Skip anything and it'll wait for you in Settings",
+        "Full Disk Access",
+        `For ${iMessage}`,
+        "Drag Plow Latch into the list in System Settings.",
+        "Google account",
+        `For ${gmail}`,
+        "Sign in with Google in your browser.",
+        "Back",
+        "Set up all 2",
+      ],
+      reject: ["Granted"],
+      expectFocus: "Set up all 2",
+      expectDotCount: 5,
+    },
+    {
+      name: "access-partly",
+      state: { ...base, step: "access" },
+      cloud: noAgents,
+      plugins: fullDiskDone,
+      expect: ["Grant access", "Full Disk Access", "Granted", "Google account", "Set up all 1"],
+      reject: ["Set up all 2"],
+      expectFocus: "Set up all 1",
+      expectDotCount: 5,
+    },
+    {
+      name: "access-relaunch",
+      state: { ...base, step: "access" },
+      cloud: noAgents,
+      plugins: relaunchLeft,
+      expect: [
+        "Grant access",
+        "Full Disk Access",
+        `For ${iMessage}`,
+        "Quit and reopen Plow Latch to finish.",
+        "Granted: relaunch to finish",
+        "Relaunch to finish",
+      ],
+      reject: ["Set up all", "Google account"],
+      expectFocus: "Relaunch to finish",
+      expectDotCount: 5,
     },
     {
       name: "availability",
@@ -226,95 +334,6 @@ export function onboardingFixtures(now) {
       ],
       expectFocus: "Continue",
       expectDotCount: 5,
-    },
-    {
-      name: "connect-empty",
-      state: { ...base, step: "connect" },
-      connectors: connectorsEmpty,
-      cloud: noAgents,
-      expect: [
-        "Connect your accounts",
-        "Connect Plow Latch to your most helpful accounts.",
-        "Google",
-        "Connect",
-        "Back",
-        "Skip",
-      ],
-      reject: ["Slack", "Done", "Add another Google account"],
-      expectFocus: "Connect",
-      expectDotCount: 5,
-    },
-    {
-      name: "connect-connecting",
-      state: { ...base, step: "connect" },
-      connectors: {
-        ...connectorsEmpty,
-        busy: true,
-        google: { accounts: [], connecting: true },
-      },
-      cloud: noAgents,
-      expect: [
-        "Connect your accounts",
-        "Google",
-        "Connecting…",
-        "Skip",
-      ],
-      reject: ["Slack", connectorTimeoutNote, "Done"],
-      expectEnabled: "Skip",
-      expectDotCount: 5,
-    },
-    {
-      name: "connect-timeout",
-      state: { ...base, step: "connect" },
-      connectors: {
-        ...connectorsEmpty,
-        message: connectorTimeoutNote,
-        noteKind: "neutral",
-      },
-      cloud: noAgents,
-      expect: [
-        "Connect your accounts",
-        "Google",
-        "Connect",
-        connectorTimeoutNote,
-        "Skip",
-      ],
-      reject: ["Slack"],
-      rejectButton: "Done",
-      expectFocus: "Connect",
-      expectEnabled: "Connect",
-      expectNeutralNote: connectorTimeoutNote,
-      expectDotCount: 5,
-    },
-    {
-      name: "connect-populated",
-      state: { ...base, step: "connect" },
-      connectors: {
-        ...connectorsEmpty,
-        google: {
-          connecting: false,
-          accounts: [
-            { email: "mary@gmail.com", isDefault: true },
-            { email: "mary@work.com", isDefault: false },
-          ],
-        },
-      },
-      cloud: noAgents,
-      expect: [
-        "Connect your accounts",
-        "Google",
-        "mary@gmail.com",
-        "Default",
-        "mary@work.com",
-        "Set default",
-        "Add another Google account",
-        "Done",
-      ],
-      reject: ["Slack", "Skip", connectorTimeoutNote],
-      expectFocus: "Add another Google account",
-      expectAriaLabel: "Remove Google account",
-      expectDotCount: 5,
-      expectBodyScrollTop: 0,
     },
     {
       name: "done-agent",
