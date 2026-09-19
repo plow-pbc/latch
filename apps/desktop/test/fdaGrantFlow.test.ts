@@ -80,7 +80,6 @@ function makeFlow(): Flow {
     // Doesn't exist on this host, so startTracker's fs.existsSync check
     // skips spawning the helper — no child process, no real tracker.
     helperPath: "/nonexistent/settings-window-frame",
-    fullDisk: makeTarget("fullDiskAccess", () => false),
     openSettings: async () => {},
   });
 }

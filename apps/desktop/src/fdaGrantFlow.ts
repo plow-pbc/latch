@@ -67,8 +67,6 @@ export interface FdaGrantFlowDeps {
   preloadPath: string;
   /** The compiled tracker, or a path that may not exist (flow degrades). */
   helperPath: string;
-  /** The default target: Full Disk Access, with the device's own probe. */
-  fullDisk: GrantTarget;
   /** Opens a System Settings pane by deep link. */
   openSettings: (pane: string) => Promise<void>;
 }
@@ -115,11 +113,11 @@ export class FdaGrantFlow {
   }
 
   /**
-   * Begin (or re-front) the flow for one switch — Full Disk Access when none
-   * is named. Idempotent on purpose: a second click while the panel is up
-   * re-opens the pane and keeps the one panel — PermissionFlow keeps a single
-   * floating panel for the same reason. A click for a DIFFERENT switch while
-   * one is up ends that flow and starts this one: one panel, one switch.
+   * Begin (or re-front) the flow for one switch. Idempotent on purpose: a
+   * second click while the panel is up re-opens the pane and keeps the one
+   * panel — PermissionFlow keeps a single floating panel for the same reason.
+   * A click for a DIFFERENT switch while one is up ends that flow and starts
+   * this one: one panel, one switch.
    *
    * Resolves when the flow ENDS: the grant landed (or was already there), or
    * the flow was dismissed, timed out, or replaced by a different switch. A
@@ -127,7 +125,7 @@ export class FdaGrantFlow {
    * that same promise rather than starting a competing one — which is why
    * start() is not `async`: that would wrap it in a fresh promise.
    */
-  start(target: GrantTarget = this.deps.fullDisk): Promise<void> {
+  start(target: GrantTarget): Promise<void> {
     if (this.outcome && this.target?.key !== target.key) this.stop();
     this.target = target;
     // The deep link (re-)fronts System Settings; with a tracker running that

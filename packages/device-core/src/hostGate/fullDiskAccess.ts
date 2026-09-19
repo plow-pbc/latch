@@ -5,8 +5,8 @@
  * honest check is to try to open something TCC protects and see whether the
  * system allows it. Granting is likewise out of the app's hands: the person
  * flips a switch in System Settings, so the Settings pane's "grant" button is
- * a deep link to that pane (the `fullDiskSettings` entry in the desktop
- * main's EXTERNAL_URLS table).
+ * a deep link to that pane (`SETTINGS_PANES` in the desktop app's
+ * capabilitiesModel.ts).
  *
  * Lives in device-core rather than the desktop app because the diagnosis
  * (`hostGate/diagnose.ts`) needs the same answer the Settings pane shows —

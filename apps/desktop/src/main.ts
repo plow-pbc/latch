@@ -786,19 +786,12 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * `discord` and `website` are Settings' Support section; `account` is the
  * Plow web console, Settings' View Account button. It follows the build's API
  * origin so a `DOMO_API_BASE_URL` run opens the environment it signed into.
- *
- * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
- * Access pane. macOS has no API an app can call to request that permission —
- * sending the person to the switch IS the whole grant flow (see
- * device-core's hostGate/fullDiskAccess.ts), so the deep link belongs in this table like any other
- * page the app may open.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   account: `${apiBaseUrl}/app/`,
   claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
   discord: "https://watchmepivot.com/discord",
   website: "https://watchmepivot.com/",
-  fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
 ipcMain.handle("external:open", async (_e, key: string) => {
@@ -1871,21 +1864,15 @@ ipcMain.on("fullDisk:panelHold", (_e, on: boolean) => fdaGrantFlow.setHold(on ==
 ipcMain.on("fullDisk:panelHeight", (_e, height: unknown) => {
   if (typeof height === "number" && Number.isFinite(height)) fdaGrantFlow.setHeight(height);
 });
-// The grant flow itself: opens the pane and floats the drag panel next to it,
-// following the System Settings window (fdaGrantFlow.ts owns the lifecycle —
-// this handler only starts it). The helper binary is optional by design: no
-// Swift toolchain at build time just means the panel doesn't follow.
+// The grant flow itself: opens a switch's pane and floats the drag panel next
+// to it, following the System Settings window (fdaGrantFlow.ts owns the
+// lifecycle; grantTargetFor names the switch). The helper binary is optional
+// by design: no Swift toolchain at build time just means the panel doesn't
+// follow.
 const fdaGrantFlow = new FdaGrantFlow({
   rendererDir,
   preloadPath: path.join(dirname, "preload.cjs"),
   helperPath: fdaHelperPath,
-  fullDisk: {
-    key: "full_disk_access",
-    label: "Full Disk Access",
-    pane: EXTERNAL_URLS.fullDiskSettings,
-    acceptsDrop: true,
-    probe: () => probeFullDiskAccess(),
-  },
   openSettings: (pane) => shell.openExternal(pane),
 });
 // The panel's own close button (PermissionFlow's xmark) — the panel is
