@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld("domo", {
   // reads the file itself.
   vaultImportSources: () => ipcRenderer.invoke("vault:importSources"),
   vaultImportRequested: () => ipcRenderer.invoke("vault:importRequested"),
+  vaultImportAcknowledged: () => ipcRenderer.invoke("vault:importAcknowledged"),
   vaultImportInspect: (text: string) => ipcRenderer.invoke("vault:importInspect", text),
   vaultImportFile: () => ipcRenderer.invoke("vault:importFile"),
   // The 1Password vaults the owner kept, by id: main re-stages just their rows

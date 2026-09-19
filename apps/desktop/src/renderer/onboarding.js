@@ -805,8 +805,10 @@ function accessScreen() {
 }
 
 function doneScreen() {
-  const actions = [button("Import passwords", "nav-next", () =>
-    update(() => window.domo.onboardingFinish("import")))];
+  const importPasswords = button("Import passwords", "nav-next", () =>
+    update(() => window.domo.onboardingFinish("import")));
+  importPasswords.setAttribute("autofocus", "");
+  const actions = [importPasswords];
   if (doneAgent) {
     actions.push(button(`Text ${doneAgent.name}`, "done-tertiary", async () => {
       await window.domo.cloudOpenMessages(doneAgent.agentId);
@@ -984,7 +986,7 @@ function render() {
   }
 
   const kept = restoreFocus ? document.getElementById(restoreFocus) : null;
-  const focus = kept ?? screen.querySelector("input[autofocus]")
+  const focus = kept ?? screen.querySelector("[autofocus]")
     ?? (primaryButton.disabled ? screen.querySelector(".verify-activate:not(:disabled)") : null)
     ?? (!footer.hidden ? primaryButton : null);
   if (focus && !state.busy && !continuingGatekeeper) {

@@ -67,7 +67,7 @@ export async function vimportSheet(reload, host, exchange = null) {
   // its own sheet. A stale opening pressing on would take the seat from that
   // sheet — whose close would rightly cancel the one-shot hand-off — so it
   // stands down instead.
-  if (!alive()) return;
+  if (!alive()) return false;
   let source = null;
 
   // The staging this sheet is showing, named by the ticket that rode in on
@@ -100,7 +100,7 @@ export async function vimportSheet(reload, host, exchange = null) {
   // seat still matters, because it is what asks about an already-dirty row
   // before this sheet covers it.
   const seat = { dirty: () => false, close };
-  if (!(await vtakeEditor(seat))) return;
+  if (!(await vtakeEditor(seat))) return false;
 
   /** The sheet closed while an answer was in flight: the answer is stale and
    * only DROPPED. close() already cancelled, and the epoch main captured at
@@ -512,4 +512,5 @@ export async function vimportSheet(reload, host, exchange = null) {
   if (exchange) preview(exchange);
   else pick();
   document.querySelector(".vaultui").appendChild(overlay);
+  return true;
 }

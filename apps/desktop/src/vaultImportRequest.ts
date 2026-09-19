@@ -5,15 +5,17 @@
  * exists, and is consumed only after its Vault pane is ready.
  */
 export class VaultImportRequest {
-  private pending = false;
+  private requested = false;
 
   openAfterOnboarding(): void {
-    this.pending = true;
+    this.requested = true;
   }
 
-  take(): boolean {
-    const pending = this.pending;
-    this.pending = false;
-    return pending;
+  pending(): boolean {
+    return this.requested;
+  }
+
+  acknowledge(): void {
+    this.requested = false;
   }
 }

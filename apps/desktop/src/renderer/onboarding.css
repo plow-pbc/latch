@@ -732,6 +732,7 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   font-size: 13.5px;
   line-height: 1.35;
   opacity: 0;
+  visibility: hidden;
   animation: plugin-example-cycle 20s ease-in-out infinite;
 }
 
@@ -747,9 +748,9 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
 .plugin-example:nth-child(4) { animation-delay: 15s; }
 
 @keyframes plugin-example-cycle {
-  0%, 20% { opacity: 1; transform: translateY(0); }
-  24%, 96% { opacity: 0; transform: translateY(-5px); }
-  97%, 100% { opacity: 0; transform: translateY(5px); }
+  0%, 24% { opacity: 1; visibility: visible; transform: translateY(0); }
+  25%, 96% { opacity: 0; visibility: hidden; transform: translateY(-5px); }
+  97%, 100% { opacity: 0; visibility: hidden; transform: translateY(5px); }
 }
 
 .form-block {
@@ -1261,6 +1262,7 @@ body.dev-preview {
   .plugin-example:first-child {
     display: flex;
     opacity: 1;
+    visibility: visible;
     transform: none;
   }
 }

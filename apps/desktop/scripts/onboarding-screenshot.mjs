@@ -130,11 +130,38 @@ for (const fixture of SCREENS.filter((f) => f.click)) {
   };
 }
 
+const pluginQueries = [
+  "Can you find three times that work and send them?",
+  "Do you see my thread with the contractor? Are we all paid up?",
+  "What should I know before replying to this guest about the cabin?",
+  "How much is in my rental account—and did the tenants pay?",
+];
+const pluginsFreshFixture = SCREENS.find((fixture) => fixture.name === "plugins-fresh");
+pluginsFreshFixture.prepare = async (win) => {
+  const examples = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll(".plugin-example"), (node) => ({
+    text: node.textContent,
+    visible: getComputedStyle(node).visibility === "visible",
+  }))`);
+  if (examples.length !== pluginQueries.length ||
+      pluginQueries.some((query) => !examples.some((example) => example.text.includes(query)))) {
+    throw new Error("Plugin query carousel did not render all four examples");
+  }
+  if (examples.filter((example) => example.visible).length !== 1) {
+    throw new Error("Plugin query carousel must expose exactly one example at a time");
+  }
+};
+
 // The final page does not implement an importer of its own: its primary action
 // must name the one-shot handoff that opens Browser Vault's existing sheet.
 const doneAgentFixture = SCREENS.find((fixture) => fixture.name === "done-agent");
 doneAgentFixture.prepare = async (win) => {
   finishDestination = null;
+  const focused = await win.webContents.executeJavaScript(
+    `document.activeElement?.textContent.trim() ?? ""`,
+  );
+  if (focused !== "Import passwords") {
+    throw new Error(`Final page focused ${JSON.stringify(focused)}, not Import passwords`);
+  }
   await clickText(win, "Import passwords");
   if (finishDestination !== "import") {
     throw new Error(`Import passwords handed off to ${String(finishDestination)}, not Browser Vault`);

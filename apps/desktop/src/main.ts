@@ -1130,7 +1130,8 @@ ipcMain.handle("vault:importSources", async () => {
 
 // Setup can finish before the main window exists. The Vault pane consumes this
 // one-shot request only once it has rendered far enough to host vimportSheet.
-ipcMain.handle("vault:importRequested", async () => vaultImportRequest.take());
+ipcMain.handle("vault:importRequested", async () => vaultImportRequest.pending());
+ipcMain.handle("vault:importAcknowledged", async () => vaultImportRequest.acknowledge());
 
 // Pasted text: 1Password's "Copy item JSON", or CSV text.
 ipcMain.handle("vault:importInspect", async (_e, text: string) => stageImport(parsePasswordExport(String(text))));

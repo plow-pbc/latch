@@ -108,10 +108,9 @@ async function setUp() {
   });
   ipcMain.handle("vault:exchangePending", async () => null);
   ipcMain.handle("vault:importRequested", async () => {
-    const requested = importRequested;
-    importRequested = false;
-    return requested;
+    return importRequested;
   });
+  ipcMain.handle("vault:importAcknowledged", async () => { importRequested = false; });
   ipcMain.handle("vault:importSources", async () => ({
     apple: { icon: null, exchange: false },
     onePassword: { icon: null },
@@ -140,7 +139,9 @@ const SCREENS = [
   {
     name: "onboarding-import",
     openImport: true,
-    prepare: async () => {},
+    prepare: async () => {
+      if (importRequested) throw new Error("Onboarding import was not acknowledged after the sheet mounted");
+    },
     expect: ["Import passwords", "Apple Passwords", "1Password", "Chrome", "CSV file"],
   },
   {
