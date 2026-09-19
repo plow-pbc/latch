@@ -17,6 +17,13 @@ export function rowView(result) {
   };
 }
 
+const VERDICT_WORDS = { ok: "Allowed", no: "Denied", unavailable: "Couldn't check", checking: "Analyzing…" };
+
+/** The word after "Gatekeeper Verdict:" for a row in `state`. */
+export function verdictWord(state) {
+  return VERDICT_WORDS[state];
+}
+
 export function presetFor(text, presets) {
   return Object.keys(presets).find((key) => presets[key].text === text) ?? null;
 }

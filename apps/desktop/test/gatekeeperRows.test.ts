@@ -4,6 +4,7 @@ import {
   presetFor,
   rowView,
   UNAVAILABLE_REASON,
+  verdictWord,
 } from "../src/renderer/gatekeeperRows.js";
 
 describe("gatekeeper preview rows", () => {
@@ -16,6 +17,15 @@ describe("gatekeeper preview rows", () => {
     [{ verdict: "ask", reason: "anything" }, { state: "unavailable", reason: UNAVAILABLE_REASON }],
   ])("shows %j as %j", (result, view) => {
     expect(rowView(result)).toEqual(view);
+  });
+
+  it.each([
+    ["ok", "Allowed"],
+    ["no", "Denied"],
+    ["unavailable", "Couldn't check"],
+    ["checking", "Analyzing…"],
+  ])("labels a %s row's verdict %s", (state, word) => {
+    expect(verdictWord(state)).toBe(word);
   });
 
   it("names the preset whose instructions are in the field, and none once edited", () => {
