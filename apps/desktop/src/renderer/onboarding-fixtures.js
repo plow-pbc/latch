@@ -31,15 +31,15 @@ export function onboardingFixtures(now) {
     action: "Grant Full Disk Access",
     waiting: "Waiting for you in System Settings…",
     done: "Granted",
-    met: false,
+    status: "open",
   };
-  const fullDiskMet = { ...fullDisk, met: true };
+  const fullDiskMet = { ...fullDisk, status: "met" };
   const fullDiskRelaunch = {
     ...fullDisk,
     detail: "Quit and reopen Plow Latch to finish.",
     action: "Relaunch Plow Latch",
     waiting: "",
-    relaunch: true,
+    status: "relaunch",
   };
   const google = {
     id: "account:google",
@@ -48,7 +48,7 @@ export function onboardingFixtures(now) {
     action: "Connect Google",
     waiting: "Finish signing in with Google in your browser.",
     done: "Connected",
-    met: false,
+    status: "open",
   };
   const safari = {
     id: "safari-javascript-from-apple-events",
@@ -57,7 +57,7 @@ export function onboardingFixtures(now) {
     action: "Enable in Safari",
     waiting: "Turning it on. Safari relaunches.",
     done: "On",
-    met: false,
+    status: "open",
   };
   const row = (name, title, summary, kind, status, requirements) =>
     ({ name, title, summary, kind, description: null, status, requirements });

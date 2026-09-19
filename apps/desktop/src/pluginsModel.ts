@@ -30,10 +30,9 @@ export interface Requirement {
   /** The word setup's Access row shows once it is met: "Granted",
    *  "Connected". Empty for one setup never runs. */
   done: string;
-  met: boolean;
-  /** Granted, but only a relaunch lets this app's children inherit it: the
-   *  button relaunches rather than acting. */
-  relaunch?: true;
+  /** "relaunch": granted, but only a relaunch lets this app's children
+   *  inherit it — the button relaunches rather than acting. */
+  status: "open" | "met" | "relaunch";
 }
 
 export interface PluginRow {
@@ -75,7 +74,7 @@ function permissionRequirement(key: string, met: boolean, relaunch: boolean): Re
   const done = "Granted";
   if (relaunch) {
     // Setup never runs it, so no waiting line: its button is the relaunch.
-    return { id: key, title, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "", done, met: false, relaunch: true };
+    return { id: key, title, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "", done, status: "relaunch" };
   }
   return {
     id: key,
@@ -86,7 +85,7 @@ function permissionRequirement(key: string, met: boolean, relaunch: boolean): Re
     action: `Grant ${title}`,
     waiting: "Waiting for you in System Settings…",
     done,
-    met,
+    status: met ? "met" : "open",
   };
 }
 
@@ -100,14 +99,14 @@ function accountRequirement(id: string, met: boolean): Requirement {
     action: "Connect Google",
     waiting: "Finish signing in with Google in your browser.",
     done: "Connected",
-    met,
+    status: met ? "met" : "open",
   };
 }
 
 /** Off wins over an unmet requirement — a disabled plugin's status is `off`
  *  regardless — but the requirements themselves are always reported. */
 function rowStatus(enabled: boolean, requirements: readonly Requirement[]): PluginStatus {
-  return !enabled ? "off" : requirements.some((r) => !r.met) ? "needs-setup" : "ready";
+  return !enabled ? "off" : requirements.some((r) => r.status !== "met") ? "needs-setup" : "ready";
 }
 
 /** One row per plugin, in the order they were staged. */
@@ -161,10 +160,10 @@ export function browserPluginRow(input: {
     action: "Enable in Safari",
     waiting: "Turning it on. Safari relaunches.",
     done: "On",
-    met: input.safariJavaScript,
+    status: input.safariJavaScript ? "met" : "open",
   });
   if (!input.runtimePresent) {
-    requirements.push({ id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null, waiting: "", done: "", met: false });
+    requirements.push({ id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null, waiting: "", done: "", status: "open" });
   }
   return {
     name: BROWSER_PLUGIN,

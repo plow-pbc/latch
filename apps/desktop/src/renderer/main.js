@@ -2318,7 +2318,7 @@ async function renderPlugins() {
       : null;
     action?.addEventListener("click", async () => {
       action.disabled = true;
-      if (u.relaunch) return window.domo.appRelaunch();
+      if (u.status === "relaunch") return window.domo.appRelaunch();
       action.textContent = "Waiting…";
       try {
         draw(await window.domo.requirementsAct(u.id));
@@ -2365,7 +2365,7 @@ async function renderPlugins() {
     // Every requirement, met or not, is on the row now — off hides them all
     // (the owner's problem again only once they turn the plugin back on);
     // otherwise only the ones still outstanding show.
-    const unmet = r.status !== "off" ? r.requirements.filter((q) => !q.met) : [];
+    const unmet = r.status !== "off" ? r.requirements.filter((q) => q.status !== "met") : [];
     return el("div", { class: "cap-group open" }, [
       head,
       unmet.length ? el("div", { class: "cap-group-rows" }, unmet.map(unmetRow)) : null,

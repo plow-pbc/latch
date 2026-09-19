@@ -101,7 +101,7 @@ contextBridge.exposeInMainWorld("domo", {
   // be done.
   requirementsAct: (id: string) => ipcRenderer.invoke("requirements:act", id),
   // Quit and reopen: what finishes a grant only a fresh process inherits
-  // (a requirement's `relaunch`).
+  // (a requirement whose status is "relaunch").
   appRelaunch: () => ipcRenderer.invoke("app:relaunch"),
   // A block by this Mac lands the tray item and the notification on its
   // switch (Settings), or on the Audit tab's Blocked view when it named none.

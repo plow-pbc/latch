@@ -1665,7 +1665,7 @@ ipcMain.handle("requirements:act", async (e, rawId: unknown) => {
     enableSafari: () => enableSafariJavaScript(unsandboxedRunner),
   });
   const now = await pluginsNow();
-  if (now.rows.some((r) => r.requirements.some((q) => q.id === id && (q.met || q.relaunch)))) returnToCaller(e.sender);
+  if (now.rows.some((r) => r.requirements.some((q) => q.id === id && q.status !== "open"))) returnToCaller(e.sender);
   return { ...now, error };
 });
 // A relaunch-pending requirement's button, and setup's "Relaunch to finish":
@@ -2399,7 +2399,7 @@ app.whenReady().then(async () => {
       const off = rows.filter((r) => r.status === "needs-setup").map((r) => r.name);
       if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
     },
-    accessNeeded: async () => (await pluginsNow()).grants.some((g) => !g.met),
+    accessNeeded: async () => (await pluginsNow()).grants.some((g) => g.status !== "met"),
   });
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   const cloudAgentsClient = new CloudAgentsClient(cloudApi);

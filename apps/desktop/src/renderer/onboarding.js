@@ -461,8 +461,9 @@ function pluginRow(row) {
     showPlugins(await window.domo.pluginsSetEnabled(row.name, box.checked));
   });
   const tags = row.requirements.length
-    ? row.requirements.map((req) =>
-      el("span", { class: `item-tag${req.met ? " met" : ""}`, text: req.met ? `✓ ${req.title}` : req.title }))
+    ? row.requirements.map((req) => req.status === "met"
+      ? el("span", { class: "item-tag met", text: `✓ ${req.title}` })
+      : el("span", { class: "item-tag", text: req.title }))
     : [el("span", { class: "item-tag none", text: "Nothing to grant" })];
   return el("div", { class: `item-row${row.status === "off" ? " off" : ""}` }, [
     el("span", { class: "item-icon" }, [
@@ -501,7 +502,7 @@ function pluginsScreen() {
     ]),
   ];
   if (pluginsState) {
-    const toGrant = pluginsState.grants.filter((g) => !g.met && !g.relaunch);
+    const toGrant = pluginsState.grants.filter((g) => g.status === "open");
     parts.push(
       el("div", { class: "item-rows" }, pluginsState.rows.map(pluginRow)),
       el("div", { class: "grant-next" }, [
@@ -538,12 +539,12 @@ function grantRow(grant) {
   let tone = "";
   let line = null;
   let control = null;
-  if (grant.met) {
+  if (grant.status === "met") {
     control = el("span", { class: "item-chip" }, [
       icon("checkmark", { strokeWidth: "1.7" }),
       document.createTextNode(grant.done),
     ]);
-  } else if (grant.relaunch) {
+  } else if (grant.status === "relaunch") {
     line = statusLine("done", "Granted: relaunch to finish");
   } else if (running === grant.id) {
     tone = " running";

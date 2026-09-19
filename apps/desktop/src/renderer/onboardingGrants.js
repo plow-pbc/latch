@@ -1,9 +1,9 @@
 /* Setup's Access run over the ordered grant list (pluginsModel.ts's
    grantList), with no DOM: onboarding.js owns the drawing and the bridge. */
 
-/** What the run still has to do: not met, not waiting on a relaunch, not skipped. */
+/** What the run still has to do: the open grants, less the skipped. */
 function openGrants(grants, skipped) {
-  return grants.filter((g) => !g.met && !g.relaunch && !skipped.has(g.id));
+  return grants.filter((g) => g.status === "open" && !skipped.has(g.id));
 }
 
 /**
@@ -19,7 +19,7 @@ export async function runGrants({ act, getState, setState, stillHere, setRunning
   for (;;) {
     const { grants } = getState();
     const next = openGrants(grants, skipped)[0];
-    if (!next || grants.some((g) => g.relaunch)) return null;
+    if (!next || grants.some((g) => g.status === "relaunch")) return null;
     setRunning(next.id);
     const result = await act(next.id).catch(() => null);
     setRunning(null);
@@ -27,7 +27,7 @@ export async function runGrants({ act, getState, setState, stillHere, setRunning
     if (!result) return { id: next.id, error: null };
     setState(result);
     const fresh = result.grants.find((g) => g.id === next.id);
-    if (fresh && !fresh.met && !fresh.relaunch) return { id: next.id, error: result.error };
+    if (fresh?.status === "open") return { id: next.id, error: result.error };
   }
 }
 
@@ -41,7 +41,7 @@ export async function runGrants({ act, getState, setState, stillHere, setRunning
 export function accessPrimary({ grants, skipped, running, missed }) {
   const open = openGrants(grants, skipped);
   if (running) return { label: "Setting up…", kind: null };
-  if (grants.some((g) => g.relaunch)) return { label: "Relaunch to finish", kind: "relaunch" };
+  if (grants.some((g) => g.status === "relaunch")) return { label: "Relaunch to finish", kind: "relaunch" };
   if (missed && open.some((g) => g.id === missed.id)) return { label: "Try again", kind: "run" };
   if (open.length) return { label: `Set up all ${open.length}`, kind: "run" };
   return { label: "Continue", kind: "advance" };

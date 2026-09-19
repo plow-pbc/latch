@@ -64,8 +64,8 @@ describe("pluginRows status", () => {
 it("names an unmet account requirement with the action that fixes it, and flips met once connected — still listed", () => {
   const requirements = (connected: string[]) =>
     pluginRows(build({ requires: { accounts: ["google"] }, enabled: true, connected }))[0]!.requirements;
-  expect(requirements([])).toEqual([{ ...google, met: false }]);
-  expect(requirements(["google"])).toEqual([{ ...google, met: true }]);
+  expect(requirements([])).toEqual([{ ...google, status: "open" }]);
+  expect(requirements(["google"])).toEqual([{ ...google, status: "met" }]);
 });
 
 it.each([
@@ -75,8 +75,8 @@ it.each([
 ])("names an unmet %s requirement, and flips met once granted", (key, words) => {
   const requirements = (granted: string[]) =>
     pluginRows(build({ requires: { permissions: [key] }, enabled: true, granted }))[0]!.requirements;
-  expect(requirements([])).toEqual([{ id: key, ...words, met: false }]);
-  expect(requirements([key])).toEqual([{ id: key, ...words, met: true }]);
+  expect(requirements([])).toEqual([{ id: key, ...words, status: "open" }]);
+  expect(requirements([key])).toEqual([{ id: key, ...words, status: "met" }]);
 });
 
 // Granted during this run: the app reads it, a child does not inherit it
@@ -84,7 +84,7 @@ it.each([
 // relaunch, and setup's list keeps it.
 it("reads a permission waiting on a relaunch as unmet, with the relaunch as its action — still on setup's list", () => {
   const rows = pluginRows(build({ requires: { permissions: ["full_disk_access"] }, enabled: true, pending: ["full_disk_access"] }));
-  const relaunch = { id: "full_disk_access", title: "Full Disk Access", detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "", done: "Granted", met: false, relaunch: true };
+  const relaunch = { id: "full_disk_access", title: "Full Disk Access", detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "", done: "Granted", status: "relaunch" };
   expect(rows[0]!.requirements).toEqual([relaunch]);
   expect(grantList(rows)).toEqual([{ ...relaunch, plugins: ["wiki"] }]);
 });
@@ -92,7 +92,7 @@ it("reads a permission waiting on a relaunch as unmet, with the relaunch as its 
 it("keeps a disabled plugin's status off, but still lists its requirements — hiding them is the tab's business", () => {
   const [row] = pluginRows(build({ requires: { accounts: ["google"] }, enabled: false }));
   expect(row!.status).toBe("off");
-  expect(row!.requirements).toEqual([{ ...google, met: false }]);
+  expect(row!.requirements).toEqual([{ ...google, status: "open" }]);
 });
 
 it("carries its skill's description", () => {
@@ -112,8 +112,8 @@ describe("the shipped plugins", () => {
     parseManifest(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", name, "latch-plugin.json"), "utf8"));
 
   it.each([
-    { connected: [] as string[], status: "needs-setup", requirements: [{ id: "account:google", action: "Connect Google", met: false }] },
-    { connected: ["google"], status: "ready", requirements: [{ id: "account:google", action: "Connect Google", met: true }] },
+    { connected: [] as string[], status: "needs-setup", requirements: [{ id: "account:google", action: "Connect Google", status: "open" }] },
+    { connected: ["google"], status: "ready", requirements: [{ id: "account:google", action: "Connect Google", status: "met" }] },
   ])("reads gog as $status with connected accounts $connected", ({ connected, status, requirements }) => {
     const [row] = pluginRows({ plugins: [{ manifest: shipped("gog"), enabled: true }], connectedAccounts: connected, grantedPermissions: [], relaunchPending: [] });
     expect(row).toMatchObject({ name: "gog", status, requirements });
@@ -143,14 +143,14 @@ describe("browserPluginRow", () => {
   // Never run by setup (no action), so no waiting line and no done word.
   const runtime = { id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null, waiting: "", done: "" };
   it.each([
-    ["ready when the runtime is present and Safari allows JavaScript", base, "ready", [{ ...safari, met: true }]],
+    ["ready when the runtime is present and Safari allows JavaScript", base, "ready", [{ ...safari, status: "met" }]],
     // Full Disk Access is only needed to WRITE Safari's setting, so it only
     // shows up while that setting is still off.
-    ["needs setup with Full Disk Access and Safari when the setting is off", { ...base, safariJavaScript: false }, "needs-setup", [{ ...fda, met: false }, { ...safari, met: false }]],
-    ["Full Disk Access reads met once granted, Safari still is not", { ...base, safariJavaScript: false, fullDiskAccess: true }, "needs-setup", [{ ...fda, met: true }, { ...safari, met: false }]],
-    ["Full Disk Access granted this run waits on a relaunch", { ...base, safariJavaScript: false, relaunchPending: ["full_disk_access"] }, "needs-setup", [{ ...fda, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "", met: false, relaunch: true }, { ...safari, met: false }]],
-    ["needs setup with no button when the runtime is missing", { ...base, runtimePresent: false }, "needs-setup", [{ ...safari, met: true }, { ...runtime, met: false }]],
-    ["off keeps status off but still lists its requirements", { ...base, enabled: false, safariJavaScript: false }, "off", [{ ...fda, met: false }, { ...safari, met: false }]],
+    ["needs setup with Full Disk Access and Safari when the setting is off", { ...base, safariJavaScript: false }, "needs-setup", [{ ...fda, status: "open" }, { ...safari, status: "open" }]],
+    ["Full Disk Access reads met once granted, Safari still is not", { ...base, safariJavaScript: false, fullDiskAccess: true }, "needs-setup", [{ ...fda, status: "met" }, { ...safari, status: "open" }]],
+    ["Full Disk Access granted this run waits on a relaunch", { ...base, safariJavaScript: false, relaunchPending: ["full_disk_access"] }, "needs-setup", [{ ...fda, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "", status: "relaunch" }, { ...safari, status: "open" }]],
+    ["needs setup with no button when the runtime is missing", { ...base, runtimePresent: false }, "needs-setup", [{ ...safari, status: "met" }, { ...runtime, status: "open" }]],
+    ["off keeps status off but still lists its requirements", { ...base, enabled: false, safariJavaScript: false }, "off", [{ ...fda, status: "open" }, { ...safari, status: "open" }]],
   ] as const)("is %s", (_what, input, status, requirements) => {
     const row = browserPluginRow(input);
     expect(row).toMatchObject({ name: BROWSER_PLUGIN, title: "Browser use", kind: "Browser", status });
@@ -173,25 +173,25 @@ describe("grantList", () => {
   });
 
   it("dedupes a permission two switched-on plugins share, listing both titles once", () => {
-    const req = { id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", waiting: "w", done: "Granted", met: false };
+    const req = { id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", waiting: "w", done: "Granted", status: "open" };
     const rows = [rowWith("Wiki", "needs-setup", [req]), rowWith("Messages", "needs-setup", [req])];
     expect(grantList(rows)).toEqual([{ ...req, plugins: ["Wiki", "Messages"] }]);
   });
 
   it("orders permissions, then Safari, then accounts; drops off plugins and action-less requirements; keeps met ones", () => {
     const rows: PluginRow[] = [
-      rowWith("Gog", "ready", [{ id: "account:google", title: "Google account", detail: "d", action: "Connect Google", waiting: "w", done: "Connected", met: true }]),
+      rowWith("Gog", "ready", [{ id: "account:google", title: "Google account", detail: "d", action: "Connect Google", waiting: "w", done: "Connected", status: "met" }]),
       rowWith("Browser use", "needs-setup", [
-        { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "d", action: "Enable in Safari", waiting: "w", done: "On", met: false },
-        { id: BROWSER_RUNTIME, title: "Browser runtime", detail: "d", action: null, waiting: "", done: "", met: false },
+        { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "d", action: "Enable in Safari", waiting: "w", done: "On", status: "open" },
+        { id: BROWSER_RUNTIME, title: "Browser runtime", detail: "d", action: null, waiting: "", done: "", status: "open" },
       ]),
-      rowWith("Messages", "needs-setup", [{ id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", waiting: "w", done: "Granted", met: false }]),
-      rowWith("Off plugin", "off", [{ id: "account:google", title: "Google account", detail: "d", action: "Connect Google", waiting: "w", done: "Connected", met: false }]),
+      rowWith("Messages", "needs-setup", [{ id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", waiting: "w", done: "Granted", status: "open" }]),
+      rowWith("Off plugin", "off", [{ id: "account:google", title: "Google account", detail: "d", action: "Connect Google", waiting: "w", done: "Connected", status: "open" }]),
     ];
     expect(grantList(rows)).toEqual([
-      { id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", waiting: "w", done: "Granted", met: false, plugins: ["Messages"] },
-      { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "d", action: "Enable in Safari", waiting: "w", done: "On", met: false, plugins: ["Browser use"] },
-      { id: "account:google", title: "Google account", detail: "d", action: "Connect Google", waiting: "w", done: "Connected", met: true, plugins: ["Gog"] },
+      { id: "full_disk_access", title: "Full Disk Access", detail: "d", action: "Grant Full Disk Access", waiting: "w", done: "Granted", status: "open", plugins: ["Messages"] },
+      { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "d", action: "Enable in Safari", waiting: "w", done: "On", status: "open", plugins: ["Browser use"] },
+      { id: "account:google", title: "Google account", detail: "d", action: "Connect Google", waiting: "w", done: "Connected", status: "met", plugins: ["Gog"] },
     ]);
   });
 });
