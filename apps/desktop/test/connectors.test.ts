@@ -442,6 +442,29 @@ describe("a background poll", () => {
     }]);
   });
 
+  it("discards an older background answer after a newer poll connects an account", async () => {
+    const stale = deferred<ConnectorsOverview>();
+    const ada = account("ada@example.com", { isDefault: true });
+    const plow = new FakePlow();
+    const { connectors, audits } = build(plow);
+    await connectors.poll(); // establish the empty baseline
+    plow.pollGate = async (_signal, call) =>
+      call === 2 ? stale.promise : overview([ada]);
+
+    const older = connectors.poll();
+    while (plow.listCredentials.length < 2) await Promise.resolve();
+    await connectors.poll();
+    stale.resolve(overview());
+    await older;
+    await connectors.poll();
+
+    expect(connectors.state().google.accounts).toEqual([ada]);
+    expect(audits).toEqual([{
+      event: "connector_connected",
+      fields: { provider: "google", account: "ada@example.com" },
+    }]);
+  });
+
   it("reconciles accounts connected after a timeout without a busy flicker", async () => {
     const plow = new FakePlow();
     let published = 0;

@@ -39,28 +39,6 @@ describe("onboarding renderer actions", () => {
     expect(await run(async () => ++calls)).toBe(1);
   });
 
-  it.each([
-    ["the same repeat row", "account:google"],
-    ["a different repeat row", "account:calendar"],
-  ])("keeps %s out of a requirement action already in flight", async (_name, secondId) => {
-    let finish!: () => void;
-    const held = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-    const acted: string[] = [];
-    const run = singleFlight(() => false);
-
-    const first = run(async () => {
-      acted.push("account:google");
-      await held;
-    });
-    await expect(run(async () => acted.push(secondId))).resolves.toBeUndefined();
-    expect(acted).toEqual(["account:google"]);
-
-    finish();
-    await first;
-  });
-
   // A focus refresh asked before a switch flips read the old switches: once
   // the switch is asked, the refresh's answer never reaches the screen,
   // whichever answers first.

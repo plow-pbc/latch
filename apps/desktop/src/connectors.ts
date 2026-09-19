@@ -58,6 +58,7 @@ export class Connectors {
   /** The first successful connector snapshot is a baseline, not an event. */
   private hydrated = false;
   private generation = 0;
+  private pollGeneration = 0;
   private actionAbort: AbortController | null = null;
 
   constructor(private readonly deps: ConnectorsDeps) {}
@@ -91,13 +92,14 @@ export class Connectors {
     const credential = this.deps.credential().trim();
     if (this.busy || !credential) return;
     const generation = this.generation;
+    const pollGeneration = ++this.pollGeneration;
     let overview: ConnectorsOverview;
     try {
       overview = await this.deps.api.listConnectors(credential, AbortSignal.timeout(CONNECTOR_TIMEOUT_MS));
     } catch {
       return;
     }
-    if (generation !== this.generation) return;
+    if (generation !== this.generation || pollGeneration !== this.pollGeneration) return;
     const accounts = overview.google.accounts.map((account) => ({ ...account }));
     const changed = JSON.stringify(accounts) !== JSON.stringify(this.accounts);
     const newEmails = this.hydrated ? addedAccountEmails(this.accounts, accounts) : [];
