@@ -324,6 +324,58 @@ describe("wizard steps around the existing verification flow", () => {
     expect(applied).toBe(1);
   });
 
+  it("keeps the owner on Privacy when the plugin default throws, and retries it on the next advance", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    let applied = 0;
+    const applyPluginDefault = async () => {
+      applied += 1;
+      if (applied === 1) throw new Error("boom");
+    };
+    const onboarding = build({ applyPluginDefault });
+
+    await onboarding.advance();
+    await settle();
+    expect(onboarding.state().step).toBe("privacy");
+
+    const failed = await onboarding.advance();
+    expect(failed.step).toBe("privacy");
+    expect(failed.busy).toBe(false);
+    expect(failed.message).toBe("Something went wrong. Try again.");
+    expect(applied).toBe(1);
+
+    const retried = await onboarding.advance();
+    expect(retried.step).toBe("plugins");
+    expect(applied).toBe(2);
+  });
+
+  it("does not resume into Access when reset() lands during accessNeeded, and leaves telemetry unsaved", async () => {
+    let release: (needsAccess: boolean) => void = () => {};
+    const pending = new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    const onboarding = build({ accessNeeded: () => pending });
+    onboarding.setTelemetryEnabled(false);
+
+    const advancing = onboarding.advance();
+    expect(onboarding.state().busy).toBe(true);
+
+    // Sign-out lands while accessNeeded is still in flight.
+    signOutOfPlow(home);
+    expect(onboarding.reset().step).toBe("welcome");
+
+    release(true);
+    const settled = await advancing;
+
+    // The reset is left alone — not overwritten with Access — and the pending
+    // telemetry choice from the signed-out session was never written.
+    expect(settled.step).toBe("welcome");
+    expect(onboarding.state().step).toBe("welcome");
+    expect(loadSettings(home).telemetryEnabled).toBe(true);
+  });
+
   it("does not publish an ignored telemetry choice", () => {
     let notifications = 0;
     const onboarding = build({

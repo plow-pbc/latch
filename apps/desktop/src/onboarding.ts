@@ -216,21 +216,33 @@ export class Onboarding {
       return this.newActivationCode();
     }
     if (this.step === "privacy") {
-      this.step = "plugins";
-      await this.deps.applyPluginDefault?.();
-      return this.publish();
+      // Wrapped in `run()` so a throw leaves the owner readably on Privacy
+      // instead of an unhandled rejection, and `busy` blocks a second advance
+      // from racing this one. The step moves only once the default has
+      // actually applied, so a throw retries it rather than skipping it for
+      // good.
+      return this.run(async () => {
+        await this.deps.applyPluginDefault?.();
+        this.step = "plugins";
+      });
     }
     if (this.step === "plugins") {
-      const settings = this.settings();
-      settings.telemetryEnabled = this.telemetryEnabled;
-      this.save(settings);
-      const needsAccess = (await this.deps.accessNeeded?.()) ?? false;
-      if (needsAccess) {
-        this.step = "access";
-        return this.publish();
-      }
-      this.step = "availability";
-      return this.publish();
+      return this.run(async () => {
+        const needsAccess = (await this.deps.accessNeeded?.()) ?? false;
+        // A reset() (sign-out) can land during this await and move the step
+        // itself — most commonly to Welcome. Resuming here must not overwrite
+        // whatever it decided, and must not persist a choice into the home it
+        // just signed out of.
+        if (this.step !== "plugins") return;
+        const settings = this.settings();
+        settings.telemetryEnabled = this.telemetryEnabled;
+        this.save(settings);
+        if (needsAccess) {
+          this.step = "access";
+          return;
+        }
+        this.step = "availability";
+      });
     }
     if (this.step === "access") {
       this.step = "availability";
