@@ -4,7 +4,7 @@
    onboarding.js's does over main's requirements:act; whether a grant landed
    is read from that answer. */
 import { describe, expect, it } from "vitest";
-import { accessPrimary, actGrant, clearMissed, runGrants } from "../src/renderer/onboardingGrants.js";
+import { ACTION_IGNORED, accessPrimary, actionMiss, clearMissed, grantAction, runGrants } from "../src/renderer/onboardingGrants.js";
 
 interface Grant {
   id: string;
@@ -24,7 +24,7 @@ function run(grants: Grant[], outcomes: Record<string, Outcome> = {}, skipped: s
   let running: string | null = null;
   const walked: string[] = [];
   const runningDuringAct: (string | null)[] = [];
-  const missed = runGrants({
+  const act = grantAction({
     act: async (id: string) => {
       walked.push(id);
       runningDuringAct.push(running);
@@ -36,11 +36,14 @@ function run(grants: Grant[], outcomes: Record<string, Outcome> = {}, skipped: s
       const error = { miss: "Sign-in didn't finish.", warn: "Safari did not relaunch — open it yourself." }[how as string] ?? null;
       return { ...state, error };
     },
-    getState: () => state,
-    stillHere: () => here,
     setRunning: (id: string | null) => {
       running = id;
     },
+  });
+  const missed = runGrants({
+    act,
+    getState: () => state,
+    stillHere: () => here,
   }, new Set(skipped));
   return missed.then((result: unknown) => ({ missed: result, walked, runningDuringAct, runningAfter: running }));
 }
@@ -80,17 +83,59 @@ describe("an individual Access action", () => {
   it("runs a met requirement's repeat action once without walking other open grants", async () => {
     const acted: string[] = [];
     const running: Array<string | null> = [];
-    const result = await actGrant({
+    const act = grantAction({
       act: async (id: string) => {
         acted.push(id);
         return { grants: [grant("fda"), grant("account:google", "met")], error: null };
       },
       setRunning: (id: string | null) => running.push(id),
-    }, "account:google");
+    });
+    const result = await act("account:google");
 
     expect(result).toEqual({ grants: [grant("fda"), grant("account:google", "met")], error: null });
     expect(acted).toEqual(["account:google"]);
     expect(running).toEqual(["account:google", null]);
+  });
+
+  it.each([
+    ["a repeated click", "account:google"],
+    ["another row's repeat click", "account:calendar"],
+  ])("ignores %s while the first action is pending", async (_name, secondId) => {
+    const acted: string[] = [];
+    const running: Array<string | null> = [];
+    let finish!: (result: { grants: Grant[]; error: null }) => void;
+    const act = grantAction({
+      act: (id: string) => {
+        acted.push(id);
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+      setRunning: (id: string | null) => running.push(id),
+    });
+
+    const first = act("account:google");
+    const repeated = await act(secondId);
+
+    expect(acted).toEqual(["account:google"]);
+    expect(running).toEqual(["account:google"]);
+    expect(repeated).toBe(ACTION_IGNORED);
+
+    finish({ grants: [grant("fda"), grant("account:google", "met")], error: null });
+    await expect(first).resolves.toEqual({ grants: [grant("fda"), grant("account:google", "met")], error: null });
+    expect(running).toEqual(["account:google", null]);
+  });
+});
+
+describe("an individual action result", () => {
+  it.each([
+    ["returned failure", { grants: [grant("account:google", "met")], error: "Sign-in didn't finish." }, { id: "account:google", error: "Sign-in didn't finish." }],
+    ["thrown or missing result", null, { id: "account:google", error: null }],
+    ["ignored pending action", ACTION_IGNORED, null],
+    ["undefined bridge result", undefined, { id: "account:google", error: null }],
+    ["successful repeat", { grants: [grant("account:google", "met")], error: null }, null],
+  ])("keeps a repeat row actionable after a %s", (_name, result, expected) => {
+    expect(actionMiss("account:google", result)).toEqual(expected);
   });
 });
 

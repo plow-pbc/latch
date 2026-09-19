@@ -6,16 +6,36 @@ function openGrants(grants, skipped) {
   return grants.filter((g) => g.status === "open" && !skipped.has(g.id));
 }
 
-/** One requirement action, shared by the primary run and a met row's repeat
- * action. The caller decides whether its result is a miss or simply a fresh
- * state to draw. */
-export async function actGrant({ act, setRunning }, id) {
-  setRunning(id);
-  try {
-    return await act(id);
-  } finally {
-    setRunning(null);
-  }
+/** The serialized entry point uses this distinct value for a click it ignored;
+ * `undefined` remains a failed/malformed bridge result the row must explain. */
+export const ACTION_IGNORED = Symbol("action ignored");
+
+/** One serialized requirement action, shared by the primary run and a met
+ * row's repeat action. A second click while one is in flight is ignored, so
+ * only its own completion clears the running row. */
+export function grantAction({ act, setRunning }) {
+  let pending = false;
+  return async (id) => {
+    if (pending) return ACTION_IGNORED;
+    pending = true;
+    setRunning(id);
+    try {
+      return await act(id);
+    } finally {
+      pending = false;
+      setRunning(null);
+    }
+  };
+}
+
+/** What an action result leaves for its row to explain. The same account can
+ * remain met after another-account sign-in fails, so errors are independent
+ * of the row's fresh status. */
+export function actionMiss(id, result) {
+  if (result === ACTION_IGNORED) return null;
+  if (!result) return { id, error: null };
+  const fresh = result.grants.find((grant) => grant.id === id);
+  return fresh?.status === "open" || result.error ? { id, error: result.error } : null;
 }
 
 /** A refresh can resolve a flow after its foreground action said it missed.
@@ -37,16 +57,15 @@ export function clearMissed(missed, grants) {
  * then this app's children can't use it, so a later flow (Safari's write)
  * would only fail.
  */
-export async function runGrants({ act, getState, stillHere, setRunning }, skipped) {
+export async function runGrants({ act, getState, stillHere }, skipped) {
   for (;;) {
     const { grants } = getState();
     const next = openGrants(grants, skipped)[0];
     if (!next || grants.some((g) => g.status === "relaunch")) return null;
-    const result = await actGrant({ act, setRunning }, next.id).catch(() => null);
+    const result = await act(next.id).catch(() => null);
     if (!stillHere()) return null;
-    if (!result) return { id: next.id, error: null };
-    const fresh = result.grants.find((g) => g.id === next.id);
-    if (fresh?.status === "open" || result.error) return { id: next.id, error: result.error };
+    const missed = actionMiss(next.id, result);
+    if (missed) return missed;
   }
 }
 
