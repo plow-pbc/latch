@@ -92,7 +92,7 @@ export class FdaGrantFlow {
   // never pin the panel open forever.
   private holdVisible = false;
   private holdTimer: NodeJS.Timeout | null = null;
-  /** The granted-linger delay armed by checkGranted(); stop() must cancel it
+  /** The granted-linger delay armed by scheduleProbe(); stop() must cancel it
    *  or a flow started inside that window inherits the old flow's stop(). */
   private lingerTimer: NodeJS.Timeout | null = null;
   /** The switch the panel is currently pointing at. */
@@ -231,12 +231,12 @@ export class FdaGrantFlow {
       this.applyVisibility();
     });
 
-    this.probeTimer = setInterval(() => void this.checkGranted(), PROBE_INTERVAL_MS);
+    this.scheduleProbe();
     this.timeoutTimer = setTimeout(() => this.stop(), FLOW_TIMEOUT_MS);
   }
 
   stop(): void {
-    if (this.probeTimer) clearInterval(this.probeTimer);
+    if (this.probeTimer) clearTimeout(this.probeTimer);
     if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
     if (this.holdTimer) clearTimeout(this.holdTimer);
     if (this.lingerTimer) clearTimeout(this.lingerTimer);
@@ -267,6 +267,9 @@ export class FdaGrantFlow {
     // readline frames the stream — the same seam the browser host uses for
     // child NDJSON; decodeFrameLine only decodes.
     readline.createInterface({ input: helper.stdout! }).on("line", (line) => {
+      // A killed helper's buffered lines still arrive; only the current
+      // helper speaks for the current flow — the same guard as degrade().
+      if (this.helper !== helper) return;
       const decoded = decodeFrameLine(line);
       if (decoded === null) return;
       if (decoded === "gone") {
@@ -345,19 +348,24 @@ export class FdaGrantFlow {
     }
   }
 
-  private async checkGranted(): Promise<void> {
+  /**
+   * One probe at a time: the next is scheduled only once this one answers,
+   * so a slow probe never overlaps the next and one linger is ever armed.
+   * The flow token is captured before the await — a stop() or a different
+   * switch's start() while this probe is in flight replaces it, and a stale
+   * "granted" must not touch whichever flow is current by then.
+   */
+  private scheduleProbe(): void {
     const target = this.target;
-    // Captured before the await: a start() for a different switch (or a
-    // stop()) while this probe is in flight replaces this.outcome, and a
-    // stale "granted" from THIS probe must not arm the linger for whatever
-    // flow is current by the time it resolves. Nor may a second tick whose
-    // probe overlapped a slow one arm another: stop() cancels only one.
     const outcome = this.outcome;
-    if (!target || !(await target.probe())) return;
-    if (this.outcome !== outcome || this.lingerTimer) return;
-    // Let the panel's own poll paint the granted state, then leave.
-    if (this.probeTimer) clearInterval(this.probeTimer);
-    this.probeTimer = null;
-    this.lingerTimer = setTimeout(() => this.stop(), GRANTED_LINGER_MS);
+    this.probeTimer = setTimeout(async () => {
+      // A probe that fails says "not yet", and the next one still runs.
+      const granted = target !== null && (await target.probe().catch(() => false));
+      if (this.outcome !== outcome) return;
+      if (!granted) return this.scheduleProbe();
+      this.probeTimer = null;
+      // Let the panel's own poll paint the granted state, then leave.
+      this.lingerTimer = setTimeout(() => this.stop(), GRANTED_LINGER_MS);
+    }, PROBE_INTERVAL_MS);
   }
 }
