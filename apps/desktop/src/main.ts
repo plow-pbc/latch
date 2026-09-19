@@ -69,6 +69,7 @@ import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safar
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
+import { applyPlowFolderIcon } from "./plowFolderIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
@@ -2285,6 +2286,13 @@ app.whenReady().then(async () => {
     // degrades — the same contract as the Full Disk Access tracker.
     nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath, native: nativePermissions() }),
   );
+  // DeviceAgent has just ensured the owner's real ~/Plow exists. Decorating
+  // it is cosmetic and must not hold relay startup or weaken that ownership.
+  void applyPlowFolderIcon({
+    folderPath: plowFolderPath(os.homedir()),
+    helperPath: nativeHelperPath("plow-folder-icon"),
+    badgePath: nativeHelperPath("plow-badge.png"),
+  });
   // The owner's off switches, as they left them: one call, and the device
   // publishes exactly the skills it will honour commands for.
   device.setDisabledPlugins(loadSettings(home).disabledPlugins ?? []);
