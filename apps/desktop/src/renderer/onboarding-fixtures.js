@@ -268,7 +268,7 @@ export function onboardingFixtures(now) {
         "Meet the Plow Gatekeeper",
         "Plow's adversarial reviewer protects your data from malicious queries, while allowing your agents to get useful work done.",
         "What access should it allow to your Mac?",
-        "Home", "Work",
+        "Use a default:", "Personal assistant", "Executive assistant",
         ...gatekeeperPresets.home.rows.map((r) => r.label),
         "Continue",
       ],

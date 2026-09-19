@@ -319,19 +319,12 @@ function gatekeeperScreen() {
   const g = gatekeeper;
   if (!g || !gatekeeperPresets) return el("div", { class: "step-inner gatekeeper-screen" }, [head, note(state)]);
 
-  const segButtons = ["home", "work"].map((key) => {
-    const b = button(key === "home" ? "Home" : "Work", "gk-seg-button", () => choosePreset(key));
-    b.dataset.preset = key;
-    return b;
-  });
-  const syncSegments = () => {
-    const active = presetFor(g.text, gatekeeperPresets);
-    for (const b of segButtons) {
-      b.classList.toggle("on", b.dataset.preset === active);
-      b.setAttribute("aria-pressed", String(b.dataset.preset === active));
-    }
-  };
-  syncSegments();
+  // Each default replaces the text with its preset; it is an action, not a state.
+  const defaults = el("div", { class: "gk-defaults" }, [
+    el("span", { text: "Use a default:" }),
+    button("Personal assistant", "gk-default", () => choosePreset("home")),
+    button("Executive assistant", "gk-default", () => choosePreset("work")),
+  ]);
 
   const field = el("textarea", {
     class: "gk-text",
@@ -340,7 +333,6 @@ function gatekeeperScreen() {
   field.value = g.text;
   field.addEventListener("input", () => {
     g.text = field.value;
-    syncSegments();
     // An edit retires the shown verdicts at once; only the review waits for a pause.
     if (g.text.trim() === g.lastText) return;
     invalidate(g, g.text);
@@ -377,7 +369,7 @@ function gatekeeperScreen() {
 
   return el("div", { class: "step-inner gatekeeper-screen" }, [
     head,
-    el("div", { class: "gk-seg" }, [el("div", { class: "gk-seg-track" }, segButtons)]),
+    defaults,
     field,
     beamField,
     note(state),

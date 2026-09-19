@@ -1206,10 +1206,9 @@ body.dev-preview {
 .wizard-screen.is-gatekeeper h1 { font-size: 40px; margin-bottom: 16px; }
 .gatekeeper-screen .head-center .subhead { max-width: 44ch; }
 .gatekeeper-screen .subhead strong { color: var(--text); font-weight: 500; }
-.gk-seg { display: flex; justify-content: center; margin: 26px 0 14px; }
-.gk-seg-track { display: inline-flex; padding: 3px; border-radius: 11px; background: var(--surface); border: 1px solid var(--border); }
-.gk-seg-button { font: 600 13px var(--sans); color: var(--muted-2); background: transparent; border: 0; border-radius: 8px; padding: 7px 24px; cursor: pointer; }
-.gk-seg-button.on { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-2); }
+.gk-defaults { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 26px 0 14px; color: var(--muted); }
+.gk-default { font: 500 13px var(--sans); color: var(--muted-2); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+.gk-default:hover { color: var(--text); border-color: var(--border-2); }
 .gk-text { display: block; width: 100%; height: 72px; resize: none; border: 1px solid var(--border-2); background: var(--surface);
   border-radius: 11px; padding: 11px 13px; color: var(--text); font: 13.5px/1.5 var(--sans); outline: none; }
 .gk-text:focus { border-color: rgba(213, 239, 138, 0.45); box-shadow: 0 0 0 3px rgba(213, 239, 138, 0.08); }
