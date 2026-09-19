@@ -136,9 +136,9 @@ export interface Settings {
   relayCredential: string;
   /** The account this Mac is signed into. */
   accountUid: string;
-  /** The key_prefix (public identifier, not the secret) of a session this Mac
+  /** The key_prefixes (public identifiers, not secrets) of sessions this Mac
    * signed out of but could not retire — see `retireUnretiredSession`. */
-  unretiredKeyPrefix?: string;
+  unretiredKeyPrefixes?: string[];
   /** This installation's server-authored MCP endpoint. */
   mcpUrl: string;
   /** The last-selected main-window tab, restored across launches.

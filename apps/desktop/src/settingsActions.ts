@@ -59,14 +59,19 @@ export function setAgentPurpose(home: string, purpose: unknown): string {
  * legal state that denies legibly, and rewriting the owner's choice behind
  * their back on sign-out was never the honest way to say so.
  */
-export function signOutOfPlow(home: string): void {
+export function signOutOfPlow(home: string, unretiredPrefix?: string): void {
   update(home, (s) => {
     s.relayCredential = "";
     s.relayCredentialEnc = undefined;
     s.accountUid = "";
     s.mcpUrl = "";
     s.setupComplete = false;
+    if (unretiredPrefix) s.unretiredKeyPrefixes = [...(s.unretiredKeyPrefixes ?? []), unretiredPrefix];
   });
+}
+
+function forgetUnretired(home: string, retired: readonly string[]): void {
+  update(home, (s) => (s.unretiredKeyPrefixes = s.unretiredKeyPrefixes?.filter((p) => !retired.includes(p))));
 }
 
 /**
@@ -105,24 +110,21 @@ export function isSignedIn(home: string): boolean {
  * be imported under vitest, so that property is only provable while this lives
  * here.
  *
- * The credential's `key_prefix` is recorded as `unretiredKeyPrefix` in this
- * same synchronous section, before the first `await` — see
- * `retireUnretiredSession`. A successful revoke clears it.
+ * The credential's `key_prefix` joins `unretiredKeyPrefixes` in the same write
+ * that clears it, before the first `await` — see `retireUnretiredSession`. A
+ * successful revoke removes it again.
  */
 export async function revokeAndSignOut(
   home: string,
   revoke: (credential: string) => Promise<unknown>,
 ): Promise<boolean> {
   const credential = (loadSettings(home).relayCredential ?? "").trim();
-  signOutOfPlow(home);
-  if (!credential) return true;
-  const prefix = keyPrefixOf(credential);
-  update(home, (s) => (s.unretiredKeyPrefix = prefix));
+  const prefix = credential ? keyPrefixOf(credential) : undefined;
+  signOutOfPlow(home, prefix);
+  if (!prefix) return true;
   try {
     await revoke(credential);
-    update(home, (s) => {
-      if (s.unretiredKeyPrefix === prefix) s.unretiredKeyPrefix = undefined;
-    });
+    forgetUnretired(home, [prefix]);
     return true;
   } catch {
     console.warn("[settings] session revoke failed; already signed out locally");
@@ -131,25 +133,23 @@ export async function revokeAndSignOut(
 }
 
 /**
- * Retire the session `revokeAndSignOut` recorded but couldn't reach — Plow
- * refuses to register this Mac's device to a new session while the old one
- * is still live (409). Errors propagate: the relay client's own backoff
- * retries `beforeConnect`, and the record stays on disk for that retry.
+ * Retire every session `revokeAndSignOut` recorded but couldn't reach — Plow
+ * refuses to register this Mac's device to a new session while an old one is
+ * still live (409). Errors propagate: the relay client's own backoff retries
+ * `beforeConnect`, and the records stay on disk for that retry.
  */
 export async function retireUnretiredSession(
   home: string,
   api: Pick<PlowApi, "listApiKeys" | "revokeApiKey">,
 ): Promise<void> {
   const settings = loadSettings(home);
-  const prefix = settings.unretiredKeyPrefix;
+  const prefixes = settings.unretiredKeyPrefixes ?? [];
   const credential = (settings.relayCredential ?? "").trim();
-  if (!prefix || !credential) return;
-  const keys = await api.listApiKeys(credential);
-  const stale = keys.find((key) => key.is_active && key.key_prefix === prefix);
-  if (stale) await api.revokeApiKey(credential, stale.id);
-  update(home, (s) => {
-    if (s.unretiredKeyPrefix === prefix) s.unretiredKeyPrefix = undefined;
-  });
+  if (!prefixes.length || !credential) return;
+  for (const key of await api.listApiKeys(credential)) {
+    if (key.is_active && key.key_prefix && prefixes.includes(key.key_prefix)) await api.revokeApiKey(credential, key.id);
+  }
+  forgetUnretired(home, prefixes);
 }
 
 /**
