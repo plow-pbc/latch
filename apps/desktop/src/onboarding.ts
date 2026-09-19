@@ -20,16 +20,16 @@ import { loadSettings, saveSettings, Settings } from "./settings.js";
 /**
  * The verification sub-steps retain their existing mechanics. A successful
  * login moves straight to Privacy, which doubles as the confirmation screen
- * before the post-login data choice.
+ * before the post-login plugin choice.
  */
 export type OnboardingStep =
   | "welcome"
   | "privacy"
   | "activate"
   | "waiting"
-  | "data"
+  | "plugins"
+  | "access"
   | "availability"
-  | "connect"
   | "done";
 
 /**
@@ -132,7 +132,7 @@ export interface OnboardingState {
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
   activationStale: boolean;
-  /** The data screen's pending choice. It is persisted only on Continue. */
+  /** The plugins screen's pending choice. It is persisted only on Continue. */
   telemetryEnabled: boolean;
 }
 
@@ -143,6 +143,10 @@ export interface OnboardingDeps {
   startRelay: () => Promise<void>;
   /** Names this Mac in the activation request. */
   deviceName: string;
+  /** Once per entry from Privacy: turn off every plugin that can't work yet, so the switches start on only what works. */
+  applyPluginDefault?: () => Promise<void>;
+  /** Whether any switched-on plugin still has something to grant; false skips Access. */
+  accessNeeded?: () => Promise<boolean>;
   /**
    * Turn the availability defaults on — Keep Awake, and Launch at Login where
    * the build can. Called at sign-in, which every setup (a re-setup after
@@ -199,7 +203,7 @@ export class Onboarding {
     };
   }
 
-  /** Advance the presentational steps and commit the data-screen choice. */
+  /** Advance the presentational steps and commit the plugins-screen choice. */
   async advance(): Promise<OnboardingState> {
     if (this.busy) return this.state();
     if (this.step === "welcome") {
@@ -212,21 +216,27 @@ export class Onboarding {
       return this.newActivationCode();
     }
     if (this.step === "privacy") {
-      this.step = "data";
+      this.step = "plugins";
+      await this.deps.applyPluginDefault?.();
       return this.publish();
     }
-    if (this.step === "data") {
+    if (this.step === "plugins") {
       const settings = this.settings();
       settings.telemetryEnabled = this.telemetryEnabled;
       this.save(settings);
+      const needsAccess = (await this.deps.accessNeeded?.()) ?? false;
+      if (needsAccess) {
+        this.step = "access";
+        return this.publish();
+      }
+      this.step = "availability";
+      return this.publish();
+    }
+    if (this.step === "access") {
       this.step = "availability";
       return this.publish();
     }
     if (this.step === "availability") {
-      this.step = "connect";
-      return this.publish();
-    }
-    if (this.step === "connect") {
       const settings = this.settings();
       settings.setupComplete = true;
       this.save(settings);
@@ -240,16 +250,15 @@ export class Onboarding {
   async back(): Promise<OnboardingState> {
     if (this.busy) return this.state();
     if (this.step === "activate" || this.step === "waiting") this.step = "welcome";
-    else if (this.step === "availability") this.step = "data";
-    else if (this.step === "connect") this.step = "availability";
+    else if (this.step === "access" || this.step === "availability") this.step = "plugins";
     else return this.state();
     return this.publish();
   }
 
-  /** Change the pending choice; Continue from data is its only disk write. */
+  /** Change the pending choice; Continue from plugins is its only disk write. */
   setTelemetryEnabled(enabled: unknown): OnboardingState {
     if (this.busy) return this.state();
-    if (this.step === "data" && typeof enabled === "boolean") {
+    if (this.step === "plugins" && typeof enabled === "boolean") {
       this.telemetryEnabled = enabled;
       return this.publish();
     }
@@ -622,7 +631,7 @@ export class Onboarding {
 
   private initialStep(settings: Settings): OnboardingStep {
     if (!settings.relayCredential.trim()) return "welcome";
-    return settings.setupComplete ? "done" : "data";
+    return settings.setupComplete ? "done" : "plugins";
   }
 
   private now(): number {
