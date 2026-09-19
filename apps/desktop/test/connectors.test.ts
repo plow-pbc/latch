@@ -150,6 +150,32 @@ describe("connecting a Google account", () => {
     }]);
   });
 
+  it("keeps earlier accounts in successive connection snapshots", async () => {
+    const one = account("one@example.com", { isDefault: true });
+    const two = account("two@example.com");
+    const three = account("three@example.com");
+    const plow = new FakePlow();
+    plow.listAnswers = [
+      overview(), overview([one]),
+      overview([one]), overview([one, two]),
+      overview([one, two]), overview([one, two, three]),
+    ];
+    const { connectors, audits } = build(plow);
+
+    const first = await connectors.connect();
+    const second = await connectors.connect();
+    const third = await connectors.connect();
+
+    expect(first.google.accounts).toEqual([one]);
+    expect(second.google.accounts).toEqual([one, two]);
+    expect(third.google.accounts).toEqual([one, two, three]);
+    expect(audits).toEqual([
+      { event: "connector_connected", fields: { provider: "google", account: "one@example.com" } },
+      { event: "connector_connected", fields: { provider: "google", account: "two@example.com" } },
+      { event: "connector_connected", fields: { provider: "google", account: "three@example.com" } },
+    ]);
+  });
+
   it("polls for five minutes and leaves a neutral re-auth note", async () => {
     const plow = new FakePlow();
     const { connectors, opened, audits, waits } = build(plow);

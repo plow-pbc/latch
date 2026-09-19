@@ -61,11 +61,11 @@ describe("pluginRows status", () => {
   });
 });
 
-it("names an unmet account requirement with the action that fixes it, and flips met once connected — still listed", () => {
+it("names an unmet account requirement with the action that fixes it, then gives its met row a model-owned repeat action", () => {
   const requirements = (connected: string[]) =>
     pluginRows(build({ requires: { accounts: ["google"] }, enabled: true, connected }))[0]!.requirements;
   expect(requirements([])).toEqual([{ ...google, status: "open" }]);
-  expect(requirements(["google"])).toEqual([{ ...google, status: "met" }]);
+  expect(requirements(["google"])).toEqual([{ ...google, status: "met", repeatAction: "Add another" }]);
 });
 
 it.each([

@@ -7,7 +7,7 @@ import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
-import { accessPrimary, runGrants } from "./onboardingGrants.js";
+import { accessPrimary, actGrant, clearMissed, runGrants } from "./onboardingGrants.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -563,6 +563,7 @@ const onPluginStep = () => state?.step === "plugins" || state?.step === "access"
  * undo a switch), and so is one that lands after setup left both steps. */
 const showPlugins = latestOnly((next) => {
   if (!onPluginStep()) return;
+  missed = clearMissed(missed, next.grants);
   pluginsState = next;
   render();
 });
@@ -573,18 +574,28 @@ async function refreshPlugins() {
 
 /** Access's one button: the list's flows in order; a grant that did not land
  * stops the run on its row. */
+const actRequirement = (id) => whenAnswered(window.domo.requirementsAct(id), showPlugins);
+
+function setGrantRunning(id) {
+  running = id;
+  render();
+}
+
 async function startGrants() {
   missed = null; // the run's first redraw must not still show the last miss
   missed = await runGrants({
-    act: (id) => whenAnswered(window.domo.requirementsAct(id), showPlugins),
+    act: actRequirement,
     getState: () => pluginsState,
     stillHere: () => state?.step === "access",
-    setRunning: (id) => {
-      running = id;
-      render();
-    },
+    setRunning: setGrantRunning,
   }, skipped);
   render();
+}
+
+/** A met requirement can offer another action without restarting Access's
+ * open-grant runner. Its id and label both come from the model. */
+async function repeatGrant(id) {
+  await actGrant({ act: actRequirement, setRunning: setGrantRunning }, id).catch(() => null);
 }
 
 async function refreshAvailability() {
@@ -759,6 +770,9 @@ function grantRow(grant) {
     control = el("span", { class: "item-chip" }, [
       icon("checkmark", { strokeWidth: "1.7" }),
       document.createTextNode(grant.done),
+      grant.repeatAction
+        ? button(grant.repeatAction, "link-button", () => void repeatGrant(grant.id))
+        : null,
     ]);
     if (missed?.id === grant.id && missed.error) line = statusLine("error", missed.error);
   } else if (grant.status === "relaunch") {

@@ -6,6 +6,26 @@ function openGrants(grants, skipped) {
   return grants.filter((g) => g.status === "open" && !skipped.has(g.id));
 }
 
+/** One requirement action, shared by the primary run and a met row's repeat
+ * action. The caller decides whether its result is a miss or simply a fresh
+ * state to draw. */
+export async function actGrant({ act, setRunning }, id) {
+  setRunning(id);
+  try {
+    return await act(id);
+  } finally {
+    setRunning(null);
+  }
+}
+
+/** A refresh can resolve a flow after its foreground action said it missed.
+ * Keep the notice only while the fresh list still calls that row open. */
+export function clearMissed(missed, grants) {
+  return missed && grants.find((grant) => grant.id === missed.id)?.status !== "open"
+    ? null
+    : missed;
+}
+
 /**
  * Each open grant's flow in list order, one at a time, reading from the fresh
  * state whether it landed. `act(id)` shows that state and answers with it plus
@@ -22,9 +42,7 @@ export async function runGrants({ act, getState, stillHere, setRunning }, skippe
     const { grants } = getState();
     const next = openGrants(grants, skipped)[0];
     if (!next || grants.some((g) => g.status === "relaunch")) return null;
-    setRunning(next.id);
-    const result = await act(next.id).catch(() => null);
-    setRunning(null);
+    const result = await actGrant({ act, setRunning }, next.id).catch(() => null);
     if (!stillHere()) return null;
     if (!result) return { id: next.id, error: null };
     const fresh = result.grants.find((g) => g.id === next.id);

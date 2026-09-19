@@ -4,7 +4,7 @@
    onboarding.js's does over main's requirements:act; whether a grant landed
    is read from that answer. */
 import { describe, expect, it } from "vitest";
-import { accessPrimary, runGrants } from "../src/renderer/onboardingGrants.js";
+import { accessPrimary, actGrant, clearMissed, runGrants } from "../src/renderer/onboardingGrants.js";
 
 interface Grant {
   id: string;
@@ -73,6 +73,33 @@ describe("the Access run", () => {
     // nothing reads as running once the run ends.
     expect(result.runningDuringAct).toEqual(expected.walked);
     expect(result.runningAfter).toBeNull();
+  });
+});
+
+describe("an individual Access action", () => {
+  it("runs a met requirement's repeat action once without walking other open grants", async () => {
+    const acted: string[] = [];
+    const running: Array<string | null> = [];
+    const result = await actGrant({
+      act: async (id: string) => {
+        acted.push(id);
+        return { grants: [grant("fda"), grant("account:google", "met")], error: null };
+      },
+      setRunning: (id: string | null) => running.push(id),
+    }, "account:google");
+
+    expect(result).toEqual({ grants: [grant("fda"), grant("account:google", "met")], error: null });
+    expect(acted).toEqual(["account:google"]);
+    expect(running).toEqual(["account:google", null]);
+  });
+});
+
+describe("a refreshed Access list", () => {
+  it("clears a transient miss once its requirement is no longer open", () => {
+    const missed = { id: "account:google", error: "Sign-in didn't finish." };
+
+    expect(clearMissed(missed, [grant("fda"), grant("account:google", "met")])).toBeNull();
+    expect(clearMissed(missed, [grant("fda"), grant("account:google")])).toEqual(missed);
   });
 });
 

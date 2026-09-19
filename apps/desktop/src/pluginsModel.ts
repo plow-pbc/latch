@@ -30,6 +30,9 @@ export interface Requirement {
   /** The word setup's Access row shows once it is met: "Granted",
    *  "Connected". Empty for one setup never runs. */
   done: string;
+  /** An optional model-owned action that remains useful after this
+   *  requirement is met, such as connecting another account. */
+  repeatAction?: string;
   /** "relaunch": granted, but only a relaunch lets this app's children
    *  inherit it — the button relaunches rather than acting. */
   status: "open" | "met" | "relaunch";
@@ -100,6 +103,7 @@ function accountRequirement(id: string, met: boolean): Requirement {
     waiting: "Finish signing in with Google in your browser.",
     done: "Connected",
     status: met ? "met" : "open",
+    ...(met ? { repeatAction: "Add another" } : {}),
   };
 }
 
