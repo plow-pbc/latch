@@ -1,8 +1,8 @@
 /**
  * The Plugins tab's view model — pure, like capabilitiesModel.ts. A row
  * reports every requirement a plugin declares, met or not; the tab decides
- * what to show and the setup flow (Task 5+) walks `grantList()` to ask for
- * what is still missing.
+ * what to show and the setup flow walks `grantList()` to ask for what is
+ * still missing.
  */
 import { BROWSER_PLUGIN, type PluginManifest } from "@domo/device-core";
 import { paneFor, permissionTitle } from "./capabilitiesModel.js";
