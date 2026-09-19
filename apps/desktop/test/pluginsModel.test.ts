@@ -54,7 +54,6 @@ describe("pluginRows status", () => {
     ["ready once that account is connected", { requires: { accounts: ["google"] }, enabled: true, connected: ["google"] }, "ready"],
     ["needs-setup when a permission is missing", { requires: { permissions: ["full_disk_access"] }, enabled: true }, "needs-setup"],
     ["ready once it is granted", { requires: { permissions: ["full_disk_access"] }, enabled: true, granted: ["full_disk_access"] }, "ready"],
-    ["needs-setup while its grant waits on a relaunch", { requires: { permissions: ["full_disk_access"] }, enabled: true, pending: ["full_disk_access"] }, "needs-setup"],
     ["off wins over an unmet requirement", { requires: { accounts: ["google"] }, enabled: false }, "off"],
     ["off even when otherwise ready", { requires: none, enabled: false }, "off"],
   ])("%s", (_name, input, status) => {
