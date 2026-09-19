@@ -1209,7 +1209,7 @@ body.dev-preview {
 .gk-defaults { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 26px 0 14px; color: var(--muted); }
 .gk-default { font: 500 13px var(--sans); color: var(--muted-2); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
 .gk-default:hover { color: var(--text); border-color: var(--border-2); }
-.gk-text { display: block; width: 100%; height: 72px; resize: none; border: 1px solid var(--border-2); background: var(--surface);
+.gk-text { display: block; width: 100%; field-sizing: content; min-height: 72px; max-height: 126px; resize: none; border: 1px solid var(--border-2); background: var(--surface);
   border-radius: 11px; padding: 11px 13px; color: var(--text); font: 13.5px/1.5 var(--sans); outline: none; }
 .gk-text:focus { border-color: rgba(213, 239, 138, 0.45); box-shadow: 0 0 0 3px rgba(213, 239, 138, 0.08); }
 

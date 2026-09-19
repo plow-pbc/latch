@@ -422,14 +422,14 @@ function compactEvent(item: Record<string, unknown>): Record<string, unknown> {
     endLocal: item.endLocal ?? null,
   };
   if (isAllDay(item)) event.allDay = true;
-  const attendees = Array.isArray(item.attendees) ? (item.attendees as unknown[]) : [];
-  if (attendees.length > 0) event.attendees = attendees.length;
+  const attendees = Array.isArray(item.attendees) ? (item.attendees as Record<string, unknown>[]) : [];
+  // Who else is in it, by the address mail and messages know them by. A
+  // count said a meeting had people without saying who.
+  const others = attendees.filter((a) => a.self !== true && a.resource !== true && a.responseStatus !== "declined");
+  if (others.length > 0) event.attendees = others.map((a) => a.email);
   // The two ways an event on the calendar leaves the owner free.
   if (item.transparency === "transparent") event.transparency = "transparent";
-  const self = attendees.find((a) => (a as Record<string, unknown> | null)?.self === true) as
-    | Record<string, unknown>
-    | undefined;
-  if (self?.responseStatus === "declined") event.declined = true;
+  if (attendees.find((a) => a.self === true)?.responseStatus === "declined") event.declined = true;
   event.id = item.id ?? null;
   event.account = item.account;
   return event;
