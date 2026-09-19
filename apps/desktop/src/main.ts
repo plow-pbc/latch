@@ -62,7 +62,7 @@ import { AuditIndex, AuditQuery } from "./auditIndex.js";
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { capabilitiesView, CapabilitiesView, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
+import { capabilitiesView, CapabilitiesView, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
 import { browserPluginRow, grantList, pluginRows, type GrantItem, type PluginRow } from "./pluginsModel.js";
 import { actOnRequirement } from "./requirements.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
@@ -1407,6 +1407,13 @@ function automationRows(inventory: HostInventory | null): { app: (typeof AUTOMAT
   return rows;
 }
 
+/** Full Disk Access as this run's one watch reads it: granted to the app, and
+ *  whether a sandboxed child inherits it too. Settings, the Plugins tab and
+ *  the grant panel all derive it this same way. */
+function fullDiskStateOf(inv: HostInventory): FullDiskState | undefined {
+  return fullDisk?.observe(inv.full_disk_access.granted, inv.full_disk_access.granted && inv.child_attribution.status === "ok");
+}
+
 /** The whole tab, fresh: inventory, Automation rows, the audit log's blocks,
  *  and the owner's "not now"s. */
 async function capabilitiesNow(inventory?: HostInventory | null): Promise<CapabilitiesView> {
@@ -1414,11 +1421,7 @@ async function capabilitiesNow(inventory?: HostInventory | null): Promise<Capabi
   const settings = loadSettings(home);
   return capabilitiesView({
     inventory: inv,
-    // Every inventory read feeds the one watch, so Settings, the Plugins tab
-    // and the grant panel tell a relaunch from a broken grant the same way.
-    fullDisk: inv
-      ? fullDisk?.observe(inv.full_disk_access.granted, inv.full_disk_access.granted && inv.child_attribution.status === "ok")
-      : undefined,
+    fullDisk: inv ? fullDiskStateOf(inv) : undefined,
     automation: automationRows(inv),
     // The log as the live index holds it — not read off disk again.
     events: device ? ensureAuditIndex().events() : [],
@@ -1605,12 +1608,7 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
   const inventory = device ? await device.hostInventory({ automationTargets }) : null;
   const view = await capabilitiesNow(inventory);
   const granted = view.sections.flatMap((s) => s.rows).filter((r) => r.status === "granted").map((r) => r.key);
-  // Granted to the app but not yet to a child, having been off this run: a
-  // relaunch finishes it (FullDiskWatch — capabilitiesNow fed it this same
-  // read). Held all run and not inherited is the row's remove-and-re-add.
-  const fullDiskState = inventory
-    ? fullDisk?.observe(inventory.full_disk_access.granted, granted.includes("full_disk_access"))
-    : undefined;
+  const fullDiskState = inventory ? fullDiskStateOf(inventory) : undefined;
   const relaunchPending = fullDiskState === "relaunch" ? ["full_disk_access"] : [];
   const rows = pluginRows({
     plugins: stagedPlugins.map((p) => ({
