@@ -254,20 +254,16 @@ export function loadSettings(home: string): Settings {
   // Retired fields must be removed explicitly: unknown keys otherwise ride
   // this spread into every later save. Delete this scrub once the fleet has
   // turned over; it is a one-off, not a migration framework.
-  const retired = [
+  const retiredKeys = [
     "anthropicApiKey",
     "inferenceProvider",
     "provisionedChatUid",
     "provisionedChatLabel",
     "welcomeEntrancePlayed",
     "launchAtLoginDefaulted",
-  ].some((key) => key in settings);
-  delete settings.anthropicApiKey;
-  delete settings.inferenceProvider;
-  delete settings.provisionedChatUid;
-  delete settings.provisionedChatLabel;
-  delete settings.welcomeEntrancePlayed;
-  delete settings.launchAtLoginDefaulted;
+  ];
+  const retired = retiredKeys.some((key) => key in settings);
+  for (const key of retiredKeys) delete settings[key];
 
   const loaded = { ...defaults, ...settings };
   // The encrypted field wins where it exists. A decrypt that fails is treated
