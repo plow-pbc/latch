@@ -106,6 +106,7 @@ const probePluginRows = () => {
     plugins: probeStaged.map((p) => ({ ...p, enabled: probePlugins[p.manifest.name] })),
     connectedAccounts: probeAccountsLoaded && connectorProbe.google.accounts.length ? ["google"] : [],
     grantedPermissions: [],
+    relaunchPending: [],
   });
   return { rows, grants: grantList(rows) };
 };
@@ -122,9 +123,6 @@ ipcMain.handle("fullDisk:dragInfo", async () => ({
   iconDataUrl:
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
 }));
-// The grant flow is main-process behavior (panel + tracker); the bridge call
-// just has to resolve.
-ipcMain.handle("fullDisk:grantFlow", async () => {});
 // Launch at Login: the REAL rules from loginItem.js over a fake OS bit.
 // Packaged-looking at first so the toggle renders live; flipped unsupported
 // mid-run to prove the status refresh re-reads it and the note appears.

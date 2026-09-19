@@ -100,6 +100,9 @@ contextBridge.exposeInMainWorld("domo", {
   // Answers with the fresh Plugins state, and `error` when the act could not
   // be done.
   requirementsAct: (id: string) => ipcRenderer.invoke("requirements:act", id),
+  // Quit and reopen: what finishes a grant only a fresh process inherits
+  // (a requirement's `relaunch`).
+  appRelaunch: () => ipcRenderer.invoke("app:relaunch"),
   // A block by this Mac lands the tray item and the notification on its
   // switch (Settings), or on the Audit tab's Blocked view when it named none.
   onShowCapabilities: (cb: () => void) => ipcRenderer.on("ui:showCapabilities", cb),
@@ -121,11 +124,6 @@ contextBridge.exposeInMainWorld("domo", {
   // The drag session ended (dropped or cancelled): the tile, hidden while its
   // image rode with the cursor, comes back.
   onFullDiskDragEnd: (cb: () => void) => ipcRenderer.on("fullDisk:dragEnd", cb),
-  // Start the Full Disk Access grant flow: main opens the pane and floats the
-  // drag panel next to System Settings (fdaGrantFlow.ts owns the whole
-  // lifecycle). Setup's "Data & permissions" step uses this; the
-  // Permissions section goes through `capabilitiesAct`.
-  fullDiskGrantFlow: () => ipcRenderer.invoke("fullDisk:grantFlow"),
   // The floating panel's close button; main owns the panel's lifecycle.
   fullDiskDismiss: () => ipcRenderer.send("fullDisk:dismiss"),
   // Mid-gesture guard: while the pointer is down on the drag tile, the panel

@@ -25,6 +25,9 @@ export interface Requirement {
    *  runtime — that is a from-source fact, not a setting to flip). */
   action: string | null;
   met: boolean;
+  /** Granted, but only a relaunch lets this app's children inherit it: the
+   *  button relaunches rather than acting. */
+  relaunch?: true;
 }
 
 export interface PluginRow {
@@ -53,14 +56,19 @@ export interface PluginsInput {
   connectedAccounts: string[];
   /** Permission keys this Mac's inventory reads as granted. */
   grantedPermissions: string[];
+  /** Permission keys granted during this run that a relaunch will finish. */
+  relaunchPending: string[];
 }
 
 /** The Access screen's row id for an account connector, distinct from a
  *  permission's own key so the two id spaces never collide. */
 export const accountRequirementId = (id: string): string => `account:${id}`;
 
-function permissionRequirement(key: string, met: boolean): Requirement {
+function permissionRequirement(key: string, met: boolean, relaunch: boolean): Requirement {
   const title = permissionTitle(key);
+  if (relaunch) {
+    return { id: key, title, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", met: false, relaunch: true };
+  }
   return {
     id: key,
     title,
@@ -94,9 +102,10 @@ function rowStatus(enabled: boolean, requirements: readonly Requirement[]): Plug
 export function pluginRows(input: PluginsInput): PluginRow[] {
   const accounts = new Set(input.connectedAccounts);
   const granted = new Set(input.grantedPermissions);
+  const pending = new Set(input.relaunchPending);
   return input.plugins.map(({ manifest, enabled, description }) => {
     const requirements: Requirement[] = [
-      ...manifest.requires.permissions.map((key) => permissionRequirement(key, granted.has(key))),
+      ...manifest.requires.permissions.map((key) => permissionRequirement(key, granted.has(key), pending.has(key))),
       ...manifest.requires.accounts.map((id) => accountRequirement(id, accounts.has(id))),
     ];
     return {
@@ -126,11 +135,12 @@ export function browserPluginRow(input: {
   runtimePresent: boolean;
   safariJavaScript: boolean;
   fullDiskAccess: boolean;
+  relaunchPending: string[];
   description: string | null;
 }): PluginRow {
   const requirements: Requirement[] = [];
   if (!input.safariJavaScript) {
-    requirements.push(permissionRequirement("full_disk_access", input.fullDiskAccess));
+    requirements.push(permissionRequirement("full_disk_access", input.fullDiskAccess, input.relaunchPending.includes("full_disk_access")));
   }
   requirements.push({
     id: SAFARI_JAVASCRIPT,

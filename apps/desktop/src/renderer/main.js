@@ -2311,12 +2311,15 @@ async function renderPlugins() {
   // just the sub text; one with an action gets a button that runs that
   // requirement by id, whatever kind it is, and waits for its flow to end.
   // The answer is the fresh tab, with the act's error line when it has one.
+  // A grant waiting on a relaunch has nothing left to act on: its button
+  // relaunches the app.
   const unmetRow = (u) => {
     const action = u.action
       ? el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } })
       : null;
     action?.addEventListener("click", async () => {
       action.disabled = true;
+      if (u.relaunch) return window.domo.appRelaunch();
       action.textContent = "Waiting…";
       try {
         draw(await window.domo.requirementsAct(u.id));

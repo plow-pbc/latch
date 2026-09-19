@@ -29,11 +29,12 @@ const manifest = (requires: object, name = "wiki", title?: string): PluginManife
 const none = {};
 
 /** The shorthand the table rows carry, as one `pluginRows` input. */
-function build(o: { requires: object; enabled: boolean; connected?: string[]; granted?: string[] }): PluginsInput {
+function build(o: { requires: object; enabled: boolean; connected?: string[]; granted?: string[]; pending?: string[] }): PluginsInput {
   return {
     plugins: [{ manifest: manifest(o.requires), enabled: o.enabled, description: "Keeps a wiki." }],
     connectedAccounts: o.connected ?? [],
     grantedPermissions: o.granted ?? [],
+    relaunchPending: o.pending ?? [],
   };
 }
 
@@ -44,6 +45,7 @@ describe("pluginRows status", () => {
     ["ready once that account is connected", { requires: { accounts: ["google"] }, enabled: true, connected: ["google"] }, "ready"],
     ["needs-setup when a permission is missing", { requires: { permissions: ["full_disk_access"] }, enabled: true }, "needs-setup"],
     ["ready once it is granted", { requires: { permissions: ["full_disk_access"] }, enabled: true, granted: ["full_disk_access"] }, "ready"],
+    ["needs-setup while its grant waits on a relaunch", { requires: { permissions: ["full_disk_access"] }, enabled: true, pending: ["full_disk_access"] }, "needs-setup"],
     ["off wins over an unmet requirement", { requires: { accounts: ["google"] }, enabled: false }, "off"],
     ["off even when otherwise ready", { requires: none, enabled: false }, "off"],
   ])("%s", (_name, input, status) => {
@@ -71,6 +73,16 @@ it.each([
     pluginRows(build({ requires: { permissions: [key] }, enabled: true, granted }))[0]!.requirements;
   expect(requirements([])).toEqual([{ id: key, ...words, met: false }]);
   expect(requirements([key])).toEqual([{ id: key, ...words, met: true }]);
+});
+
+// Granted during this run: the app reads it, a child does not inherit it
+// until the app relaunches — so it is still unmet, the button is the
+// relaunch, and setup's list keeps it.
+it("reads a permission waiting on a relaunch as unmet, with the relaunch as its action — still on setup's list", () => {
+  const rows = pluginRows(build({ requires: { permissions: ["full_disk_access"] }, enabled: true, pending: ["full_disk_access"] }));
+  const relaunch = { id: "full_disk_access", title: "Full Disk Access", detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", met: false, relaunch: true };
+  expect(rows[0]!.requirements).toEqual([relaunch]);
+  expect(grantList(rows)).toEqual([{ ...relaunch, plugins: ["wiki"] }]);
 });
 
 it("keeps a disabled plugin's status off, but still lists its requirements — hiding them is the tab's business", () => {
@@ -101,7 +113,7 @@ describe("the shipped plugins", () => {
     { connected: [] as string[], status: "needs-setup", requirements: [{ id: "account:google", action: "Connect Google", met: false }] },
     { connected: ["google"], status: "ready", requirements: [{ id: "account:google", action: "Connect Google", met: true }] },
   ])("reads gog as $status with connected accounts $connected", ({ connected, status, requirements }) => {
-    const [row] = pluginRows({ plugins: [{ manifest: shipped("gog"), enabled: true }], connectedAccounts: connected, grantedPermissions: [] });
+    const [row] = pluginRows({ plugins: [{ manifest: shipped("gog"), enabled: true }], connectedAccounts: connected, grantedPermissions: [], relaunchPending: [] });
     expect(row).toMatchObject({ name: "gog", status, requirements });
   });
 
@@ -109,7 +121,7 @@ describe("the shipped plugins", () => {
     { granted: [] as string[], status: "needs-setup" },
     { granted: ["full_disk_access"], status: "ready" },
   ])("reads messages as $status with granted permissions $granted, carrying its summary", ({ granted, status }) => {
-    const [row] = pluginRows({ plugins: [{ manifest: shipped("messages"), enabled: true }], connectedAccounts: [], grantedPermissions: granted });
+    const [row] = pluginRows({ plugins: [{ manifest: shipped("messages"), enabled: true }], connectedAccounts: [], grantedPermissions: granted, relaunchPending: [] });
     expect(row).toMatchObject({ name: "messages", status, summary: "Find and read your texts, right on this Mac." });
   });
 
@@ -117,13 +129,13 @@ describe("the shipped plugins", () => {
     ["gog", "Gmail and Google Calendar"],
     ["wiki", "Obsidian-style wiki"],
   ])("titles %s as the owner reads it: %s", (name, title) => {
-    const [row] = pluginRows({ plugins: [{ manifest: shipped(name), enabled: true }], connectedAccounts: [], grantedPermissions: [] });
+    const [row] = pluginRows({ plugins: [{ manifest: shipped(name), enabled: true }], connectedAccounts: [], grantedPermissions: [], relaunchPending: [] });
     expect(row).toMatchObject({ name, title });
   });
 });
 
 describe("browserPluginRow", () => {
-  const base = { enabled: true, runtimePresent: true, safariJavaScript: true, fullDiskAccess: false, description: "Browse websites…" };
+  const base = { enabled: true, runtimePresent: true, safariJavaScript: true, fullDiskAccess: false, relaunchPending: [] as string[], description: "Browse websites…" };
   const fda = { id: "full_disk_access", title: "Full Disk Access", detail: "Drag Plow Latch into the list in System Settings.", action: "Grant Full Disk Access" };
   const safari = { id: SAFARI_JAVASCRIPT, title: "Safari", detail: "Allow JavaScript from Apple Events — Safari relaunches", action: "Enable in Safari" };
   const runtime = { id: BROWSER_RUNTIME, title: "Browser runtime", detail: "Not in this build — from source, run just fetch-browser", action: null };
@@ -133,6 +145,7 @@ describe("browserPluginRow", () => {
     // shows up while that setting is still off.
     ["needs setup with Full Disk Access and Safari when the setting is off", { ...base, safariJavaScript: false }, "needs-setup", [{ ...fda, met: false }, { ...safari, met: false }]],
     ["Full Disk Access reads met once granted, Safari still is not", { ...base, safariJavaScript: false, fullDiskAccess: true }, "needs-setup", [{ ...fda, met: true }, { ...safari, met: false }]],
+    ["Full Disk Access granted this run waits on a relaunch", { ...base, safariJavaScript: false, relaunchPending: ["full_disk_access"] }, "needs-setup", [{ ...fda, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", met: false, relaunch: true }, { ...safari, met: false }]],
     ["needs setup with no button when the runtime is missing", { ...base, runtimePresent: false }, "needs-setup", [{ ...safari, met: true }, { ...runtime, met: false }]],
     ["off keeps status off but still lists its requirements", { ...base, enabled: false, safariJavaScript: false }, "off", [{ ...fda, met: false }, { ...safari, met: false }]],
   ] as const)("is %s", (_what, input, status, requirements) => {
@@ -146,7 +159,7 @@ describe("browserPluginRow", () => {
     ["its manifest title", "Mail", "Mail"],
     ["its name when the manifest has no title", undefined, "gog"],
   ])("every manifest plugin row is a CLI titled by %s", (_what, title, expected) => {
-    const [row] = pluginRows({ plugins: [{ manifest: manifest(none, "gog", title), enabled: true }], connectedAccounts: [], grantedPermissions: [] });
+    const [row] = pluginRows({ plugins: [{ manifest: manifest(none, "gog", title), enabled: true }], connectedAccounts: [], grantedPermissions: [], relaunchPending: [] });
     expect(row).toMatchObject({ kind: "CLI", title: expected });
   });
 });

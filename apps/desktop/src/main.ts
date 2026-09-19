@@ -240,6 +240,11 @@ let connectors: Connectors | null = null;
 /** What `loadPlugins` found at startup — the Plugins tab's inventory, and the
  *  list the owner's off switch selects from. Empty until whenReady. */
 let stagedPlugins: readonly StagedPlugin[] = [];
+/** Whether this process could read Full Disk Access's files at launch. A grant
+ *  that arrives later reaches the app but not its children until a relaunch;
+ *  one already there at launch that a child still cannot use will not be
+ *  fixed by relaunching (pluginsNow). Read once in whenReady. */
+let fullDiskAccessAtLaunch = false;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
@@ -1595,6 +1600,13 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
   const inventory = device ? await device.hostInventory({ automationTargets }) : null;
   const view = await capabilitiesNow(inventory);
   const granted = view.sections.flatMap((s) => s.rows).filter((r) => r.status === "granted").map((r) => r.key);
+  // Granted to the app but not to a child, and only since launch: a relaunch
+  // finishes it. Already so at launch, relaunching would not help — that is
+  // the Settings row's remove-and-re-add.
+  const relaunchPending =
+    inventory?.full_disk_access.granted && !granted.includes("full_disk_access") && !fullDiskAccessAtLaunch
+      ? ["full_disk_access"]
+      : [];
   const rows = pluginRows({
     plugins: stagedPlugins.map((p) => ({
       manifest: p.manifest,
@@ -1603,12 +1615,14 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
     })),
     connectedAccounts: connectedAccountIds(),
     grantedPermissions: granted,
+    relaunchPending,
   });
   rows.push(browserPluginRow({
     enabled: !disabled.has(BROWSER_PLUGIN),
     runtimePresent: device !== null && device.browserSessions !== null,
     safariJavaScript: process.platform === "darwin" ? await safariJavaScriptEnabled(unsandboxedRunner) : false,
     fullDiskAccess: granted.includes("full_disk_access"),
+    relaunchPending,
     description: device?.skills.skill(BROWSING_SKILL.name)?.description ?? BROWSING_SKILL.description,
   }));
   return { rows, grants: grantList(rows) };
@@ -1616,25 +1630,29 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
 
 ipcMain.handle("plugins:get", async () => pluginsNow());
 
-/** The owner's off switch: the disabled NAMES persist (a later plugin is on
+/** The owner's off switches: the disabled NAMES persist (a later plugin is on
  *  by default), and the device is told in the same breath, so the skill and
  *  the exec gate follow without a relaunch. */
+async function updateDisabledPlugins(change: (disabled: Set<string>) => void): Promise<void> {
+  const settings = loadSettings(home);
+  const disabled = new Set(settings.disabledPlugins ?? []);
+  change(disabled);
+  saveSettings(home, { ...settings, disabledPlugins: [...disabled] });
+  await device?.setDisabledPlugins([...disabled]);
+}
+
 ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
   if (stagedPlugins.some((p) => p.manifest.name === name) || name === BROWSER_PLUGIN) {
-    const settings = loadSettings(home);
-    const disabled = new Set(settings.disabledPlugins ?? []);
-    if (on) disabled.delete(name);
-    else disabled.add(name);
-    saveSettings(home, { ...settings, disabledPlugins: [...disabled] });
-    await device?.setDisabledPlugins([...disabled]);
+    await updateDisabledPlugins((disabled) => (on ? disabled.delete(name) : disabled.add(name)));
   }
   return pluginsNow();
 });
 
 /** A plugin requirement's button, by id: the act runs to its flow's end, a
- *  requirement the fresh tab reads met brings the owner back here, and the
- *  answer is that tab with the act's error line. Settings' rows share its
- *  permission half through capabilities:act. */
+ *  requirement the fresh tab reads met — or waiting only on a relaunch —
+ *  brings the owner back here, and the answer is that tab with the act's
+ *  error line. Settings' rows share its permission half through
+ *  capabilities:act. */
 ipcMain.handle("requirements:act", async (e, rawId: unknown) => {
   const id = typeof rawId === "string" ? rawId : "";
   const { error } = await actOnRequirement(id, {
@@ -1646,8 +1664,14 @@ ipcMain.handle("requirements:act", async (e, rawId: unknown) => {
     enableSafari: () => enableSafariJavaScript(unsandboxedRunner),
   });
   const now = await pluginsNow();
-  if (now.rows.some((r) => r.requirements.some((q) => q.id === id && q.met))) returnToCaller(e.sender);
+  if (now.rows.some((r) => r.requirements.some((q) => q.id === id && (q.met || q.relaunch)))) returnToCaller(e.sender);
   return { ...now, error };
+});
+// A relaunch-pending requirement's button, and setup's "Relaunch to finish":
+// the same relaunch the simulated updater's install does.
+ipcMain.handle("app:relaunch", () => {
+  app.relaunch();
+  app.quit();
 });
 // The floating panel's poll: has the switch it points at landed?
 ipcMain.handle("grant:state", async () => {
@@ -1864,7 +1888,6 @@ const fdaGrantFlow = new FdaGrantFlow({
   },
   openSettings: (pane) => shell.openExternal(pane),
 });
-ipcMain.handle("fullDisk:grantFlow", async () => fdaGrantFlow.start());
 // The panel's own close button (PermissionFlow's xmark) — the panel is
 // non-focusable and cannot close itself.
 ipcMain.on("fullDisk:dismiss", () => fdaGrantFlow.stop());
@@ -2227,6 +2250,8 @@ app.whenReady().then(async () => {
   }
   // What the Plugins tab lists, and what its off switch selects from.
   stagedPlugins = plugins;
+  // Before any window exists to read the Plugins tab.
+  fullDiskAccessAtLaunch = await probeFullDiskAccess();
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -2369,6 +2394,14 @@ app.whenReady().then(async () => {
       keepAwake?.setEnabled(true);
       setLaunchAtLogin(app.isPackaged, loginItems, true);
     },
+    // The Plugins screen opens with on only what already works: every staged
+    // plugin still needing setup joins the owner's off switches.
+    applyPluginDefault: async () => {
+      const { rows } = await pluginsNow();
+      const off = rows.filter((r) => r.status === "needs-setup").map((r) => r.name);
+      if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
+    },
+    accessNeeded: async () => (await pluginsNow()).grants.some((g) => !g.met),
   });
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   const cloudAgentsClient = new CloudAgentsClient(cloudApi);
