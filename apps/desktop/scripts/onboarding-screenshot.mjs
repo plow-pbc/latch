@@ -73,6 +73,7 @@ ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
   return current;
 });
 ipcMain.handle("onboarding:gatekeeperPresets", async () => currentFixture.gatekeeper?.presets ?? null);
+ipcMain.handle("onboarding:browserExample", async () => currentFixture.browserExample ?? null);
 // "pending" holds every row on Checking.
 ipcMain.handle("onboarding:gatekeeperPreview", async (_event, _preset, index) => {
   const results = currentFixture.gatekeeper?.results;

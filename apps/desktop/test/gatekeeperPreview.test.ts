@@ -9,6 +9,7 @@ import {
   PRESET_TEXT,
   previewRow,
   PreviewDeps,
+  selectAllowedFinishExample,
 } from "../src/gatekeeperPreview.js";
 import { loadSettings } from "../src/settings.js";
 
@@ -129,5 +130,56 @@ describe("gatekeeper preview", () => {
     const { deps: d, sent } = deps();
     await previewRow("home", 0, 42, d);
     expect(sent[0]!.agentPurpose).toBe("");
+  });
+});
+
+describe("password finish example", () => {
+  it("returns the first allowed credential-fill outcome", async () => {
+    const seen: string[] = [];
+    const { deps: d } = deps({
+      review: async (args) => {
+        seen.push(args.intent.request);
+        return args.intent.request.includes("amazon.com")
+          ? { verdict: "allow", reason: "shopping is allowed" }
+          : { verdict: "deny", reason: "not allowed" };
+      },
+    });
+    expect(await selectAllowedFinishExample("Allow online shopping.", d)).toEqual({
+      id: "amazon-refund",
+      prompt: "Amazon overcharged me for a solar panel—can you get a refund?",
+      site: "Amazon",
+    });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("skips denied candidates in stable order", async () => {
+    const seen: string[] = [];
+    const { deps: d } = deps({
+      review: async (args) => {
+        seen.push(args.intent.request);
+        return args.intent.request.includes("kaiserpermanente.org")
+          ? { verdict: "allow", reason: "health care allowed" }
+          : { verdict: "deny", reason: "not allowed" };
+      },
+    });
+    expect((await selectAllowedFinishExample("Allow health care.", d))?.id).toBe("kaiser-follow-up");
+    expect(seen).toHaveLength(3);
+  });
+
+  it.each(["no_credits", "unavailable"] as const)("stops on %s", async (cause) => {
+    let calls = 0;
+    const { deps: d } = deps({
+      review: async () => {
+        calls += 1;
+        return { verdict: "ask", reason: "could not review", cause };
+      },
+    });
+    expect(await selectAllowedFinishExample("Allow browser work.", d)).toBeNull();
+    expect(calls).toBe(1);
+  });
+
+  it("returns null when every candidate is refused", async () => {
+    const { deps: d } = deps({ review: async () => ({ verdict: "deny", reason: "not allowed" }) });
+    expect(await selectAllowedFinishExample("No browser work.", d)).toBeNull();
   });
 });

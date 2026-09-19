@@ -88,7 +88,7 @@ import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
-import { gatekeeperPresets, previewRow } from "./gatekeeperPreview.js";
+import { gatekeeperPresets, previewRow, selectAllowedFinishExample } from "./gatekeeperPreview.js";
 import {
   ApprovalDecision,
   ApprovalQueue,
@@ -919,6 +919,14 @@ ipcMain.handle(
       apiBaseUrl,
     }),
 );
+ipcMain.handle("onboarding:browserExample", async () => {
+  const settings = loadSettings(home);
+  return selectAllowedFinishExample(settings.agentPurpose ?? "", {
+    review: adversarialReview,
+    settings,
+    apiBaseUrl,
+  });
+});
 /**
  * Open Messages with the activation text drafted.
  *

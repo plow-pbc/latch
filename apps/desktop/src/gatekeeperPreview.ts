@@ -20,7 +20,7 @@
  */
 import { capabilityDisplay, makeIntent } from "@domo/protocol";
 import { ReviewArgs, ReviewFailureCause, Verdict } from "./adversarialAgent.js";
-import { gatekeeperExamples, Operation, PresetKey } from "./onboardingExamples.js";
+import { finishCandidates, gatekeeperExamples, Operation, PresetKey } from "./onboardingExamples.js";
 import { Settings } from "./settings.js";
 
 export type { PresetKey } from "./onboardingExamples.js";
@@ -50,6 +50,12 @@ export interface PreviewDeps {
   review: (args: ReviewArgs) => Promise<PreviewResult>;
   settings: Settings;
   apiBaseUrl: string;
+}
+
+export interface FinishExampleView {
+  id: string;
+  prompt: string;
+  site: string;
 }
 
 /**
@@ -109,4 +115,18 @@ export async function reviewOperation(
     // The default mode: the reviewer decides, and nobody is asked.
     humanAvailable: false,
   });
+}
+
+export async function selectAllowedFinishExample(
+  purpose: string,
+  deps: PreviewDeps,
+): Promise<FinishExampleView | null> {
+  for (const example of finishCandidates()) {
+    const result = await reviewOperation(example.operation, purpose, deps);
+    if (result.cause) return null;
+    if (result.verdict === "allow" && example.finish) {
+      return { id: example.id, prompt: example.finish.prompt, site: example.finish.site };
+    }
+  }
+  return null;
 }
