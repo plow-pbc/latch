@@ -39,12 +39,6 @@ export interface PluginRequires {
   permissions: string[]; // a Settings › Permissions row key, e.g. "full_disk_access"
 }
 
-/** The accounts `requires` names that are not connected — the one readiness
- *  rule, for the device's gate and the Plugins tab alike. */
-export function missingPluginAccounts(requires: PluginRequires, connected: ReadonlySet<string>): string[] {
-  return requires.accounts.filter((id) => !connected.has(id));
-}
-
 export interface PluginManifest {
   name: string; // ^[a-z][a-z0-9-]{0,31}$
   title?: string; // what the owner reads on the Plugins tab; absent, the tab shows `name`
