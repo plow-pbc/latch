@@ -1,19 +1,10 @@
-import fs from "node:fs";
 import vm from "node:vm";
-import ts from "typescript";
 import { expect, it } from "vitest";
 import { PlowApiError } from "../src/plowApi.js";
+import { compileMain, mainFunctions } from "./mainSource.js";
 
 // Exercise the shipping old-key recovery without booting Electron (#419).
-const source = ts.createSourceFile("main.ts", fs.readFileSync(
-  new URL("../src/main.ts", import.meta.url), "utf8",
-), ts.ScriptTarget.Latest, true);
-const recovery = source.statements.find((node) =>
-  ts.isFunctionDeclaration(node) && node.name?.text === "signInAgainIfOldKey",
-)!;
-const compiled = ts.transpileModule(recovery.getText(source), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const compiled = compileMain(...mainFunctions("signInAgainIfOldKey"));
 
 function run(old: boolean | null, revokeError?: Error) {
   const events: string[] = [];

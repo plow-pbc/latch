@@ -1,19 +1,10 @@
-import fs from "node:fs";
 import { EventEmitter } from "node:events";
 import vm from "node:vm";
-import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
+import { compileMain, mainFunctions } from "./mainSource.js";
 
 // Exercise the shipping close gate without booting Electron or the device.
-const source = ts.createSourceFile("main.ts", fs.readFileSync(
-  new URL("../src/main.ts", import.meta.url), "utf8",
-), ts.ScriptTarget.Latest, true);
-const gates = source.statements.filter((node) =>
-  ts.isFunctionDeclaration(node) && ["mayLeaveMain", "hasPendingAgentSetup"].includes(node.name?.text ?? ""),
-);
-const compiled = ts.transpileModule(gates.map((gate) => gate.getText(source)).join("\n"), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const compiled = compileMain(...mainFunctions("mayLeaveMain", "hasPendingAgentSetup"));
 
 function setup(busy = false, credential: unknown = null) {
   const ipcMain = new EventEmitter();
