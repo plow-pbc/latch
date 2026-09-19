@@ -92,6 +92,8 @@ import {
 } from "./reviewPolicy.js";
 import {
   isSignedIn,
+  PendingRevokeRetrier,
+  PENDING_REVOKE_RETRY_DELAYS_MS,
   readAgentPurpose,
   readInference,
   setAgentPurpose,
@@ -231,6 +233,7 @@ let mcp: DomoMcpServer | null = null;
 let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
+let pendingRevokeRetrier: PendingRevokeRetrier | null = null;
 let connectors: Connectors | null = null;
 /** What `loadPlugins` found at startup — the Plugins tab's inventory, and the
  *  list the owner's off switch selects from. Empty until whenReady. */
@@ -680,8 +683,9 @@ function signOut() {
 
 /**
  * Sign out: retire the credential with Plow, forget it here, and drop the
- * socket. The revoke is best-effort — see `revokeAndSignOut` — so a Mac that
- * cannot reach Plow still signs out locally.
+ * socket. The first revoke attempt is best-effort — see `revokeAndSignOut` —
+ * so a Mac that cannot reach Plow still signs out locally while the durable
+ * background queue keeps retiring the server session.
  *
  * Two callers: the Settings button, and the roster's own row for this Mac.
  * Revoking that row as an ordinary key would leave the credential on disk, the
@@ -707,11 +711,12 @@ async function signOutThisMac(): Promise<void> {
   // which a click has exactly as much reason to clear as a revocation does.
   signOut();
   await startRelay();
-  if (!(await revoking)) {
-    onboarding?.showMessage(
-      "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
-    );
-  }
+  // Nothing about remote cleanup belongs on the signed-out setup screen. If
+  // the immediate attempt loses a race with an outage, the encrypted queue is
+  // durable and this background flight owns the remaining process budget.
+  void revoking.then((retired) => {
+    if (!retired) void pendingRevokeRetrier?.start(PENDING_REVOKE_RETRY_DELAYS_MS.slice(1));
+  });
 }
 
 ipcMain.handle("settings:signOut", async () => signOutThisMac());
@@ -2016,7 +2021,10 @@ async function startRelay(): Promise<void> {
       }
       connected = isConnected;
       notifyRenderer("status:changed");
-      if (isConnected) void signInAgainIfOldKey();
+      if (isConnected) {
+        void signInAgainIfOldKey();
+        void pendingRevokeRetrier?.start();
+      }
     },
     // The relay refused the credential — revoked in the console, or minted
     // against a different environment. It will never work again, so the app
@@ -2065,6 +2073,13 @@ app.whenReady().then(async () => {
     encrypt: (plain) => electronSafeStorage.encryptString(plain).toString("base64"),
     decrypt: (cipher) => electronSafeStorage.decryptString(Buffer.from(cipher, "base64")),
   });
+  pendingRevokeRetrier = new PendingRevokeRetrier(
+    home,
+    (credential) => new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
+  );
+  // A quit during an outage leaves the encrypted queue behind; launch is the
+  // guaranteed next opportunity, before any setup screen needs to know.
+  void pendingRevokeRetrier.start();
   // Usage statistics + error reporting (telemetry.ts owns what leaves the
   // Mac and what never does). A from-source run gets no key, so worktree
   // instances and the test machine report nothing; the packaged app reports

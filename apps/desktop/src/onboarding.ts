@@ -675,7 +675,10 @@ export class Onboarding {
 }
 
 function messageOf(error: unknown): string {
-  if (error instanceof PlowApiError) return error.message;
+  if (error instanceof PlowApiError) {
+    if (error.kind === "network") return "Plow isn’t responding right now.";
+    return error.message;
+  }
   // Anything else is ours and unexpected; say so rather than showing a stack.
   return "Something went wrong. Try again.";
 }

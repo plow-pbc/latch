@@ -630,7 +630,7 @@ describe("activation — the path a brand-new user takes", () => {
 
     expect(state.busy).toBe(false);
     expect(state.activation).toBeNull();
-    expect(state.message).toBe("Couldn't reach Plow at http://localhost:4242.");
+    expect(state.message).toBe("Plow isn’t responding right now.");
   });
 
   it("never lets the renderer see the activation secret", async () => {
@@ -705,7 +705,7 @@ describe("one code, however many callers ask for it", () => {
       throw boom;
     };
     const failed = await onboarding.advance();
-    expect(failed.message).toBe("Couldn't reach Plow.");
+    expect(failed.message).toBe("Plow isn’t responding right now.");
     expect(failed.activation).toBeNull();
 
     plow.createActivation = original;
@@ -716,17 +716,6 @@ describe("one code, however many callers ask for it", () => {
 });
 
 describe("signing out", () => {
-  it("shows the fixed revoke warning on the setup screen", () => {
-    const onboarding = build({}, false);
-    const warning =
-      "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.";
-
-    const state = onboarding.showMessage(warning);
-
-    expect(state.step).toBe("welcome");
-    expect(state.message).toBe(warning);
-  });
-
   it("returns to Welcome without needing a restart", async () => {
     // Reported live: Sign Out blanked the credential in settings but left the
     // state machine on "connected", because `step` is decided in the

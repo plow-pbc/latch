@@ -14,13 +14,16 @@ import path from "node:path";
 import { loadSettings, saveSettings, Settings } from "../src/settings.js";
 import {
   isSignedIn,
+  PendingRevokeRetrier,
   readAgentPurpose,
   readInference,
+  retryPendingRevokes,
   revokeAndSignOut,
   setAgentPurpose,
   setApprovalMode,
   signOutOfPlow,
 } from "../src/settingsActions.js";
+import { PlowApiError } from "../src/plowApi.js";
 
 const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
 
@@ -159,6 +162,7 @@ describe("signing out retires the credential server-side, best effort", () => {
     // already gone by the time we ask — see the quit test below for why.
     expect(onDiskWhenAsked).toBe("");
     expect(stored(home).relayCredential).toBe("");
+    expect(stored(home).pendingRevokeCredentials).toEqual([]);
   });
 
   it("the credential is off disk BEFORE the revoke is even asked", async () => {
@@ -179,6 +183,7 @@ describe("signing out retires the credential server-side, best effort", () => {
 
     expect(onDiskWhenAsked).toBe("");
     expectSignedOutWithAdversarial(home);
+    expect(stored(home).pendingRevokeCredentials).toEqual([PLOW_CREDENTIAL]);
   });
 
   it.each([
@@ -194,11 +199,23 @@ describe("signing out retires the credential server-side, best effort", () => {
     expect(await revokeAndSignOut(home, fail)).toBe(false);
 
     expectSignedOutWithAdversarial(home);
+    expect(stored(home).pendingRevokeCredentials).toEqual([PLOW_CREDENTIAL]);
     expect(warning).toHaveBeenCalledOnce();
     expect(warning).toHaveBeenCalledWith(
-      "[settings] session revoke failed; already signed out locally",
+      "[settings] session revoke pending; will retry",
     );
     expect(warning.mock.calls.flat().join(" ")).not.toContain(PLOW_CREDENTIAL);
+  });
+
+  it("treats an unauthorized immediate revoke as already retired", async () => {
+    const home = homeSignedIn();
+
+    expect(await revokeAndSignOut(home, async () => {
+      throw new PlowApiError("unauthorized", "Not authorized.", 401);
+    })).toBe(true);
+
+    expectSignedOutWithAdversarial(home);
+    expect(stored(home).pendingRevokeCredentials).toEqual([]);
   });
 
   it("does not call out at all when there is nothing to revoke", async () => {
@@ -235,6 +252,104 @@ describe("a second sign-out is a no-op, not a second sign-out", () => {
     await revokeAndSignOut(home, revoke);
     await revokeAndSignOut(home, revoke); // the second click
     expect(revoke).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("pending session revocation", () => {
+  it("backs off after transient failures and clears the durable queue on success", async () => {
+    const home = homeWith({ pendingRevokeCredentials: [PLOW_CREDENTIAL] });
+    const waits: number[] = [];
+    let attempts = 0;
+
+    const retired = await retryPendingRevokes(
+      home,
+      async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("temporary outage");
+      },
+      {
+        delaysMs: [0, 5_000, 30_000],
+        wait: async (delayMs) => { waits.push(delayMs); },
+      },
+    );
+
+    expect(retired).toBe(true);
+    expect(attempts).toBe(3);
+    expect(waits).toEqual([5_000, 30_000]);
+    expect(stored(home).pendingRevokeCredentials).toEqual([]);
+  });
+
+  it("keeps the credential for a later launch after the retry budget is exhausted", async () => {
+    const home = homeWith({ pendingRevokeCredentials: [PLOW_CREDENTIAL] });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await retryPendingRevokes(home, async () => {
+      throw new Error("still offline");
+    }, { delaysMs: [0, 1], wait: async () => {} })).toBe(false);
+
+    expect(stored(home).pendingRevokeCredentials).toEqual([PLOW_CREDENTIAL]);
+    expect(warning).toHaveBeenCalledWith("[settings] pending session revoke retries exhausted");
+    expect(warning.mock.calls.flat().join(" ")).not.toContain(PLOW_CREDENTIAL);
+  });
+
+  it("treats unauthorized as confirmation that the old credential is already unusable", async () => {
+    const home = homeWith({ pendingRevokeCredentials: [PLOW_CREDENTIAL] });
+    let attempts = 0;
+
+    expect(await retryPendingRevokes(home, async () => {
+      attempts += 1;
+      throw new PlowApiError("unauthorized", "Not authorized.", 401);
+    }, { delaysMs: [0, 5_000], wait: async () => {} })).toBe(true);
+
+    expect(attempts).toBe(1);
+    expect(stored(home).pendingRevokeCredentials).toEqual([]);
+  });
+
+  it("single-flights overlapping launch and connectivity retries", async () => {
+    const home = homeWith({ pendingRevokeCredentials: [PLOW_CREDENTIAL] });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let attempts = 0;
+    const retrier = new PendingRevokeRetrier(home, async () => {
+      attempts += 1;
+      await held;
+    }, async () => {});
+
+    const fromLaunch = retrier.start([0]);
+    const fromConnection = retrier.start([0]);
+    expect(fromConnection).toBe(fromLaunch);
+    expect(attempts).toBe(1);
+
+    release();
+    expect(await fromLaunch).toBe(true);
+    expect(stored(home).pendingRevokeCredentials).toEqual([]);
+  });
+
+  it("drains a credential queued during an existing flight before that flight resolves", async () => {
+    const first = "plow_sk_first_pending";
+    const second = "plow_sk_queued_during_flight";
+    const home = homeWith({ pendingRevokeCredentials: [first] });
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const seen: string[] = [];
+    const retrier = new PendingRevokeRetrier(home, async (credential) => {
+      seen.push(credential);
+      if (credential === first) await firstHeld;
+    }, async () => {});
+
+    const fromLaunch = retrier.start([0]);
+    expect(seen).toEqual([first]);
+
+    const queued = loadSettings(home);
+    queued.pendingRevokeCredentials.push(second);
+    saveSettings(home, queued);
+    const fromSignOut = retrier.start([0]);
+    expect(fromSignOut).toBe(fromLaunch);
+
+    releaseFirst();
+    expect(await fromLaunch).toBe(true);
+    expect(seen).toEqual([first, second]);
+    expect(stored(home).pendingRevokeCredentials).toEqual([]);
   });
 });
 

@@ -7,6 +7,7 @@ import { googleConnectorCard } from "./connectorsCard.js";
 import { singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
+import { verifyIdlePresentation } from "./onboardingVerify.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -245,6 +246,9 @@ function startActivationCountdown(node, until) {
 function verifyScreen() {
   const activation = state.activation;
   const verified = state.step === "verified";
+  const idle = !activation && !verified
+    ? verifyIdlePresentation({ busy: state.busy, message: state.message })
+    : null;
   const heading = [el("h1", { text: "Verify your phone to connect this Mac" })];
   if (activation || !verified) {
     heading.push(el("p", {
@@ -276,8 +280,8 @@ function verifyScreen() {
         ]),
       ]),
     );
-  } else if (!verified) {
-    parts.push(el("p", { class: "state-note", text: "Getting a code from Plow…" }));
+  } else if (idle?.kind === "loading") {
+    parts.push(el("p", { class: "state-note", text: idle.text, attrs: { role: "status" } }));
   }
 
   if (activation || verified) {
@@ -340,14 +344,19 @@ function verifyScreen() {
       parts.push(el("div", { class: "verify-actions" }, actions));
     }
   } else {
-    if (!state.busy) {
-      parts.push(el("div", { class: "inline-actions" }, [
-        button("Try again", "link-button", () => update(() => window.domo.onboardingBegin())),
+    if (idle?.action) {
+      parts.push(el("div", { class: "verify-actions verify-recovery" }, [
+        ...(idle.text ? [el("p", {
+          class: `state-note${idle.kind === "failure" ? " error" : ""}`,
+          text: idle.text,
+          attrs: { role: idle.kind === "failure" ? "alert" : "status" },
+        })] : []),
+        button(idle.action, "verify-activate", () => update(() => window.domo.onboardingBegin())),
       ]));
     }
   }
 
-  parts.push(note(state));
+  if (!idle) parts.push(note(state));
   return el("div", { class: "step-inner" }, parts);
 }
 

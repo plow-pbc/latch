@@ -317,6 +317,55 @@ describe("the credential at rest", () => {
     expect(loadSettings(home).relayCredential).toBe("plow_sk_secret_value");
   });
 
+  it("seals credentials queued for revocation and restores every one", () => {
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.pendingRevokeCredentials = ["plow_sk_retire_first", "plow_sk_retire_second"];
+    saveSettings(home, settings);
+
+    const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
+    expect(raw).not.toContain("plow_sk_retire_first");
+    expect(raw).not.toContain("plow_sk_retire_second");
+    expect(fileOf(home).pendingRevokeCredentials).toEqual([]);
+    expect(fileOf(home).pendingRevokeCredentialsEnc).toBeTruthy();
+    expect(loadSettings(home).pendingRevokeCredentials)
+      .toEqual(["plow_sk_retire_first", "plow_sk_retire_second"]);
+  });
+
+  it("does not rewrite current pending-revoke seals on a read", () => {
+    const base = fakeCodec();
+    const encrypt = vi.fn(base.encrypt);
+    useCredentialCodec({ ...base, encrypt });
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.pendingRevokeCredentials = ["plow_sk_waiting_for_plow"];
+    saveSettings(home, settings);
+    encrypt.mockClear();
+
+    expect(loadSettings(home).pendingRevokeCredentials).toEqual(["plow_sk_waiting_for_plow"]);
+    expect(loadSettings(home).pendingRevokeCredentials).toEqual(["plow_sk_waiting_for_plow"]);
+    expect(encrypt).not.toHaveBeenCalled();
+  });
+
+  it("migrates the legacy single seal containing a JSON queue", () => {
+    const codec = fakeCodec();
+    useCredentialCodec(codec);
+    const home = tempHome();
+    saveSettings(home, loadSettings(home));
+    const file = path.join(home, "app/settings.json");
+    const raw = fileOf(home);
+    const credentials = ["plow_sk_legacy_first", "plow_sk_legacy_second"];
+    raw.pendingRevokeCredentialsEnc = codec.encrypt(JSON.stringify(credentials));
+    fs.writeFileSync(file, JSON.stringify(raw));
+
+    expect(loadSettings(home).pendingRevokeCredentials).toEqual(credentials);
+    expect(fileOf(home).pendingRevokeCredentialsEnc).toEqual(
+      credentials.map((credential) => codec.encrypt(credential)),
+    );
+    expect(fileOf(home).pendingRevokeCredentials).toEqual([]);
+  });
+
   it("migrates a plaintext credential on the first read that can seal it", () => {
     const home = tempHome();
     const settings = loadSettings(home);
@@ -397,5 +446,55 @@ describe("the credential at rest", () => {
       mcpUrl: "",
     });
     expect(fileOf(home).relayCredentialEnc).toBeUndefined();
+  });
+
+  it("preserves an unreadable pending-revoke seal for a later Keychain recovery", () => {
+    const codec = fakeCodec();
+    useCredentialCodec(codec);
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.pendingRevokeCredentials = ["plow_sk_retry_after_unlock"];
+    saveSettings(home, settings);
+    const sealed = fileOf(home).pendingRevokeCredentialsEnc;
+
+    useCredentialCodec({
+      available: () => true,
+      encrypt: codec.encrypt,
+      decrypt: () => { throw new Error("keychain locked"); },
+    });
+    const locked = loadSettings(home);
+    expect(locked.pendingRevokeCredentials).toEqual([]);
+    locked.autoCheckUpdates = false;
+    saveSettings(home, locked);
+    expect(fileOf(home).pendingRevokeCredentialsEnc).toEqual(sealed);
+
+    useCredentialCodec(codec);
+    expect(loadSettings(home).pendingRevokeCredentials).toEqual(["plow_sk_retry_after_unlock"]);
+  });
+
+  it("does not replace an older opaque revoke seal when another credential is queued", () => {
+    const codec = fakeCodec();
+    useCredentialCodec(codec);
+    const home = tempHome();
+    const first = loadSettings(home);
+    first.pendingRevokeCredentials = ["plow_sk_older_pending"];
+    saveSettings(home, first);
+
+    const file = path.join(home, "app/settings.json");
+    const raw = fileOf(home);
+    raw.pendingRevokeCredentialsEnc = "opaque-from-locked-keychain";
+    fs.writeFileSync(file, JSON.stringify(raw));
+
+    const withOpaque = loadSettings(home);
+    withOpaque.pendingRevokeCredentials.push("plow_sk_new_pending");
+    saveSettings(home, withOpaque);
+
+    const saved = fileOf(home);
+    expect(saved.pendingRevokeCredentialsEnc).toEqual([
+      "opaque-from-locked-keychain",
+      `sealed:${Buffer.from("plow_sk_new_pending").toString("base64")}`,
+    ]);
+    expect(saved.pendingRevokeCredentials).toEqual([]);
+    expect(loadSettings(home).pendingRevokeCredentials).toEqual(["plow_sk_new_pending"]);
   });
 });
