@@ -13,7 +13,8 @@ interface Grant {
 
 const grant = (id: string, status: Grant["status"] = "open"): Grant => ({ id, status });
 
-type Outcome = "met" | "relaunch" | "miss" | "throw";
+/** "warn": the grant lands, but the act still has something to say. */
+type Outcome = "met" | "relaunch" | "miss" | "warn" | "throw";
 
 /** A bridge whose act lands each id as scripted (default: met). `leaveOn`
  *  is the id whose flow the owner walks away from (Back, a sign-out). */
@@ -30,8 +31,10 @@ function run(grants: Grant[], outcomes: Record<string, Outcome> = {}, skipped: s
       if (id === leaveOn) here = false;
       const how = outcomes[id] ?? "met";
       if (how === "throw") throw new Error("the bridge went away");
-      state = { grants: state.grants.map((g) => (g.id !== id || how === "miss" ? g : { ...g, status: how })) };
-      return { ...state, error: how === "miss" ? "Sign-in didn't finish." : null };
+      const status = how === "warn" ? "met" : how;
+      state = { grants: state.grants.map((g) => (g.id !== id || status === "miss" ? g : { ...g, status })) };
+      const error = { miss: "Sign-in didn't finish.", warn: "Safari did not relaunch — open it yourself." }[how as string] ?? null;
+      return { ...state, error };
     },
     getState: () => state,
     stillHere: () => here,
@@ -51,6 +54,8 @@ describe("the Access run", () => {
       { missed: null, walked: ["fda"] }],
     ["a miss stops the run on its row, with the act's error", [grant("fda"), grant("safari"), grant("account:google")], { safari: "miss" }, [], undefined,
       { missed: { id: "safari", error: "Sign-in didn't finish." }, walked: ["fda", "safari"] }],
+    ["a grant that lands with an error stops the run there, so the owner reads it", [grant("safari"), grant("account:google")], { safari: "warn" }, [], undefined,
+      { missed: { id: "safari", error: "Safari did not relaunch — open it yourself." }, walked: ["safari"] }],
     ["a throw is a miss with no error of its own", [grant("fda"), grant("safari")], { fda: "throw" }, [], undefined,
       { missed: { id: "fda", error: null }, walked: ["fda"] }],
     ["a skipped grant is not run", [grant("fda"), grant("safari")], {}, ["fda"], undefined,

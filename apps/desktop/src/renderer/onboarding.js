@@ -501,7 +501,7 @@ function pluginsScreen() {
     ]),
   ];
   if (pluginsState) {
-    const toGrant = pluginsState.grants.filter((g) => g.status === "open");
+    const toGrant = pluginsState.grants.filter((g) => g.status !== "met");
     parts.push(
       el("div", { class: "item-rows" }, pluginsState.rows.map(pluginRow)),
       el("div", { class: "grant-next" }, [
@@ -543,6 +543,7 @@ function grantRow(grant) {
       icon("checkmark", { strokeWidth: "1.7" }),
       document.createTextNode(grant.done),
     ]);
+    if (missed?.id === grant.id && missed.error) line = statusLine("error", missed.error);
   } else if (grant.status === "relaunch") {
     line = statusLine("done", "Granted: relaunch to finish");
   } else if (running === grant.id) {
@@ -671,6 +672,7 @@ function footerForStep() {
     dot: 2,
     label: "Continue",
     arrow: true,
+    disabled: pluginsState === null,
     action: advance,
   };
 }
@@ -765,7 +767,11 @@ async function apply(next) {
   if (!onPluginStep() && state?.step !== "availability") skipped.clear();
   if (state?.step !== "availability") availability = null;
   render();
-  if (onPluginStep() && previousStep !== state.step) void refreshPlugins();
+  // Arriving reads the accounts first: a relaunched setup resumes on Plugins
+  // before main's connector poll, and would offer to connect Google again.
+  if (onPluginStep() && previousStep !== state.step) {
+    void showPlugins(() => window.domo.connectorsRefresh().then(() => window.domo.pluginsGet()));
+  }
   if (state?.step === "availability" && previousStep !== "availability") {
     void refreshAvailability();
   }

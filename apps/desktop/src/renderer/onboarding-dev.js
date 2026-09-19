@@ -39,6 +39,7 @@ window.domo = {
   onboardingNewCode: currentState,
   onboardingSetTelemetry: async (enabled) =>
     publish({ ...current, telemetryEnabled: enabled === true }),
+  connectorsRefresh: async () => null,
   pluginsGet: plugins,
   pluginsSetEnabled: plugins,
   requirementsAct: async () => ({ ...selected.plugins, error: null }),
