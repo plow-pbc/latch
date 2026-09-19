@@ -2,7 +2,7 @@
    grantList), with no DOM: onboarding.js owns the drawing and the bridge. */
 
 /** What the run still has to do: not met, not waiting on a relaunch, not skipped. */
-export function openGrants(grants, skipped) {
+function openGrants(grants, skipped) {
   return grants.filter((g) => !g.met && !g.relaunch && !skipped.has(g.id));
 }
 

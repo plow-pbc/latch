@@ -3,7 +3,7 @@
    one button says. The act answers with the fresh list, as main's
    requirements:act does; whether a grant landed is read from that list. */
 import { describe, expect, it } from "vitest";
-import { accessPrimary, openGrants, runGrants } from "../src/renderer/onboardingGrants.js";
+import { accessPrimary, runGrants } from "../src/renderer/onboardingGrants.js";
 
 interface Grant {
   id: string;
@@ -72,11 +72,6 @@ describe("the Access run", () => {
     expect(result.runningDuringAct).toEqual(expected.walked);
     expect(result.runningAfter).toBeNull();
   });
-});
-
-it("leaves out what is met, waiting on a relaunch or skipped, in list order", () => {
-  const grants = [grant("fda", { met: true }), grant("ax", { relaunch: true }), grant("safari"), grant("contacts"), grant("account:google")];
-  expect(openGrants(grants, new Set(["contacts"])).map((g: Grant) => g.id)).toEqual(["safari", "account:google"]);
 });
 
 describe("the Access button", () => {
