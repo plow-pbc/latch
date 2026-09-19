@@ -61,6 +61,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
+  provider: "exe:life",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
   canMessage: true,
   threads: [{ uid: "chat_groceries", label: CHAT_TITLE }],
@@ -71,6 +72,7 @@ const ACTIVE_AGENT = {
 const PROVISIONING_AGENT = {
   agentId: "cag_trip",
   name: "Trip planner",
+  provider: "exe:hermes",
   line: { uid: "lin_trip", label: "+1 628-555-0144" },
   canMessage: true,
   threads: [{ uid: "chat_trip", label: TRIP_CHAT_TITLE }],
@@ -382,8 +384,8 @@ const SCREENS = [
     },
     expect: [
       "Plow Agents", "2 agents", "New agent", "Household helper", "Ready",
-      "Willow · +1 415-555-0142", "Created Aug 24", "Trip planner", "Setting up…",
-      "+1 628-555-0144", "Created today", "Message",
+      "Life · Willow · +1 415-555-0142", "Created Aug 24", "Trip planner", "Setting up…",
+      "Hermes · +1 628-555-0144", "Created today", "Message",
       "Other Agents and Clients", "Claude Code on MacBook Pro", "Cursor desktop",
       // Which Mac each static credential works from — this one, or another by
       // the name Plow gave it.

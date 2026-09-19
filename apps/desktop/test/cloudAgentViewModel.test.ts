@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentIndexEntry } from "../src/agentIndex.js";
-import { cloudProviderPickerViewModel, DEPLOY_CARD_LIMIT, deployCards } from "../src/cloudAgentViewModel.js";
+import { agentKind, cloudProviderPickerViewModel, DEPLOY_CARD_LIMIT, deployCards } from "../src/cloudAgentViewModel.js";
 
 describe("cloudProviderPickerViewModel", () => {
   it.each([
@@ -88,5 +88,16 @@ describe("deployCards", () => {
 
   it.each([["🦊 Fox", "🦊"], ["", "?"]])("takes %j's initial as one whole character", (name, initial) => {
     expect(deployCards([provider("x", name)], {})[0]?.initial).toBe(initial);
+  });
+});
+
+describe("agentKind", () => {
+  const providers = [{ id: "exe:life", name: " Life Assistant ", phrase: "Start Life" }];
+
+  it.each([
+    ["names its provider", "exe:life", "Life Assistant"],
+    ["says nothing for a provider Plow no longer offers", "exe:gone", null],
+  ] as const)("%s", (_case, provider, kind) => {
+    expect(agentKind(provider, providers)).toBe(kind);
   });
 });
