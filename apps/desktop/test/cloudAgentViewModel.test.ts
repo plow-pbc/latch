@@ -1,6 +1,40 @@
 import { describe, expect, it } from "vitest";
 import type { AgentIndexEntry } from "../src/agentIndex.js";
-import { cloudProviderPickerViewModel, DEPLOY_CARD_LIMIT, deployCards } from "../src/cloudAgentViewModel.js";
+import {
+  cloudProviderPickerViewModel,
+  DEPLOY_CARD_LIMIT,
+  deployCards,
+  plowOutageNotice,
+} from "../src/cloudAgentViewModel.js";
+
+describe("plowOutageNotice", () => {
+  const unreachable = "Couldn't reach Plow at https://api.plow.co.";
+  const allFailed = {
+    rosterError: unreachable,
+    cloudProvidersError: unreachable,
+    cloudAgentsError: unreachable,
+    cloudChatsError: unreachable,
+  };
+  const noneFailed = { rosterError: null, cloudProvidersError: null, cloudAgentsError: null, cloudChatsError: null };
+  const offline = {
+    title: "You're offline",
+    body: "Check your Wi-Fi or network connection. Latch will reconnect on its own.",
+  };
+  const plowDown = {
+    title: "Can't reach Plow right now",
+    body: "Your Mac is online, but Plow isn't answering. Latch keeps trying and will reconnect on its own.",
+  };
+
+  it.each([
+    ["the Mac is offline", allFailed, false, false, offline],
+    ["the Mac is online but Plow is not reachable", allFailed, false, true, plowDown],
+    ["any one read failed during the outage", { ...noneFailed, cloudChatsError: unreachable }, false, false, offline],
+    ["the relay is down but every read landed", noneFailed, false, false, null],
+    ["a read failed while the relay is up", allFailed, true, true, null],
+  ] as const)("when %s", (_case, state, relayConnected, online, expected) => {
+    expect(plowOutageNotice(state, relayConnected, online)).toEqual(expected);
+  });
+});
 
 describe("cloudProviderPickerViewModel", () => {
   it.each([

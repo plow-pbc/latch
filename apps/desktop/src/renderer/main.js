@@ -15,6 +15,7 @@ import {
   cloudErrorCopy,
   cloudProviderPickerViewModel,
   deployCards,
+  plowOutageNotice,
 } from "../cloudAgentViewModel.js";
 
 const view = document.getElementById("view");
@@ -1743,14 +1744,14 @@ function showDeployWaiting(panel, card, timedOut, redraw) {
   );
 }
 
-function cloudSection(s, redraw) {
+function cloudSection(s, redraw, outage) {
   const add = el("button", { class: "btn primary", text: "New agent" });
   const providerView = cloudProviderPickerViewModel(s.cloudProviders, s.cloudProvidersError);
   add.disabled = !(s.cloudProviders?.length);
   add.addEventListener("click", () => openDeployModal(add, s, redraw));
   const rows = s.cloudAgents.map((agent) => cloudEntityRow(agent, s, redraw));
   const notices = [];
-  if (!s.cloudChatsLoaded) {
+  if (!s.cloudChatsLoaded && !outage) {
     notices.push(s.cloudChatsError
       ? cloudChatsErrorBanner(
           s.cloudChatsError,
@@ -1761,12 +1762,12 @@ function cloudSection(s, redraw) {
           el("span", { text: "Loading chats…" }),
         ]));
   }
-  const refreshError = cloudErrorBanner(s.cloudAgentsError);
+  const refreshError = outage ? null : cloudErrorBanner(s.cloudAgentsError);
   if (refreshError) notices.push(refreshError);
   if (s.cloudActionError) notices.push(cloudErrorBanner(s.cloudActionError, "That change did not finish"));
   return el("section", { class: "list-section" }, [
     sectionHeader("Plow Agents", rows.length, "agent", add),
-    ...(providerView.mode === "blocked" ? [cloudErrorBanner(providerView.message, providerView.heading)] : []),
+    ...(providerView.mode === "blocked" && !outage ? [cloudErrorBanner(providerView.message, providerView.heading)] : []),
     ...notices,
     el("div", { class: "entity-list compact-list" }, rows.length
       ? rows
@@ -1786,10 +1787,17 @@ function clientSection(s, redraw) {
   ]);
 }
 
-function rosterNotice(s) {
-  if (!s.rosterError && !s.actionError) return null;
+/** Read failures, or the one outage that explains them all; a failed click
+ *  still says so either way. */
+function rosterNotice(s, outage) {
+  const rosterError = outage ? null : s.rosterError;
+  if (!outage && !rosterError && !s.actionError) return null;
   return el("div", { class: "roster-notices" }, [
-    s.rosterError ? cloudErrorBanner(s.rosterError, "Clients could not be refreshed") : null,
+    outage ? el("div", { class: "cloud-callout" }, [
+      el("div", { class: "cloud-callout-title", text: outage.title }),
+      el("p", { class: "faint", text: outage.body }),
+    ]) : null,
+    rosterError ? cloudErrorBanner(rosterError, "Clients could not be refreshed") : null,
     s.actionError ? cloudErrorBanner(s.actionError, "Plow could not confirm that change") : null,
   ]);
 }
@@ -1801,11 +1809,12 @@ async function renderAgents() {
   const panel = el("div", { class: "panel agents agents-roster" });
   view.replaceChildren(panel);
   const refreshConnect = async () => {
-    const s = await window.domo.connectGet();
+    const [s, status] = await Promise.all([window.domo.connectGet(), window.domo.statusGet()]);
     if (!s || !panel.isConnected) return s;
+    const outage = plowOutageNotice(s, status.connected, navigator.onLine);
     panel.replaceChildren(...[
-      rosterNotice(s),
-      cloudSection(s, refreshConnect),
+      rosterNotice(s, outage),
+      cloudSection(s, refreshConnect, outage),
       clientSection(s, refreshConnect),
     ].filter(Boolean));
     syncCloudModal(s, refreshConnect);
@@ -2736,6 +2745,8 @@ window.domo.onStatusChanged(() => {
 window.domo.onRulesChanged(() => {
   if (currentTab === "rules") rulesMounted?.refreshRules();
 });
+// Whether the Mac is online picks the outage notice's words.
+for (const change of ["online", "offline"]) window.addEventListener(change, () => agentsMounted?.refreshConnect());
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onConnectorsChanged((state) => {

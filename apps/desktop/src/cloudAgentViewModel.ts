@@ -34,6 +34,43 @@ export function cloudErrorCopy(message: string): string {
   return message;
 }
 
+/** The Agents tab's reads from Plow, each of which fails on its own. */
+export interface AgentsTabReadErrors {
+  rosterError: string | null;
+  cloudProvidersError: string | null;
+  cloudAgentsError: string | null;
+  cloudChatsError: string | null;
+}
+
+/**
+ * One notice in place of the Agents tab's read failures while Plow is out of
+ * reach, or null when each failure should speak for itself.
+ *
+ * The relay socket is the app's one judge of "can this Mac reach Plow". While
+ * it is down, every read fails for that single reason, and a red card per
+ * request says the same thing four times. `online` is the OS's answer
+ * (`navigator.onLine`), and only it may send the owner to their Wi-Fi: a Mac
+ * that is online but cannot reach Plow — a stale DNS answer, Plow down — was
+ * the case that prompted this, and Wi-Fi was not the thing to fix.
+ */
+export function plowOutageNotice(
+  reads: AgentsTabReadErrors,
+  relayConnected: boolean,
+  online: boolean,
+): { title: string; body: string } | null {
+  const failed = reads.rosterError || reads.cloudProvidersError || reads.cloudAgentsError || reads.cloudChatsError;
+  if (relayConnected || !failed) return null;
+  return online
+    ? {
+        title: "Can't reach Plow right now",
+        body: "Your Mac is online, but Plow isn't answering. Latch keeps trying and will reconnect on its own.",
+      }
+    : {
+        title: "You're offline",
+        body: "Check your Wi-Fi or network connection. Latch will reconnect on its own.",
+      };
+}
+
 export interface CloudProviderPickerViewModel {
   mode: "ready" | "blocked";
   heading: string | null;
