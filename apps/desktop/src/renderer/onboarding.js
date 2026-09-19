@@ -258,18 +258,25 @@ function lightMac(view) {
   setTimeout(() => view.mac.classList.remove("lit"), 260);
 }
 
-/** Review every row of the current deck against the text in the field. A newer
- * run supersedes an older one; its late answers are dropped, not cancelled. */
-function runPreview(force = false) {
-  const g = gatekeeper;
-  if (!g?.view) return;
-  const text = g.text;
-  if (!force && g.lastText === text.trim()) return;
+/** Every row back to checking, for `text`. Answers still out for older text
+ * land on a stale generation and are dropped. */
+function invalidate(g, text) {
   g.lastText = text.trim();
-  const gen = ++g.gen;
   g.results = g.results.map(() => null);
   g.open.clear();
   g.results.forEach((_, i) => paintRow(i));
+  return ++g.gen;
+}
+
+/** Review every row of the current deck against the text in the field. A newer
+ * run supersedes an older one; its late answers are dropped, not cancelled. */
+function runPreview() {
+  const g = gatekeeper;
+  if (!g?.view) return;
+  // A pending debounce is for text this run already covers (or a deck it replaced).
+  clearTimeout(g.timer);
+  const text = g.text;
+  const gen = invalidate(g, text);
   g.results.forEach((_, i) => {
     window.domo.gatekeeperPreview(g.deck, i, text)
       .catch(() => ({ verdict: "ask", reason: "", cause: "unavailable" }))
@@ -294,7 +301,7 @@ function choosePreset(key) {
   g.results = gatekeeperPresets[key].rows.map(() => null);
   g.view = null; // render() rebuilds a screen with no view
   render();
-  runPreview(true);
+  runPreview();
 }
 
 function gatekeeperScreen() {
@@ -332,6 +339,9 @@ function gatekeeperScreen() {
   field.addEventListener("input", () => {
     g.text = field.value;
     syncSegments();
+    // An edit retires the shown verdicts at once; only the review waits for a pause.
+    if (g.text.trim() === g.lastText) return;
+    invalidate(g, g.text);
     schedulePreview();
   });
 
@@ -387,7 +397,7 @@ async function enterGatekeeper() {
     results: gatekeeperPresets[deck].rows.map(() => null),
   };
   render();
-  runPreview(true);
+  runPreview();
 }
 
 function continueFromGatekeeper() {
