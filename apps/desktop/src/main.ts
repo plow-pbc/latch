@@ -786,19 +786,13 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * `discord` and `website` are Settings' Support section; `account` is the
  * Plow web console, Settings' View Account button. It follows the build's API
  * origin so a `DOMO_API_BASE_URL` run opens the environment it signed into.
- *
- * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
- * Access pane. macOS has no API an app can call to request that permission —
- * sending the person to the switch IS the whole grant flow (see
- * device-core's hostGate/fullDiskAccess.ts), so the deep link belongs in this table like any other
- * page the app may open.
+
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   account: `${apiBaseUrl}/app/`,
   claude: "https://claude.ai/new?modal=add-custom-connector#settings/customize-connectors",
   discord: "https://watchmepivot.com/discord",
   website: "https://watchmepivot.com/",
-  fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
 ipcMain.handle("external:open", async (_e, key: string) => {
@@ -1453,7 +1447,7 @@ function grantTargetFor(key: string): GrantTarget | null {
     if (key === "full_disk_access") {
       if (!(await probeFullDiskAccess())) return false;
       if (!fullDiskAccessAtLaunch) return true;
-      return (await device?.hostInventory({ automationTargets: [] }))?.child_attribution.status === "ok";
+      return (await device!.hostInventory({ automationTargets: [] })).child_attribution.status === "ok";
     }
     if (!probes) return false;
     if (app) return (await probes.automationStatus(app.bundleId)) === "granted";
@@ -1865,13 +1859,9 @@ const fdaGrantFlow = new FdaGrantFlow({
   rendererDir,
   preloadPath: path.join(dirname, "preload.cjs"),
   helperPath: fdaHelperPath,
-  fullDisk: {
-    key: "full_disk_access",
-    label: "Full Disk Access",
-    pane: EXTERNAL_URLS.fullDiskSettings,
-    acceptsDrop: true,
-    probe: () => probeFullDiskAccess(),
-  },
+  // The same target a Settings row or a plugin requirement gets, so "done"
+  // means one thing wherever the flow starts.
+  fullDisk: grantTargetFor("full_disk_access")!,
   openSettings: (pane) => shell.openExternal(pane),
 });
 ipcMain.handle("fullDisk:grantFlow", async () => fdaGrantFlow.start());
