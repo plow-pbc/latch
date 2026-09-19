@@ -5,9 +5,10 @@ import { deployCards } from "../src/cloudAgentViewModel.js";
 const LOGO_URL = `${new URL(AGENT_INDEX_URL).origin}/v1/agent-logos/life.png`;
 const LIFE = {
   agent_id: "life", name: "Life Assistant", blurb: " Runs a household. ",
-  deployable_at: "2026-09-10T16:42:29.070Z", users: 16, install_success: 88,
+  deployable_at: "2026-09-10T16:42:29.070Z", blessed_at: "2026-09-08T00:00:00.000Z", users: 16, install_success: 88,
   builder: { name: "Sam", photo: null }, logo: LOGO_URL,
 };
+const LIFE_ENTRY = { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88, verified: true, rank: 0, logoUrl: LOGO_URL };
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 
 /** The Index at AGENT_INDEX_URL, and each logo URL answered by `logos`. Records every URL asked for. */
@@ -25,20 +26,20 @@ function fakeIndex(agents: unknown[], logos: Record<string, () => Response>) {
 
 describe("parseAgentIndex", () => {
   it.each([
-    ["a deployable entry, under its Plow provider id", [LIFE], {
-      "exe:life": { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88, logoUrl: LOGO_URL },
+    ["a deployable entry, under its Plow provider id", [LIFE], { "exe:life": LIFE_ENTRY }],
+    // Verified is the Index's blessing; rank is its place in the list the Index sends, which is its ranking.
+    ["an unverified entry, ranked where the Index lists it", [{ ...LIFE, agent_id: "b", blessed_at: null }, LIFE], {
+      "exe:b": { ...LIFE_ENTRY, verified: false, rank: 0 }, "exe:life": { ...LIFE_ENTRY, rank: 1 },
     }],
     // The Index's own `hermes` is someone else's agent and is not deployable.
     ["an entry the Index does not mark deployable", [{ ...LIFE, agent_id: "hermes", deployable_at: "" }], {}],
-    ["a malformed entry, dropped without the others", [null, 7, { name: "no id" }, LIFE], {
-      "exe:life": { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88, logoUrl: LOGO_URL },
-    }],
+    ["a malformed entry, dropped without the others", [null, 7, { name: "no id" }, LIFE], { "exe:life": { ...LIFE_ENTRY, rank: 3 } }],
     ["wrong field types, each nulled or zeroed", [{
-      agent_id: "odd", deployable_at: "2026-09-10", blurb: 5, builder: "Sam", users: "16", install_success: "88", logo: 7,
-    }], { "exe:odd": { blurb: null, builder: null, users: 0, successRate: null, logoUrl: null } }],
+      agent_id: "odd", deployable_at: "2026-09-10", blurb: 5, builder: "Sam", users: "16", install_success: "88", logo: 7, blessed_at: 5,
+    }], { "exe:odd": { blurb: null, builder: null, users: 0, successRate: null, verified: false, rank: 0, logoUrl: null } }],
     // The Index names the URL; this Mac fetches only from the Index's own host.
     ["a logo hosted anywhere but the Index, dropped", [{ ...LIFE, logo: "https://elsewhere.example/v1/agent-logos/life.png" }], {
-      "exe:life": { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88, logoUrl: null },
+      "exe:life": { ...LIFE_ENTRY, logoUrl: null },
     }],
   ] as const)("keeps %s", (_case, agents, expected) => {
     const index = parseAgentIndex({ agents });

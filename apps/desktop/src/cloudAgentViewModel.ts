@@ -76,12 +76,23 @@ export interface DeployCard {
 /** Below this many people a success rate is noise: 1 of 1 reads 100%. */
 export const SUCCESS_RATE_MIN_USERS = 5;
 
-/** The deploy modal's cards: most-used first, undescribed agents last. */
+/** The deploy modal's grid: two rows of three. */
+export const DEPLOY_CARD_LIMIT = 6;
+
+/**
+ * The deploy modal's cards: the Agent Index's top verified agents, in its own
+ * rank. With none verified — the Index is down or not read yet — every provider
+ * by name, so a deploy never waits on the Index.
+ */
 export function deployCards(providers: CloudAgentProvider[], index: AgentIndex): DeployCard[] {
   const described = (id: string): AgentIndexEntry | null => (Object.hasOwn(index, id) ? index[id]! : null);
-  return providers
-    .map((provider) => ({ provider, entry: described(provider.id) }))
-    .sort((a, b) => (b.entry?.users ?? -1) - (a.entry?.users ?? -1) || a.provider.name.localeCompare(b.provider.name))
+  const all = providers.map((provider) => ({ provider, entry: described(provider.id) }));
+  const verified = all
+    .filter(({ entry }) => entry?.verified)
+    .sort((a, b) => a.entry!.rank - b.entry!.rank)
+    .slice(0, DEPLOY_CARD_LIMIT);
+  const shown = verified.length ? verified : all.sort((a, b) => a.provider.name.localeCompare(b.provider.name));
+  return shown
     .map(({ provider, entry }) => ({
       id: provider.id,
       name: provider.name,

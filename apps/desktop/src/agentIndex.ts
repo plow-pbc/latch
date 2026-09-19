@@ -27,6 +27,10 @@ export interface AgentIndexEntry {
   builder: string | null;
   users: number;
   successRate: number | null;
+  /** Verified by AI Worth Using: the Index's blessing. */
+  verified: boolean;
+  /** Its place in the Index's list, which is the Index's ranking — the order aiworthusing.com shows. */
+  rank: number;
   /** A PNG data URL. Every logo rides in the Agents tab's state, so the catalog's size is its cost. */
   logo: string | null;
 }
@@ -71,7 +75,7 @@ export function parseAgentIndex(json: unknown): Record<string, ListedAgent> {
   const agents = json && typeof json === "object" ? (json as { agents?: unknown }).agents : undefined;
   if (!Array.isArray(agents)) throw new Error("Agent Index returned no agent list");
   const entries: [string, ListedAgent][] = [];
-  for (const raw of agents) {
+  for (const [rank, raw] of agents.entries()) {
     if (!raw || typeof raw !== "object") continue;
     const row = raw as Record<string, unknown>;
     if (typeof row.agent_id !== "string" || !row.agent_id || !text(row.deployable_at)) continue;
@@ -81,6 +85,8 @@ export function parseAgentIndex(json: unknown): Record<string, ListedAgent> {
       builder: text(builder),
       users: Number.isInteger(row.users) && (row.users as number) >= 0 ? row.users as number : 0,
       successRate: Number.isInteger(row.install_success) ? row.install_success as number : null,
+      verified: text(row.blessed_at) !== null,
+      rank,
       logoUrl: onIndexHost(text(row.logo)),
     }]);
   }
