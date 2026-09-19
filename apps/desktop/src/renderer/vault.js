@@ -846,10 +846,11 @@ const PTYPE_BLURB = {
    the box shows it — so nothing filters the list silently. */
 let vquery = "";
 
-/** One credential-exchange sheet at a time: renders can overlap (the push
- * from main and a tab click land close together), and two sheets fighting
- * over the editor seat would cancel each other's staging. */
-let exchangeOpening = false;
+/** One automatically opened import sheet at a time: renders can overlap (the
+ * onboarding handoff, a credential exchange, and a tab click may land close
+ * together), and two sheets fighting over the editor seat would cancel each
+ * other's staging. */
+let importOpening = false;
 
 export async function renderVault(view, isCurrent = () => true) {
   /** Redraw this same pane — what every action hands to its callers. */
@@ -924,16 +925,17 @@ export async function renderVault(view, isCurrent = () => true) {
     return;
   }
 
-  const importBtn = el("button", { class: "btn imp", attrs: { type: "button" } }, [
-    icon("intake", { class: "vico", strokeWidth: "2" }),
-    el("span", { text: " Import" }),
-  ]);
   // `alive` says whether the pane this sheet was opened FROM is still the
   // one on screen — a credential exchange arriving mid-open replaces the
   // pane, and the stale opening must stand down (see vimportSheet).
   const alive = () => isCurrent() && pane.isConnected;
-  importBtn.addEventListener("click", () =>
-    vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast, alive }));
+  const openImport = (exchange = null) =>
+    vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast, alive }, exchange);
+  const importBtn = el("button", { class: "btn imp", attrs: { type: "button" } }, [
+    icon("intake", { class: "vico", strokeWidth: "2" }),
+    el("span", { text: " Import" }),
+  ]);
+  importBtn.addEventListener("click", () => openImport());
   const newBtn = el("button", { class: "btn-primary", attrs: { type: "button" } }, [
     icon("plus", { class: "vico", strokeWidth: "2.2" }),
     el("span", { text: " New" }),
@@ -941,22 +943,22 @@ export async function renderVault(view, isCurrent = () => true) {
   newBtn.addEventListener("click", () => vsheet(renderVaultIn));
   masthead.appendChild(el("div", { class: "mast-acts" }, [importBtn, newBtn]));
 
-  // A credential exchange main staged (Apple Passwords' "Export to another
-  // app…") opens the Import sheet by itself, straight on its preview — the
-  // owner already chose the export in the other app; making them find the
-  // Import button would be a second ask. Checked on every render because the
-  // pane may be built after the push event fired (window opened by the
-  // hand-off itself); pending survives in main until commit or cancel.
+  // Two paths open the SAME importer the button above uses: a credential
+  // exchange main staged, or setup's one-shot "Import passwords" handoff.
+  // The exchange wins if both arrive together because it already carries
+  // credentials that must be reviewed; either path still lands in
+  // vimportSheet, so onboarding never owns a second import implementation.
   void (async () => {
-    if (exchangeOpening) return;
-    exchangeOpening = true;
+    if (importOpening) return;
+    importOpening = true;
     try {
       const exchange = await window.domo.vaultExchangePending().catch(() => null);
-      if (exchange && alive()) {
-        await vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast, alive }, exchange);
-      }
+      const requested = await window.domo.vaultImportRequested().catch(() => false);
+      if (!alive()) return;
+      if (exchange) await openImport(exchange);
+      else if (requested) await openImport();
     } finally {
-      exchangeOpening = false;
+      importOpening = false;
     }
   })();
 

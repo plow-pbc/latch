@@ -38,6 +38,7 @@ const SCREENS = [
 let currentFixture = SCREENS[0];
 let current = currentFixture.state;
 let newCodeRequests = 0;
+let finishDestination = null;
 let releaseInitialGet;
 let markInitialGetStarted;
 const initialGetStarted = new Promise((resolve) => {
@@ -78,7 +79,9 @@ ipcMain.handle("onboarding:gatekeeperPreview", async (_event, _preset, index) =>
   if (results === "pending" || !results) return new Promise(() => {});
   return results[index];
 });
-ipcMain.handle("onboarding:finish", async () => {});
+ipcMain.handle("onboarding:finish", async (_event, destination) => {
+  finishDestination = destination ?? null;
+});
 let currentLaunch = { supported: true, openAtLogin: true };
 let currentAwake = { enabled: true };
 ipcMain.handle("launch:get", async () => currentLaunch);
@@ -126,6 +129,17 @@ for (const fixture of SCREENS.filter((f) => f.click)) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   };
 }
+
+// The final page does not implement an importer of its own: its primary action
+// must name the one-shot handoff that opens Browser Vault's existing sheet.
+const doneAgentFixture = SCREENS.find((fixture) => fixture.name === "done-agent");
+doneAgentFixture.prepare = async (win) => {
+  finishDestination = null;
+  await clickText(win, "Import passwords");
+  if (finishDestination !== "import") {
+    throw new Error(`Import passwords handed off to ${String(finishDestination)}, not Browser Vault`);
+  }
+};
 
 failLoudly();
 

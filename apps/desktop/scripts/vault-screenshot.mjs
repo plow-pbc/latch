@@ -45,6 +45,7 @@ let sentUrls = null;
 
 /** The revision the form last sent with it. */
 let sentRevision = null;
+let importRequested = false;
 
 function seed(input) {
   const id = `item-${nextId++}`;
@@ -105,6 +106,18 @@ async function setUp() {
   ipcMain.handle("vault:deleteItem", async (_e, itemId) => {
     ciphers.delete(itemId);
   });
+  ipcMain.handle("vault:exchangePending", async () => null);
+  ipcMain.handle("vault:importRequested", async () => {
+    const requested = importRequested;
+    importRequested = false;
+    return requested;
+  });
+  ipcMain.handle("vault:importSources", async () => ({
+    apple: { icon: null, exchange: false },
+    onePassword: { icon: null },
+    chrome: { icon: null },
+  }));
+  ipcMain.handle("vault:importCancel", async () => {});
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("ui:getTab", async () => "vault");
   ipcMain.handle("ui:setTab", async () => {});
@@ -124,6 +137,12 @@ async function setUp() {
 
 /** Each shot: how to get the screen into that state, and what must be on it. */
 const SCREENS = [
+  {
+    name: "onboarding-import",
+    openImport: true,
+    prepare: async () => {},
+    expect: ["Import passwords", "Apple Passwords", "1Password", "Chrome", "CSV file"],
+  },
   {
     name: "list",
     prepare: async () => {},
@@ -360,7 +379,8 @@ app.whenReady().then(async () => {
     outDir,
     prefix: "vault",
     screens: SCREENS,
-    load: async () => {
+    load: async (fixture) => {
+      importRequested = fixture.openImport === true;
       await win.loadFile(path.join(dist, "renderer/index.html"));
       // Wait for the LIST, not merely for the pane: the tab now paints its
       // masthead and an "Opening the vault…" row before it reads the vault, so

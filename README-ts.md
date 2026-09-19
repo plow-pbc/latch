@@ -234,8 +234,8 @@ the stable `device_id` and has no `ready` frame. The two request/response frame
 ## First-run login
 
 Download the app and walk through eight stages: Welcome → Verify phone → Privacy
-→ Gatekeeper → Choose your plugins → Grant access → Keep this Mac reachable →
-You're all set. Verification is an
+→ Gatekeeper → Give your agents superpowers → Grant access → Keep this Mac reachable →
+Put your passwords to work. Verification is an
 SMS activation: the app shows the exact message to send from the phone, then
 notices the verified text and links the Mac. Nothing is pasted out of a browser
 and the user never visits the portal.

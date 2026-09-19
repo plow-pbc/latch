@@ -709,6 +709,49 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   font-size: 36px;
 }
 
+.plugin-examples {
+  position: relative;
+  width: 100%;
+  height: 68px;
+  margin-top: 22px;
+  overflow: hidden;
+}
+
+.plugin-example {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 10px 18px;
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(213, 239, 138, 0.06), var(--surface));
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.35;
+  opacity: 0;
+  animation: plugin-example-cycle 20s ease-in-out infinite;
+}
+
+.plugin-example small {
+  color: var(--sage);
+  font: 500 10.5px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.plugin-example:nth-child(2) { animation-delay: 5s; }
+.plugin-example:nth-child(3) { animation-delay: 10s; }
+.plugin-example:nth-child(4) { animation-delay: 15s; }
+
+@keyframes plugin-example-cycle {
+  0%, 20% { opacity: 1; transform: translateY(0); }
+  24%, 96% { opacity: 0; transform: translateY(-5px); }
+  97%, 100% { opacity: 0; transform: translateY(5px); }
+}
+
 .form-block {
   margin-top: 48px;
 }
@@ -844,16 +887,10 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   font: 400 10.5px var(--mono);
 }
 
-.item-tag.met {
-  border-color: rgba(111, 208, 138, 0.28);
-  color: var(--success-text);
-}
-
-.item-tag.none {
-  padding-inline: 0;
-  border-color: transparent;
-  background: transparent;
-  color: var(--muted);
+.item-tag.required {
+  border-color: rgba(213, 239, 138, 0.26);
+  background: rgba(213, 239, 138, 0.06);
+  color: var(--volt);
 }
 
 .item-status {
@@ -903,47 +940,6 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   height: 13px;
 }
 
-/* Plugins' "You'll grant next": what the switched-on plugins still need. */
-.grant-next {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 18px;
-  padding: 14px 16px;
-  border: 1px dashed rgba(213, 239, 138, 0.35);
-  border-radius: 12px;
-  background: rgba(213, 239, 138, 0.04);
-}
-
-.grant-items {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.grant-item {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  background: var(--surface-2);
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
-.grant-item small {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
-}
-
-.grant-empty {
-  margin: 0;
-  color: var(--muted-2);
-  font-size: 12.5px;
-}
-
 .done-wrap {
   display: flex;
   flex-direction: column;
@@ -952,22 +948,27 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   text-align: center;
 }
 
-.done-badge {
-  display: grid;
-  width: 76px;
-  height: 76px;
-  margin: 0 auto 32px;
-  place-items: center;
-  border-radius: 50%;
-  background: rgba(52, 199, 89, 0.12);
-  box-shadow: inset 0 0 0 1px rgba(52, 199, 89, 0.32), 0 0 48px -6px rgba(52, 199, 89, 0.35);
-  color: var(--success);
-  animation: pop 450ms cubic-bezier(0.2, 0.8, 0.2, 1.1) 150ms both;
+.done-wrap.password-finish {
+  max-width: 520px;
+  margin: 0 auto;
+  padding-top: 52px;
 }
 
-.done-badge svg {
-  width: 38px;
-  height: 38px;
+.done-key {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 22px;
+  place-items: center;
+  border: 1px solid rgba(213, 239, 138, 0.28);
+  border-radius: 15px;
+  background: rgba(213, 239, 138, 0.08);
+  color: var(--volt);
+}
+
+.done-key svg {
+  width: 24px;
+  height: 24px;
 }
 
 .done-wrap h1 {
@@ -977,13 +978,66 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   letter-spacing: -0.03em;
 }
 
+.password-finish h1 {
+  font-size: 40px;
+}
+
+.password-finish .subhead {
+  max-width: 46ch;
+}
+
+.browser-outcomes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+  margin-top: 30px;
+  text-align: left;
+}
+
+.browser-outcome {
+  display: flex;
+  gap: 10px;
+  min-height: 76px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.browser-outcome > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.browser-outcome small {
+  color: var(--sage);
+  font: 500 10px var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.outcome-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--volt);
+  box-shadow: 0 0 12px rgba(213, 239, 138, 0.35);
+}
+
 .done-actions {
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: 100%;
   max-width: 340px;
-  margin-top: 40px;
+  margin-top: 28px;
 }
 
 .done-actions .nav-next {
@@ -991,17 +1045,17 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   margin: 0;
 }
 
-.done-actions .done-explore {
-  justify-content: center;
-  padding: 11px 16px;
-  border: 1px solid var(--border-2);
-  border-radius: 10px;
-  color: var(--text);
+.done-tertiary {
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-2);
+  font: 600 13px var(--sans);
+  cursor: pointer;
 }
 
-@keyframes pop {
-  from { opacity: 0; transform: scale(0.6); }
-  to { opacity: 1; transform: scale(1); }
+.done-tertiary:hover {
+  color: var(--text);
 }
 
 .wizard-footer {
@@ -1172,7 +1226,6 @@ body.dev-preview {
 
   .wizard-screen,
   .waiting-spinner,
-  .done-badge,
   .wizard-screen.is-welcome .welcome-logo,
   .wizard-screen.is-welcome .plw-mark,
   .wizard-screen.is-welcome .plw-sheen,
@@ -1198,6 +1251,17 @@ body.dev-preview {
   .wizard-screen.is-welcome .welcome-glow {
     opacity: 0.7 !important;
     transform: translate(-50%, -50%) scale(1) !important;
+  }
+
+  .plugin-example {
+    display: none;
+    animation: none !important;
+  }
+
+  .plugin-example:first-child {
+    display: flex;
+    opacity: 1;
+    transform: none;
   }
 }
 

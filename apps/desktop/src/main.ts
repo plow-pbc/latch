@@ -73,6 +73,7 @@ import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
+import { VaultImportRequest } from "./vaultImportRequest.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
 import { resolveTelemetryConfig, SimulatedError, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
@@ -252,6 +253,7 @@ let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 let telemetry: Telemetry | null = null;
+const vaultImportRequest = new VaultImportRequest();
 
 // MARK: The audit log's live index (auditIndex.ts)
 
@@ -932,7 +934,13 @@ ipcMain.handle("onboarding:openMessages", async () => {
 // The last step of the wizard. It does not just close the setup window — it
 // hands the user over to the app, which is the whole point of the gate: the
 // main window has not existed until now.
-ipcMain.handle("onboarding:finish", async () => {
+ipcMain.handle("onboarding:finish", async (_event, destination?: string) => {
+  if (destination === "import") {
+    vaultImportRequest.openAfterOnboarding();
+    const settings = loadSettings(home);
+    settings.selectedTab = "vault";
+    saveSettings(home, settings);
+  }
   gate.sync();
 });
 
@@ -1119,6 +1127,10 @@ ipcMain.handle("vault:importSources", async () => {
     chrome: { icon: chromeApp ? await iconOf(chromeApp) : null },
   };
 });
+
+// Setup can finish before the main window exists. The Vault pane consumes this
+// one-shot request only once it has rendered far enough to host vimportSheet.
+ipcMain.handle("vault:importRequested", async () => vaultImportRequest.take());
 
 // Pasted text: 1Password's "Copy item JSON", or CSV text.
 ipcMain.handle("vault:importInspect", async (_e, text: string) => stageImport(parsePasswordExport(String(text))));
