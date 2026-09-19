@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — plain-JS renderer helper, shipped as-is.
-import { latestOnly, singleFlight } from "../src/renderer/onboardingAction.js";
+import { latestOnly, singleFlight, whenAnswered } from "../src/renderer/onboardingAction.js";
 
 describe("onboarding renderer actions", () => {
   it("ignores a queued mutation until the first bridge call and redraw finish", async () => {
@@ -39,9 +39,8 @@ describe("onboarding renderer actions", () => {
     expect(await run(async () => ++calls)).toBe(1);
   });
 
-  // A focus refresh asked before a switch flips (or while a grant's flow runs:
-  // its act takes its number on answering) can answer after it: the older
-  // answer must not overwrite the newer one on screen.
+  // A focus refresh asked before a switch flips can answer after it: the
+  // older answer must not overwrite the newer one on screen.
   it.each([
     ["a newer answer landing first keeps an older one off the screen", ["write", "read"], ["write"]],
     ["answers landing in order both show, newest last", ["read", "write"], ["read", "write"]],
@@ -59,5 +58,19 @@ describe("onboarding renderer actions", () => {
     expect(landed).toEqual(shown);
     // Each caller still gets its own answer, shown or not.
     expect([await asked.read, await asked.write]).toEqual(["read", "write"]);
+  });
+
+  // The owner comes back mid-flow: the focus refresh answers first with the
+  // grant still open, then the act answers with it met. The act's answer must
+  // land, or the Access run re-runs a grant that already landed.
+  it("lands a grant's act over a refresh asked while its flow ran", async () => {
+    const landed: string[] = [];
+    const show = latestOnly((answer: string) => landed.push(answer));
+    let finishFlow: (answer: string) => void = () => {};
+    const acting = whenAnswered(new Promise<string>((resolve) => (finishFlow = resolve)), show);
+    await show(async () => "open");
+    finishFlow("met");
+    await acting;
+    expect(landed).toEqual(["open", "met"]);
   });
 });

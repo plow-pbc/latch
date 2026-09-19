@@ -3,7 +3,7 @@
    persistent shell. The page is sandboxed and receives no Node primitives. */
 
 import { el, icon, switchEl } from "./dom.js";
-import { latestOnly, singleFlight } from "./onboardingAction.js";
+import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { accessPrimary, runGrants } from "./onboardingGrants.js";
@@ -359,9 +359,7 @@ async function refreshPlugins() {
 async function startGrants() {
   missed = null; // the run's first redraw must not still show the last miss
   missed = await runGrants({
-    // Main reads the state an act answers with when its flow ends, so the act
-    // takes its number then: a refresh asked while the flow ran is older.
-    act: (id) => window.domo.requirementsAct(id).then((answer) => showPlugins(() => answer)),
+    act: (id) => whenAnswered(window.domo.requirementsAct(id), showPlugins),
     getState: () => pluginsState,
     stillHere: () => state?.step === "access",
     setRunning: (id) => {

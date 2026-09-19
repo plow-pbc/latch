@@ -27,3 +27,8 @@ export function latestOnly(land) {
     return answer;
   };
 }
+
+/** For a request whose answer is read only when it finishes (a grant's act
+ * runs its whole flow first): it takes its number from `show` on answering,
+ * so a refresh asked while it ran is older. */
+export const whenAnswered = (promise, show) => promise.then((answer) => show(() => answer));
