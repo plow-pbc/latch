@@ -1219,7 +1219,7 @@ body.dev-preview {
 .gk-lane { position: relative; height: 46px; display: flex; align-items: center; }
 .gk-pill { position: relative; z-index: 2; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 14px; border-radius: 11px;
   font: 13.5px var(--sans); text-align: left; cursor: pointer; border: 1px solid var(--border-2); background: #161614; color: var(--text);
-  white-space: nowrap; overflow: hidden; width: 58%;
+  white-space: nowrap; overflow: hidden; width: calc(100% - var(--beam-x) - 24px);
   transition: width 0.6s cubic-bezier(0.2, 0.9, 0.2, 1), background 0.35s, border-color 0.35s, color 0.35s; }
 .gk-pill .ico { width: 16px; height: 16px; flex: none; color: var(--muted-2); transition: color 0.35s; }
 .gk-label { overflow: hidden; text-overflow: ellipsis; }
@@ -1233,9 +1233,10 @@ body.dev-preview {
   color: var(--muted-2); animation: gk-bump 0.45s 0.45s ease-out; }
 .gk-row.no .gk-pill .ico, .gk-row.no .gk-end { color: var(--clay-soft); }
 .gk-row.unavailable .gk-pill { color: var(--muted-2); }
-.gk-why { overflow: hidden; max-height: 0; opacity: 0; padding-left: 40px; max-width: calc(100% - var(--beam-x) - 8px);
-  font-size: 12px; line-height: 1.45; color: var(--muted-2); transition: max-height 0.3s, opacity 0.3s, margin 0.3s; }
-.gk-row.open .gk-why { max-height: 80px; opacity: 1; margin: -2px 0 8px; }
+.gk-why { overflow: hidden; max-height: 0; opacity: 0; visibility: hidden; padding-left: 40px; max-width: calc(100% - var(--beam-x) - 8px);
+  font-size: 12px; line-height: 1.45; color: var(--muted-2);
+  transition: max-height 0.3s, opacity 0.3s, margin 0.3s, visibility 0s 0.3s; }
+.gk-row.open .gk-why { max-height: 80px; opacity: 1; visibility: visible; margin: -2px 0 8px; transition-delay: 0s; }
 
 .gk-beam { position: absolute; top: -12px; bottom: -12px; right: var(--beam-x); width: 2px; z-index: 3; border-radius: 2px; pointer-events: none; overflow: hidden;
   background: linear-gradient(180deg, transparent, rgba(213, 239, 138, 0.85) 10%, rgba(213, 239, 138, 0.85) 90%, transparent);
@@ -1262,5 +1263,7 @@ body.dev-preview {
 @keyframes gk-flare-ok { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0.3; } }
 @keyframes gk-flare-no { 0% { opacity: 0; } 20% { opacity: 1; } 100% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) {
-  .gk-pill, .gk-row .gk-pill, .gk-flare, .gk-beam::after { animation: none !important; transition: none !important; }
+  .gk-pill, .gk-flare, .gk-beam::after { animation: none !important; transition: none !important; }
+  .gk-row.ok .gk-flare { opacity: 0.3; }
+  .gk-row.no .gk-flare { opacity: 0.55; }
 }

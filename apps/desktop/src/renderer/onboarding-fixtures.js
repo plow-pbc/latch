@@ -114,7 +114,7 @@ export function onboardingFixtures(now) {
   const homeResults = [
     allow("Keeping the family calendar is what you allowed."),
     allow("Texting family is what you allowed."),
-    allow("Ordering groceries online is what you allowed."),
+    allow("Ordering groceries is allowed. Your Mac types the password; the agent never sees it."),
     deny("You said never to share your documents."),
     deny("You said never to share your passwords."),
   ];

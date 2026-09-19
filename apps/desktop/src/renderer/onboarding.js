@@ -236,18 +236,19 @@ function macMini() {
 }
 
 /** One row as its latest result reads; the beam scans while any row is out. */
-function paintRow(view, index) {
+function paintRow(index) {
   const g = gatekeeper;
   const { state: rowState, reason } = rowView(g.results[index]);
-  const row = view.rows[index];
+  const row = g.view.rows[index];
   row.node.className = `gk-row ${rowState}${g.open.has(index) ? " open" : ""}`;
+  row.pill.setAttribute("aria-expanded", String(g.open.has(index)));
   row.end.textContent = rowState === "ok" ? "✓" : rowState === "no" ? "✕" : "";
   row.why.textContent = reason;
   // Restart the flare so a re-review flashes again.
   const flare = el("span", { class: "gk-flare" });
   row.flare.replaceWith(flare);
   row.flare = flare;
-  view.field.classList.toggle("reviewing", g.results.some((result) => !result));
+  g.view.field.classList.toggle("reviewing", g.results.some((result) => !result));
 }
 
 function lightMac(view) {
@@ -263,19 +264,19 @@ function runPreview(force = false) {
   const g = gatekeeper;
   if (!g?.view) return;
   const text = g.text;
-  if (!force && g.lastRun && g.lastRun.text === text.trim() && g.lastRun.deck === g.deck) return;
-  g.lastRun = { text: text.trim(), deck: g.deck };
+  if (!force && g.lastText === text.trim()) return;
+  g.lastText = text.trim();
   const gen = ++g.gen;
   g.results = g.results.map(() => null);
   g.open.clear();
-  g.results.forEach((_, i) => paintRow(g.view, i));
+  g.results.forEach((_, i) => paintRow(i));
   g.results.forEach((_, i) => {
     window.domo.gatekeeperPreview(g.deck, i, text)
       .catch(() => ({ verdict: "ask", reason: "", cause: "unavailable" }))
       .then((result) => {
         if (gatekeeper !== g || g.gen !== gen) return;
         g.results[i] = result;
-        paintRow(g.view, i);
+        paintRow(i);
         if (result.verdict === "allow") setTimeout(() => lightMac(g.view), 420);
       });
   });
@@ -291,6 +292,7 @@ function choosePreset(key) {
   g.deck = key;
   g.text = gatekeeperPresets[key].text;
   g.results = gatekeeperPresets[key].rows.map(() => null);
+  g.view = null; // render() rebuilds a screen with no view
   render();
   runPreview(true);
 }
@@ -306,7 +308,7 @@ function gatekeeperScreen() {
     ]),
   ]);
   const g = gatekeeper;
-  if (!g || !gatekeeperPresets) return el("div", { class: "step-inner gatekeeper-screen" }, [head]);
+  if (!g || !gatekeeperPresets) return el("div", { class: "step-inner gatekeeper-screen" }, [head, note(state)]);
 
   const segButtons = ["home", "work"].map((key) => {
     const b = button(key === "home" ? "Home" : "Work", "gk-seg-button", () => choosePreset(key));
@@ -315,7 +317,10 @@ function gatekeeperScreen() {
   });
   const syncSegments = () => {
     const active = presetFor(g.text, gatekeeperPresets);
-    segButtons.forEach((b) => b.classList.toggle("on", b.dataset.preset === active));
+    for (const b of segButtons) {
+      b.classList.toggle("on", b.dataset.preset === active);
+      b.setAttribute("aria-pressed", String(b.dataset.preset === active));
+    }
   };
   syncSegments();
 
@@ -344,8 +349,9 @@ function gatekeeperScreen() {
       if (g.open.has(index)) g.open.delete(index);
       else g.open.add(index);
       node.classList.toggle("open", g.open.has(index));
+      pill.setAttribute("aria-expanded", String(g.open.has(index)));
     });
-    return { node, end, why, flare };
+    return { node, pill, end, why, flare };
   });
 
   const mac = macMini();
@@ -355,13 +361,14 @@ function gatekeeperScreen() {
     el("div", { class: "gk-list" }, rows.map((r) => r.node)),
   ]);
   g.view = { field: beamField, rows, mac };
-  rows.forEach((_, i) => paintRow(g.view, i));
+  rows.forEach((_, i) => paintRow(i));
 
   return el("div", { class: "step-inner gatekeeper-screen" }, [
     head,
     el("div", { class: "gk-seg" }, [el("div", { class: "gk-seg-track" }, segButtons)]),
     field,
     beamField,
+    note(state),
   ]);
 }
 
@@ -373,7 +380,7 @@ async function enterGatekeeper() {
     deck,
     text: state.purpose,
     gen: 0,
-    lastRun: null,
+    lastText: null,
     timer: null,
     view: null,
     open: new Set(),
@@ -896,8 +903,9 @@ function playWelcomeEntrance() {
   });
 }
 
-function refreshWelcomeNote() {
-  const wrap = screen.querySelector(".welcome-wrap");
+/** Redraw only the note of a screen that must not be rebuilt under the owner. */
+function refreshNote(selector) {
+  const wrap = screen.querySelector(selector);
   if (!wrap) return;
   wrap.querySelector(".state-note")?.remove();
   const next = note(state);
@@ -912,8 +920,13 @@ function render() {
   if (state.step !== "availability") syncAvailability = null;
 
   const continuingWelcome = state.step === "welcome" && screen.classList.contains("is-welcome");
+  // The Gatekeeper is rebuilt only when it has no view (entering, a new deck):
+  // a redraw would take the caret from the owner and replay every row.
+  const continuingGatekeeper = state.step === "gatekeeper" && !!gatekeeper?.view;
   if (continuingWelcome) {
-    refreshWelcomeNote();
+    refreshNote(".welcome-wrap");
+  } else if (continuingGatekeeper) {
+    refreshNote(".gatekeeper-screen");
   } else {
     // A redraw of the same step (a switch, a grant landing) keeps its scroll.
     const stepChanged = !screen.classList.contains(`is-${state.step}`);
@@ -950,7 +963,7 @@ function render() {
   const focus = kept ?? screen.querySelector("input[autofocus]")
     ?? (primaryButton.disabled ? screen.querySelector(".verify-activate:not(:disabled)") : null)
     ?? (!footer.hidden ? primaryButton : null);
-  if (focus && !state.busy) {
+  if (focus && !state.busy && !continuingGatekeeper) {
     requestAnimationFrame(() => {
       focus.focus({ preventScroll: true, focusVisible: false });
       if (focus === kept) restoreFocus = null;
