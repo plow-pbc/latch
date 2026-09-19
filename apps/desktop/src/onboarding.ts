@@ -152,6 +152,8 @@ export interface OnboardingDeps {
   applyPluginDefault: () => Promise<void>;
   /** Whether any switched-on plugin still has something to grant; false skips Access. */
   accessNeeded: () => Promise<boolean>;
+  /** Load account-backed grants before a checkpointed launch exposes Access. */
+  prepareAccess?: () => Promise<void>;
   /**
    * Turn the availability defaults on — Keep Awake, and Launch at Login where
    * the build can. Called at sign-in, which every setup (a re-setup after
@@ -214,6 +216,12 @@ export class Onboarding {
       telemetryEnabled: this.telemetryEnabled,
       purpose: this.purpose,
     };
+  }
+
+  /** Finish the external inventory needed by a checkpointed opening step. */
+  async prepareInitialStep(): Promise<OnboardingState> {
+    if (this.step === "access") await this.deps.prepareAccess?.();
+    return this.state();
   }
 
   /** Advance the presentational steps, commit the plugins-screen choice, and

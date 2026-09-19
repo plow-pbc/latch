@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseManifest } from "@domo/device-core";
+import { Connectors } from "../src/connectors.js";
 import { PRESET_TEXT } from "../src/gatekeeperPreview.js";
 import {
   ACTIVATION_POLL_INTERVAL_MS,
@@ -10,6 +12,7 @@ import {
   OnboardingDeps,
 } from "../src/onboarding.js";
 import { PlowApi, PlowApiError } from "../src/plowApi.js";
+import { grantList, pluginRows } from "../src/pluginsModel.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
@@ -524,6 +527,66 @@ describe("wizard steps around the existing verification flow", () => {
 
       expect(loadSettings(home).onboardingResumeStep).toBe("access");
       expect(build({ accessNeeded: async () => true }).state().step).toBe("access");
+    });
+
+    it("loads an already-connected Google account before resumed Access becomes actionable", async () => {
+      signedIn({ onboardingResumeStep: "access" });
+      let listCalls = 0;
+      let finishRelayPoll = (_accounts: Array<{ email: string; isDefault: boolean }>) => {};
+      const heldRelayPoll = new Promise<{ google: { accounts: Array<{ email: string; isDefault: boolean }> } }>(
+        (resolve) => {
+          finishRelayPoll = (accounts) => resolve({ google: { accounts } });
+        },
+      );
+      const connected = { email: "owner@example.com", isDefault: true };
+      const connectors = new Connectors({
+        api: {
+          listConnectors: async () => {
+            listCalls += 1;
+            return listCalls === 1 ? heldRelayPoll : { google: { accounts: [connected] } };
+          },
+          connectorConnectUrl: async () => "https://api.plow.co/v1/connectors/gmail/connect?code=unused",
+          disconnectConnector: async () => ({ status: "disconnected" }),
+          setDefaultConnector: async () => {},
+        },
+        credential: () => DEVICE_TOKEN,
+        openExternal: async () => {},
+        recordAudit: () => {},
+      });
+      const relayPolling = connectors.poll();
+      await Promise.resolve();
+      expect(listCalls).toBe(1);
+      const onboarding = build({
+        prepareAccess: async () => {
+          await connectors.refresh();
+        },
+      });
+      expect(onboarding.state().step).toBe("access");
+
+      await onboarding.prepareInitialStep();
+
+      const googleManifest = parseManifest(JSON.stringify({
+        name: "gog",
+        version: "1",
+        command: "gog",
+        exec: { argv: ["/bin/sh", "cli.sh"] },
+        argv: { read: [["calendar", "list"]], write: [] },
+        requires: { accounts: ["google"] },
+      }));
+      const connectedAccounts = connectors.state().google.accounts.length ? ["google"] : [];
+      const grants = grantList(pluginRows({
+        plugins: [{ manifest: googleManifest, enabled: true }],
+        connectedAccounts,
+        grantedPermissions: [],
+        relaunchPending: [],
+      }));
+      expect(grants).toMatchObject([{ id: "account:google", status: "met" }]);
+      expect(listCalls).toBe(2);
+
+      // The delayed relay poll cannot overwrite the newer startup refresh.
+      finishRelayPoll([]);
+      await relayPolling;
+      expect(connectors.state().google.accounts).toEqual([connected]);
     });
 
     it.each([

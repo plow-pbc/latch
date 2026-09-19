@@ -2420,13 +2420,20 @@ app.whenReady().then(async () => {
       const off = rows.filter((r) => r.status === "needs-setup").map((r) => r.name);
       if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
     },
-    // A relaunched setup resumes on Plugins before the relay's connector
-    // poll: read the accounts first, or a connected Google needs connecting.
+    // An incomplete restart without an Access checkpoint falls back to Plugins
+    // before the relay's connector poll: read the accounts first, or a
+    // connected Google needs connecting.
     accessNeeded: async () => {
       await connectors?.refresh();
       return (await pluginsNow()).grants.some((g) => g.status !== "met");
     },
+    prepareAccess: async () => {
+      await connectors?.refresh();
+    },
   });
+  // A checkpointed relaunch skips the Plugins transition (and accessNeeded),
+  // so its account inventory must land before the window can make grants live.
+  await onboarding.prepareInitialStep();
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   const cloudAgentsClient = new CloudAgentsClient(cloudApi);
 
