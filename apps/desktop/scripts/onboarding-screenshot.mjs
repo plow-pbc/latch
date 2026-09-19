@@ -38,6 +38,7 @@ const SCREENS = [
 let currentFixture = SCREENS[0];
 let current = currentFixture.state;
 let newCodeRequests = 0;
+let finishDestination = null;
 let releaseInitialGet;
 let markInitialGetStarted;
 const initialGetStarted = new Promise((resolve) => {
@@ -78,7 +79,9 @@ ipcMain.handle("onboarding:gatekeeperPreview", async (_event, _preset, index) =>
   if (results === "pending" || !results) return new Promise(() => {});
   return results[index];
 });
-ipcMain.handle("onboarding:finish", async () => {});
+ipcMain.handle("onboarding:finish", async (_event, destination) => {
+  finishDestination = destination ?? null;
+});
 let currentLaunch = { supported: true, openAtLogin: true };
 let currentAwake = { enabled: true };
 ipcMain.handle("launch:get", async () => currentLaunch);
@@ -91,7 +94,10 @@ ipcMain.handle("power:setKeepAwake", async (_event, on) => {
   currentAwake = { enabled: on === true };
   return currentAwake;
 });
-ipcMain.handle("plugins:get", async () => currentFixture.plugins);
+ipcMain.handle("plugins:get", async () => {
+  if (currentFixture.pluginsPending) return new Promise(() => {});
+  return currentFixture.plugins;
+});
 ipcMain.handle("plugins:setEnabled", async () => currentFixture.plugins);
 ipcMain.handle("requirements:act", async () => ({ ...currentFixture.plugins, error: null }));
 ipcMain.handle("app:relaunch", async () => {});
@@ -126,6 +132,61 @@ for (const fixture of SCREENS.filter((f) => f.click)) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   };
 }
+
+const pluginQueries = [
+  "Can you find three times that work and send them?",
+  "Do you see my thread with the contractor? Are we all paid up?",
+  "What should I know before replying to this guest about the cabin?",
+  "How much is in my rental account—and did the tenants pay?",
+];
+const pluginsFreshFixture = SCREENS.find((fixture) => fixture.name === "plugins-fresh");
+pluginsFreshFixture.prepare = async (win) => {
+  const examples = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll(".plugin-example"), (node) => ({
+    text: node.textContent,
+    visible: getComputedStyle(node).visibility === "visible",
+  }))`);
+  if (examples.length !== pluginQueries.length ||
+      pluginQueries.some((query) => !examples.some((example) => example.text.includes(query)))) {
+    throw new Error("Plugin query carousel did not render all four examples");
+  }
+  if (examples.filter((example) => example.visible).length !== 1) {
+    throw new Error("Plugin query carousel must expose exactly one example at a time");
+  }
+};
+
+// The final page does not implement an importer of its own: its primary action
+// must name the one-shot handoff that opens Browser Vault's existing sheet.
+const doneAgentFixture = SCREENS.find((fixture) => fixture.name === "done-agent");
+doneAgentFixture.prepare = async (win) => {
+  finishDestination = null;
+  const focused = await win.webContents.executeJavaScript(
+    `document.activeElement?.textContent.trim() ?? ""`,
+  );
+  if (focused !== "Import passwords") {
+    throw new Error(`Final page focused ${JSON.stringify(focused)}, not Import passwords`);
+  }
+  await clickText(win, "Import passwords");
+  if (finishDestination !== "import") {
+    throw new Error(`Import passwords handed off to ${String(finishDestination)}, not Browser Vault`);
+  }
+};
+
+const doneBrowserOffFixture = SCREENS.find((fixture) => fixture.name === "done-browser-off");
+doneBrowserOffFixture.prepare = async (win) => {
+  finishDestination = null;
+  await clickText(win, "Enable Browser & import passwords");
+  if (finishDestination !== "enable-browser-and-import") {
+    throw new Error(`Browser-off import handed off to ${String(finishDestination)}`);
+  }
+};
+
+const doneBrowserLoadingFixture = SCREENS.find((fixture) => fixture.name === "done-browser-loading");
+doneBrowserLoadingFixture.prepare = async (win) => {
+  const disabled = await win.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll("button")).find((button) => button.textContent.trim() === "Import passwords")?.disabled`,
+  );
+  if (disabled !== true) throw new Error("Import passwords was enabled before Browser status resolved");
+};
 
 failLoudly();
 

@@ -252,6 +252,7 @@ let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 let telemetry: Telemetry | null = null;
+let vaultImportRequested = false;
 
 // MARK: The audit log's live index (auditIndex.ts)
 
@@ -932,7 +933,16 @@ ipcMain.handle("onboarding:openMessages", async () => {
 // The last step of the wizard. It does not just close the setup window — it
 // hands the user over to the app, which is the whole point of the gate: the
 // main window has not existed until now.
-ipcMain.handle("onboarding:finish", async () => {
+ipcMain.handle("onboarding:finish", async (_event, destination?: string) => {
+  if (destination === "import" || destination === "enable-browser-and-import") {
+    if (destination === "enable-browser-and-import") {
+      await updateDisabledPlugins((disabled) => disabled.delete(BROWSER_PLUGIN));
+    }
+    vaultImportRequested = true;
+    const settings = loadSettings(home);
+    settings.selectedTab = "vault";
+    saveSettings(home, settings);
+  }
   gate.sync();
 });
 
@@ -1119,6 +1129,11 @@ ipcMain.handle("vault:importSources", async () => {
     chrome: { icon: chromeApp ? await iconOf(chromeApp) : null },
   };
 });
+
+// Setup can finish before the main window exists. The Vault pane consumes this
+// one-shot request only once it has rendered far enough to host vimportSheet.
+ipcMain.handle("vault:importRequested", async () => vaultImportRequested);
+ipcMain.handle("vault:importAcknowledged", async () => { vaultImportRequested = false; });
 
 // Pasted text: 1Password's "Copy item JSON", or CSV text.
 ipcMain.handle("vault:importInspect", async (_e, text: string) => stageImport(parsePasswordExport(String(text))));
@@ -1609,6 +1624,13 @@ function connectedAccountIds(): string[] {
   return (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [];
 }
 
+/** Connector state owns its own failure/late-success explanation; setup only
+ * associates that explanation with the corresponding model requirement. */
+function connectorAccountNotices(): Record<string, { message: string; noteKind: "neutral" | "error" }> {
+  const state = connectors?.state();
+  return state?.message ? { google: { message: state.message, noteKind: state.noteKind } } : {};
+}
+
 /** The whole tab, fresh: what is staged, what each plugin still needs, and
  *  the one ordered list of it setup walks. A permission is met when Settings'
  *  own Permissions section reads it granted — one answer, so the two tabs
@@ -1633,6 +1655,7 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
       description: device?.pluginDescription(p.manifest.name) ?? null,
     })),
     connectedAccounts: connectedAccountIds(),
+    accountNotices: connectorAccountNotices(),
     grantedPermissions: granted,
     relaunchPending,
   });

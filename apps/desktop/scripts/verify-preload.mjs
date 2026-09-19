@@ -156,6 +156,7 @@ const cloudThreadTitle = "Willow · You · Robin";
 const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",
+  provider: "exe:life",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
   canMessage: true,
   threads: [{ uid: "chat_probe", label: cloudThreadTitle }],
@@ -714,8 +715,8 @@ app.whenReady().then(async () => {
       noCredentialIdentity: !group?.textContent.includes("session") &&
         !group?.textContent.includes("worker"),
       hidesProvider: !group?.textContent.includes("Provider"),
-      namesLine: row?.querySelector(".entity-context")?.textContent
-        .includes("Willow · +1 415-555-0142") === true,
+      namesKindAndLine: row?.querySelector(".entity-context")?.textContent
+        .includes("Life · Willow · +1 415-555-0142") === true,
       showsCreated: row?.querySelector(".entity-context")?.textContent
         .includes("Created Aug 24") === true,
       hidesLastUsed: !row?.querySelector(".entity-context")?.textContent.includes("Used "),
@@ -1634,7 +1635,7 @@ app.whenReady().then(async () => {
     mcpRoster.namesBoundDevice &&
     mcpRoster.stillNamesKind &&
     mcpRoster.noDeviceUid &&
-    cloudRoster.namesLine &&
+    cloudRoster.namesKindAndLine &&
     cloudRoster.showsCreated &&
     cloudRoster.hidesLastUsed &&
     cloudRoster.offersMessage &&

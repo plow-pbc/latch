@@ -13,6 +13,13 @@ export type PluginStatus = "off" | "needs-setup" | "ready";
  *  row with no manifest at all. The badge the renderer used to hardcode. */
 export type PluginKind = "CLI" | "Browser";
 
+/** A state owner can attach its current explanation to a requirement without
+ * teaching the renderer which connector or permission produced it. */
+export interface RequirementNotice {
+  message: string;
+  noteKind: "neutral" | "error";
+}
+
 export interface Requirement {
   id: string;
   /** The row's words, like the button's: what is missing ("Safari") and the
@@ -30,6 +37,11 @@ export interface Requirement {
   /** The word setup's Access row shows once it is met: "Granted",
    *  "Connected". Empty for one setup never runs. */
   done: string;
+  /** An optional model-owned action that remains useful after this
+   *  requirement is met, such as connecting another account. */
+  repeatAction?: string;
+  /** An optional state-owned explanation associated with this requirement. */
+  notice?: RequirementNotice;
   /** "relaunch": granted, but only a relaunch lets this app's children
    *  inherit it — the button relaunches rather than acting. */
   status: "open" | "met" | "relaunch";
@@ -49,16 +61,27 @@ export interface PluginRow {
    *  Deliberately NOT a manifest field: a second place to write the same
    *  sentence is a second place for it to drift. */
   description: string | null;
+  /** A demonstrated owner query setup can rotate through. Null lets newly
+   *  staged plugins appear without onboarding inventing a promise for them. */
+  example: string | null;
   status: PluginStatus;
   /** Every requirement the manifest declares, met or not — status decides
    *  whether the plugin can run; hiding a met one is the tab's business. */
   requirements: Requirement[];
 }
 
+const PLUGIN_EXAMPLES: Readonly<Record<string, string>> = {
+  gog: "Can you find three times that work and send them?",
+  messages: "Do you see my thread with the contractor? Are we all paid up?",
+  wiki: "What should I know before replying to this guest about the cabin?",
+};
+
 export interface PluginsInput {
   plugins: { manifest: PluginManifest; enabled: boolean; description?: string | null }[];
   /** Connector ids the owner has connected, e.g. "google". */
   connectedAccounts: string[];
+  /** Current connector notices, associated with their requirements. */
+  accountNotices?: Record<string, RequirementNotice>;
   /** Permission keys this Mac's inventory reads as granted. */
   grantedPermissions: string[];
   /** Permission keys granted during this run that a relaunch will finish. */
@@ -91,7 +114,7 @@ function permissionRequirement(key: string, met: boolean, relaunch: boolean): Re
 
 /** `ACCOUNT_IDS` in manifest.ts is `{google}` only, so the fixed Google
  *  title and copy are right for every account requirement today. */
-function accountRequirement(id: string, met: boolean): Requirement {
+function accountRequirement(id: string, met: boolean, notice?: RequirementNotice): Requirement {
   return {
     id: accountRequirementId(id),
     title: "Google account",
@@ -100,6 +123,8 @@ function accountRequirement(id: string, met: boolean): Requirement {
     waiting: "Finish signing in with Google in your browser.",
     done: "Connected",
     status: met ? "met" : "open",
+    ...(met ? { repeatAction: "Add another" } : {}),
+    ...(notice ? { notice } : {}),
   };
 }
 
@@ -117,7 +142,7 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
   return input.plugins.map(({ manifest, enabled, description }) => {
     const requirements: Requirement[] = [
       ...manifest.requires.permissions.map((key) => permissionRequirement(key, granted.has(key), pending.has(key))),
-      ...manifest.requires.accounts.map((id) => accountRequirement(id, accounts.has(id))),
+      ...manifest.requires.accounts.map((id) => accountRequirement(id, accounts.has(id), input.accountNotices?.[id])),
     ];
     return {
       name: manifest.name,
@@ -125,6 +150,7 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
       summary: manifest.summary ?? null,
       kind: "CLI",
       description: description ?? null,
+      example: PLUGIN_EXAMPLES[manifest.name] ?? null,
       status: rowStatus(enabled, requirements),
       requirements,
     };
@@ -171,6 +197,7 @@ export function browserPluginRow(input: {
     summary: "Browse and fill in forms in a private browser, with Safari as a fallback.",
     kind: "Browser",
     description: input.description,
+    example: "How much is in my rental account—and did the tenants pay?",
     status: rowStatus(input.enabled, requirements),
     requirements,
   };

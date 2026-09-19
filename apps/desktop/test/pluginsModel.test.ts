@@ -61,11 +61,25 @@ describe("pluginRows status", () => {
   });
 });
 
-it("names an unmet account requirement with the action that fixes it, and flips met once connected — still listed", () => {
+it("names an unmet account requirement with the action that fixes it, then gives its met row a model-owned repeat action", () => {
   const requirements = (connected: string[]) =>
     pluginRows(build({ requires: { accounts: ["google"] }, enabled: true, connected }))[0]!.requirements;
   expect(requirements([])).toEqual([{ ...google, status: "open" }]);
-  expect(requirements(["google"])).toEqual([{ ...google, status: "met" }]);
+  expect(requirements(["google"])).toEqual([{ ...google, status: "met", repeatAction: "Add another" }]);
+});
+
+it("associates a connector-owned notice with its account requirement", () => {
+  const [row] = pluginRows({
+    ...build({ requires: { accounts: ["google"] }, enabled: true, connected: ["google"] }),
+    accountNotices: { google: { message: "We couldn't see a new account.", noteKind: "neutral" } },
+  });
+
+  expect(row!.requirements).toEqual([{
+    ...google,
+    status: "met",
+    repeatAction: "Add another",
+    notice: { message: "We couldn't see a new account.", noteKind: "neutral" },
+  }]);
 });
 
 it.each([
@@ -134,6 +148,20 @@ describe("the shipped plugins", () => {
     const [row] = pluginRows({ plugins: [{ manifest: shipped(name), enabled: true }], connectedAccounts: [], grantedPermissions: [], relaunchPending: [] });
     expect(row).toMatchObject({ name, title });
   });
+
+  it.each([
+    ["gog", "Can you find three times that work and send them?"],
+    ["messages", "Do you see my thread with the contractor? Are we all paid up?"],
+    ["wiki", "What should I know before replying to this guest about the cabin?"],
+  ])("owns the onboarding example for shipped plugin %s", (name, example) => {
+    const [row] = pluginRows({ plugins: [{ manifest: shipped(name), enabled: true }], connectedAccounts: [], grantedPermissions: [], relaunchPending: [] });
+    expect(row!.example).toBe(example);
+  });
+
+  it("does not invent an onboarding example for an unknown plugin", () => {
+    const [row] = pluginRows({ plugins: [{ manifest: manifest(none, "other"), enabled: true }], connectedAccounts: [], grantedPermissions: [], relaunchPending: [] });
+    expect(row!.example).toBeNull();
+  });
 });
 
 describe("browserPluginRow", () => {
@@ -154,6 +182,7 @@ describe("browserPluginRow", () => {
   ] as const)("is %s", (_what, input, status, requirements) => {
     const row = browserPluginRow(input);
     expect(row).toMatchObject({ name: BROWSER_PLUGIN, title: "Browser use", kind: "Browser", status });
+    expect(row.example).toBe("How much is in my rental account—and did the tenants pay?");
     // The words the owner reads, exactly — a swap of the two would otherwise pass.
     expect(row.requirements).toEqual(requirements);
   });
@@ -169,7 +198,7 @@ describe("browserPluginRow", () => {
 
 describe("grantList", () => {
   const rowWith = (title: string, status: PluginRow["status"], requirements: PluginRow["requirements"]): PluginRow => ({
-    name: title.toLowerCase(), title, summary: null, kind: "CLI", description: null, status, requirements,
+    name: title.toLowerCase(), title, summary: null, kind: "CLI", description: null, example: null, status, requirements,
   });
 
   it("dedupes a permission two switched-on plugins share, listing both titles once", () => {

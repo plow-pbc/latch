@@ -12,6 +12,7 @@ import { el, icon, switchEl } from "./dom.js";
 import { singleFlight } from "./onboardingAction.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 import {
+  agentKind,
   cloudErrorCopy,
   cloudProviderPickerViewModel,
   deployCards,
@@ -1533,9 +1534,10 @@ function rosterActions(row, redraw) {
   return [more, menu];
 }
 
-function cloudContext(agent) {
+function cloudContext(agent, state) {
   const created = rosterDate(agent?.createdAt);
   return [
+    agentKind(agent.provider, state.cloudProviders ?? []),
     cloudLine(agent),
     created ? `Created ${created}` : null,
   ].filter(Boolean).join(" · ");
@@ -1568,8 +1570,8 @@ function cloudEntityRow(agent, state, redraw) {
     ]),
     el("div", {
       class: "entity-context",
-      text: cloudContext(agent),
-      attrs: { title: cloudContext(agent) },
+      text: cloudContext(agent, state),
+      attrs: { title: cloudContext(agent, state) },
     }),
   ]);
   main.addEventListener("click", () => openCloudDetail(main, agent, state, redraw));
