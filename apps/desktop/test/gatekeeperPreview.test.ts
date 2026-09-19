@@ -14,9 +14,6 @@ import { loadSettings } from "../src/settings.js";
 
 // The preview's fixed placeholder home — never this Mac's account.
 const HOME = "/Users/owner";
-// Friday 2026-09-18, local time: next Monday is 2026-09-21.
-const FRIDAY = new Date(2026, 8, 18, 15, 0, 0);
-
 // A throwaway home: loadSettings answers the defaults for a home with no file.
 // One temp dir for the whole file — deps() is called many times per test run.
 const blank = loadSettings(fs.mkdtempSync(path.join(os.tmpdir(), "domo-gk-")));
@@ -33,7 +30,6 @@ function deps(over: Partial<PreviewDeps> = {}): { deps: PreviewDeps; sent: Revie
       },
       settings,
       apiBaseUrl: "https://api.plow.test",
-      now: FRIDAY,
       ...over,
     },
   };
@@ -74,7 +70,7 @@ describe("gatekeeper preview", () => {
     ["home", 4, "run: security dump-keychain -d", true, []],
     ["work", 0, "run: plow-gog gmail search is:unread newer_than:2d --max 20", true, []],
     ["work", 1, "run: plow-gog gmail drafts create --to jordan@example.com --subject Re: Invoice #1042 --body Hi Jordan,\n\nThanks for flagging this — I've corrected the invoice and will resend it today.\n\nBest,\nAlex --json", true, []],
-    ["work", 2, "run: plow-gog calendar events list --from=2026-09-21 --days=5 --json --results-only --sort=start --max=50", true, []],
+    ["work", 2, "run: plow-gog calendar events list --from=now --days=7 --json --results-only --sort=start --max=50", true, []],
     ["work", 3, "run: gh pr view 482 --repo acme/web --comments", true, []],
     ["work", 4, `run: /usr/bin/sqlite3 -readonly -header -csv ${HOME}/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite select ZFROMJID, ZTEXT, ZMESSAGEDATE from ZWAMESSAGE order by ZMESSAGEDATE desc limit 50;`, false, [`${HOME}/Library/Group Containers/group.net.whatsapp.WhatsApp.shared`]],
   ] as const)("shows the reviewer %s row %i as the production request it stands for", async (preset, index, request, network, reads) => {
@@ -86,7 +82,7 @@ describe("gatekeeper preview", () => {
     expect(net?.allowed ?? null).toBe(network);
     expect(intent.capabilities.filter((c) => c.kind === "fs.read").flatMap((c) => c.paths)).toEqual(reads);
     // What the row shows is what the reviewer was sent.
-    expect(gatekeeperPresets(FRIDAY)[preset].rows[index]!.command).toEqual(intent.capabilities.map(capabilityDisplay));
+    expect(gatekeeperPresets()[preset].rows[index]!.command).toEqual(intent.capabilities.map(capabilityDisplay));
   });
 
   it("sends the draft to the reviewer that decides alone, with nothing earlier and no one to ask", async () => {
@@ -115,13 +111,6 @@ describe("gatekeeper preview", () => {
       reason: "insufficient Plow balance",
       cause: "no_credits",
     });
-  });
-
-  it("asks for next Monday's calendar, counted from today", async () => {
-    const monday = new Date(2026, 8, 21, 9, 0, 0);
-    const { deps: d, sent } = deps({ now: monday });
-    await previewRow("work", 2, "", d);
-    expect(sent[0]!.intent.request).toContain("--from=2026-09-28 ");
   });
 
   it.each([

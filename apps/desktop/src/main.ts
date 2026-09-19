@@ -913,7 +913,6 @@ ipcMain.handle(
       review: adversarialReview,
       settings: loadSettings(home),
       apiBaseUrl,
-      now: new Date(),
     }),
 );
 /**

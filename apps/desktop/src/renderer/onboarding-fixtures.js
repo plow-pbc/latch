@@ -146,7 +146,7 @@ export function onboardingFixtures(now) {
         {
           label: "Find a free hour next week",
           icon: "calendar",
-          command: ["Run: plow-gog calendar events list --from=2026-09-21 --days=5 --json --results-only --sort=start --max=50", online],
+          command: ["Run: plow-gog calendar events list --from=now --days=7 --json --results-only --sort=start --max=50", online],
         },
         {
           label: "Review a pull request on GitHub",
