@@ -163,6 +163,10 @@ describe("capabilitiesView", () => {
     // showing it granted is not a contradiction the owner resolves alone —
     // and it is the re-add, not the relaunch a fresh grant would ask for.
     expect(rows.find((r) => r.key === "full_disk_access")!.hint).toContain("add it again");
+    // Once the owner has done that re-add this run, the same inventory is a
+    // grant waiting on a relaunch (FullDiskWatch), and the row says so.
+    const readded = capabilitiesView(input({ inventory: broken, fullDisk: "relaunch" })).sections.flatMap((s) => s.rows);
+    expect(readded.find((r) => r.key === "full_disk_access")).toMatchObject({ status: "denied", hint: "Quit and reopen after granting." });
     const fresh = capabilitiesView(input()).sections.flatMap((s) => s.rows);
     expect(fresh.find((r) => r.key === "full_disk_access")!.hint).toBe("Quit and reopen after granting.");
   });

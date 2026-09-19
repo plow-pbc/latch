@@ -1414,6 +1414,11 @@ async function capabilitiesNow(inventory?: HostInventory | null): Promise<Capabi
   const settings = loadSettings(home);
   return capabilitiesView({
     inventory: inv,
+    // Every inventory read feeds the one watch, so Settings, the Plugins tab
+    // and the grant panel tell a relaunch from a broken grant the same way.
+    fullDisk: inv
+      ? fullDisk?.observe(inv.full_disk_access.granted, inv.full_disk_access.granted && inv.child_attribution.status === "ok")
+      : undefined,
     automation: automationRows(inv),
     // The log as the live index holds it — not read off disk again.
     events: device ? ensureAuditIndex().events() : [],
@@ -1601,8 +1606,8 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
   const view = await capabilitiesNow(inventory);
   const granted = view.sections.flatMap((s) => s.rows).filter((r) => r.status === "granted").map((r) => r.key);
   // Granted to the app but not yet to a child, having been off this run: a
-  // relaunch finishes it (FullDiskWatch). Held all run and not inherited is
-  // the Settings row's remove-and-re-add, not a relaunch.
+  // relaunch finishes it (FullDiskWatch — capabilitiesNow fed it this same
+  // read). Held all run and not inherited is the row's remove-and-re-add.
   const fullDiskState = inventory
     ? fullDisk?.observe(inventory.full_disk_access.granted, granted.includes("full_disk_access"))
     : undefined;
