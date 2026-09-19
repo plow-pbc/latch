@@ -479,9 +479,11 @@ export function shownCalendars(parsed: unknown): string[] {
 
 /**
  * One account's `calendar freebusy --json --results-only` answer: the busy
- * spans of every calendar that answered, and the ids of any that did not
- * (Google answers per calendar, so the rest stays valid). Null when the
- * output is not a calendar map at all.
+ * spans of every calendar that answered, and the ids of the permanently
+ * unreadable ones (Google answers per calendar, so the rest stays valid).
+ * Null — the account is unchecked — when the output is not a calendar map,
+ * when nothing answered, or when a calendar failed for a reason that might
+ * clear.
  */
 export function freeBusyAnswer(
   parsed: unknown,
@@ -495,7 +497,13 @@ export function freeBusyAnswer(
   for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
     const row = value as { busy?: unknown; errors?: unknown } | null;
     if (row === null || typeof row !== "object") continue;
-    if (Array.isArray(row.errors) && row.errors.length > 0) {
+    const errors = Array.isArray(row.errors) ? row.errors : [];
+    if (errors.length > 0) {
+      // `notFound` is permanent — no access, and it never clears, as the
+      // owner's subscribed holiday calendar proves on every call. Any other
+      // reason (rateLimitExceeded, backendError) might have held the
+      // commitment being booked over, so it makes the account unchecked.
+      if (!errors.every((e) => (e as { reason?: unknown } | null)?.reason === "notFound")) return null;
       errored.push(id);
       continue;
     }

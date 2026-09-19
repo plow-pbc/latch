@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { GOG_SKILL } from "../src/providers/gogSkill.js";
 import {
   compactCalendarEvents,
+  freeBusyAnswer,
   gogExitReason,
   mergeFanout,
   planPlowGog,
@@ -683,6 +684,21 @@ describe("compactCalendarEvents", () => {
     const { items: kept, truncated } = compactCalendarEvents(items, 700);
     expect(kept.map((k) => k.startLocal)).toEqual(["2026-09-16T08:00:00+12:00", "2026-09-16T09:00:00+12:00"]);
     expect(truncated).toEqual({ omitted: 2, after: "2026-09-16" });
+  });
+});
+
+describe("freeBusyAnswer", () => {
+  const busy = { start: "2026-09-18T22:30:00Z", end: "2026-09-18T23:00:00Z" };
+
+  it("notes a permanently unreadable calendar, and gives up on one that might clear", () => {
+    // notFound never clears — the owner's subscribed holiday calendar answers
+    // that way on every call — so the window is still answered, with the gap
+    // named. A rate limit might have hidden the commitment being booked over.
+    expect(freeBusyAnswer({ primary: { busy: [busy] }, gone: { errors: [{ reason: "notFound" }] } })).toEqual({
+      busy: [busy],
+      errored: ["gone"],
+    });
+    expect(freeBusyAnswer({ primary: { busy: [] }, later: { errors: [{ reason: "rateLimitExceeded" }] } })).toBeNull();
   });
 });
 

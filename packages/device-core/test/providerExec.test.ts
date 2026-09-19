@@ -703,7 +703,8 @@ case "$*" in
       tok-cbad) exit 9 ;;
       tok-cbusyerr) echo '{"primary":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
       tok-cerr) echo '{"primary":{"busy":[]},"gone":{"errors":[{"reason":"notFound"}]}}' ;;
-      tok-callerr) echo '{"primary":{"errors":[{"reason":"notFound"}]},"family@group.calendar.google.com":{"errors":[{"reason":"rateLimitExceeded"}]}}' ;;
+      tok-callerr) echo '{"primary":{"errors":[{"reason":"notFound"}]},"family@group.calendar.google.com":{"errors":[{"reason":"notFound"}]}}' ;;
+      tok-ctransient) echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"errors":[{"reason":"rateLimitExceeded"}]}}' ;;
       *) echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"busy":[]}}' ;;
     esac ;;
   *"calendar conflicts"*) echo '[]' ;;
@@ -1093,6 +1094,15 @@ esac
       // in this account answered, so the window is unknown, not free.
       why: "an account whose every calendar errored",
       accounts: () => [{ account: "a@example.com", token: "tok-callerr", isDefault: true }],
+      extra: [],
+      expected: "a@example.com: could not check",
+    },
+    {
+      // A reason that might clear is not a calendar to write off: it could
+      // have held the commitment, so the account is unchecked. Its notFound
+      // twin books instead — the test below.
+      why: "a calendar that failed for a reason that might clear",
+      accounts: () => [{ account: "a@example.com", token: "tok-ctransient", isDefault: true }],
       extra: [],
       expected: "a@example.com: could not check",
     },
