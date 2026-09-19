@@ -1639,9 +1639,7 @@ ipcMain.handle("requirements:act", async (e, rawId: unknown) => {
   const id = typeof rawId === "string" ? rawId : "";
   const { error } = await actOnRequirement(id, {
     permission: actOnPermission,
-    connectAccount: async () => {
-      await connectors?.connect();
-    },
+    connectAccount: async () => (await connectors?.connect())?.message || null,
     fullDiskAccess: probeFullDiskAccess,
     enableSafari: () => enableSafariJavaScript(unsandboxedRunner),
   });
