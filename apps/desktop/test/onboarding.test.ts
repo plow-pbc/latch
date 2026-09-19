@@ -123,6 +123,8 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
       }
     },
     deviceName: "Plow Latch (test)",
+    applyPluginDefault: async () => {},
+    accessNeeded: async () => false,
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
     // deadline is measured against, so a five-minute give-up takes microseconds
@@ -449,7 +451,7 @@ describe("wizard steps around the existing verification flow", () => {
     expect(onboarding.setTelemetryEnabled(false).telemetryEnabled).toBe(false);
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: true, setupComplete: false });
 
-    // No accessNeeded dep: Access is skipped by default.
+    // The builder's accessNeeded answers false: nothing to grant skips Access.
     expect((await onboarding.advance()).step).toBe("availability");
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: false });
     // The persisted gate deliberately resumes incomplete setup at Plugins, so a

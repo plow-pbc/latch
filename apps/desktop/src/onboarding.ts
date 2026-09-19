@@ -144,9 +144,9 @@ export interface OnboardingDeps {
   /** Names this Mac in the activation request. */
   deviceName: string;
   /** Once per entry from Privacy: turn off every plugin that can't work yet, so the switches start on only what works. */
-  applyPluginDefault?: () => Promise<void>;
+  applyPluginDefault: () => Promise<void>;
   /** Whether any switched-on plugin still has something to grant; false skips Access. */
-  accessNeeded?: () => Promise<boolean>;
+  accessNeeded: () => Promise<boolean>;
   /**
    * Turn the availability defaults on — Keep Awake, and Launch at Login where
    * the build can. Called at sign-in, which every setup (a re-setup after
@@ -219,7 +219,7 @@ export class Onboarding {
       // run() keeps a throw readable on Privacy and retries the default
       // rather than skipping it; the step moves only once it has applied.
       return this.run(async () => {
-        await this.deps.applyPluginDefault?.();
+        await this.deps.applyPluginDefault();
         // A reset() (sign-out) can land during this await; don't overwrite it.
         if (this.step !== "privacy") return;
         this.step = "plugins";
@@ -227,7 +227,7 @@ export class Onboarding {
     }
     if (this.step === "plugins") {
       return this.run(async () => {
-        const needsAccess = (await this.deps.accessNeeded?.()) ?? false;
+        const needsAccess = await this.deps.accessNeeded();
         // Same reset()-mid-await guard as the privacy branch above.
         if (this.step !== "plugins") return;
         const settings = this.settings();
