@@ -254,6 +254,16 @@ export function onboardingFixtures(now) {
       expectDotCount: 5,
     },
     {
+      name: "plugins-error",
+      state: { ...base, step: "plugins", message: "Something went wrong. Try again.", noteKind: "error" },
+      cloud: noAgents,
+      plugins: onlyWiki,
+      expect: ["Choose your plugins", "Something went wrong. Try again."],
+      reject: ["Talking to Plow"],
+      expectFocus: "Continue",
+      expectDotCount: 5,
+    },
+    {
       name: "access-ready",
       state: { ...base, step: "access" },
       cloud: noAgents,

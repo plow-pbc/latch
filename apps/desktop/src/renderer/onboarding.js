@@ -188,6 +188,7 @@ function privacyScreen() {
       }),
     ]),
     el("div", { class: "trust-rows" }, rows),
+    note(state),
   ]);
 }
 
@@ -500,7 +501,7 @@ function pluginsScreen() {
     ]),
   ];
   if (pluginsState) {
-    const toGrant = pluginsState.grants.filter((g) => !g.met);
+    const toGrant = pluginsState.grants.filter((g) => !g.met && !g.relaunch);
     parts.push(
       el("div", { class: "item-rows" }, pluginsState.rows.map(pluginRow)),
       el("div", { class: "grant-next" }, [
@@ -520,6 +521,9 @@ function pluginsScreen() {
     "Share usage data so we can improve Plow. ",
     "Never your messages or your data.",
   ));
+  // A local read failing has nothing busy about it — "Talking to Plow…" would
+  // be wrong here, so only an actual error renders.
+  if (state.message) parts.push(note(state));
   return el("div", { class: "form-screen" }, [el("div", { class: "step-inner" }, parts)]);
 }
 
