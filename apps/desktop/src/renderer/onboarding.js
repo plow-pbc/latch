@@ -6,6 +6,7 @@ import { el, icon, switchEl } from "./dom.js";
 import { singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
+import { accessPrimary, runGrants } from "./onboardingGrants.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -26,8 +27,10 @@ let syncAvailability = null;
  * ordered grants Access walks. Read fresh on entering either step and on
  * window focus — null on every other step. */
 let pluginsState = null;
-/** Access's own run: the grants the owner skipped, the one whose flow is
- * running, and the one that stopped it ({ id, error }). */
+/** Access's own run: the grants the owner skipped (kept across Back and
+ * Availability, dropped when setup leaves those steps), the one whose flow is
+ * running (the run's own, set until its act returns), and the one that
+ * stopped it ({ id, error }, cleared on any step change). */
 const skipped = new Set();
 let running = null;
 let missed = null;
@@ -337,41 +340,33 @@ function verifyScreen() {
 
 const onPluginStep = () => state?.step === "plugins" || state?.step === "access";
 
-async function refreshPlugins() {
-  const next = await window.domo.pluginsGet();
+/** A plugins answer that lands after setup left both steps is dropped. */
+function showPlugins(next) {
   if (!onPluginStep()) return;
   pluginsState = next;
   render();
 }
 
-/** What the run still has to do: not met, not waiting on a relaunch, not skipped. */
-const openGrants = () =>
-  pluginsState?.grants.filter((g) => !g.met && !g.relaunch && !skipped.has(g.id)) ?? [];
+async function refreshPlugins() {
+  showPlugins(await window.domo.pluginsGet());
+}
 
-/**
- * Access's one button: each open grant's flow in list order, one at a time,
- * reading from the fresh state whether it landed. A grant that did not stops
- * the run on its row. A throw is a miss like any other, so Try again is
- * never stuck behind "Setting up…".
- */
-async function runGrants() {
-  missed = null;
-  for (;;) {
-    const next = openGrants()[0];
-    if (!next) break;
-    running = next.id;
-    render();
-    const result = await window.domo.requirementsAct(next.id).catch(() => ({ ...pluginsState, error: null }));
-    running = null;
-    // Back (or a sign-out) left the screen mid-flow: start nothing new.
-    if (state.step !== "access") break;
-    pluginsState = result;
-    if (skipped.has(next.id)) continue;
-    const fresh = result.grants.find((g) => g.id === next.id);
-    if (!fresh || fresh.met || fresh.relaunch) continue;
-    missed = { id: next.id, error: result.error };
-    break;
-  }
+/** Access's one button: the list's flows in order; a grant that did not land
+ * stops the run on its row. */
+async function startGrants() {
+  missed = null; // the run's first redraw must not still show the last miss
+  missed = await runGrants({
+    act: (id) => window.domo.requirementsAct(id),
+    getState: () => pluginsState,
+    setState: (next) => {
+      pluginsState = next;
+    },
+    stillHere: () => state?.step === "access",
+    setRunning: (id) => {
+      running = id;
+      render();
+    },
+  }, skipped);
   render();
 }
 
@@ -462,8 +457,7 @@ function pluginRow(row) {
   box.checked = row.status !== "off";
   box.addEventListener("change", async () => {
     restoreFocus = box.id;
-    pluginsState = await window.domo.pluginsSetEnabled(row.name, box.checked);
-    render();
+    showPlugins(await window.domo.pluginsSetEnabled(row.name, box.checked));
   });
   const tags = row.requirements.length
     ? row.requirements.map((req) =>
@@ -529,61 +523,42 @@ function pluginsScreen() {
   return el("div", { class: "form-screen" }, [el("div", { class: "step-inner" }, parts)]);
 }
 
-/** The three kinds of grant, told apart by id (pluginsModel.ts): the glyph,
- * the line while its flow runs, and the word once it lands. */
-const GRANT_KINDS = {
-  permission: { glyph: "access", live: "Waiting for you in System Settings…", done: "Granted" },
-  safari: { glyph: "browser", live: "Turning it on. Safari relaunches.", done: "Granted" },
-  account: { glyph: "user", live: "Finish signing in with Google in your browser.", done: "Connected" },
-};
-
-function grantKind(id) {
-  if (id.startsWith("account:")) return GRANT_KINDS.account;
-  return id === "safari-javascript-from-apple-events" ? GRANT_KINDS.safari : GRANT_KINDS.permission;
-}
-
 function statusLine(tone, text, lead = null) {
   return el("span", { class: `item-status ${tone}` }, [lead, el("span", { text })]);
 }
 
+/** One grant's row. Its words all come from the model — the renderer never
+ * tells grants apart by id. A running flow has no Skip: the grant panel has
+ * its own close, and closing it is a miss, which does. */
 function grantRow(grant) {
-  const kind = grantKind(grant.id);
-  const skip = () => button("Skip", "link-button", () => {
-    skipped.add(grant.id);
-    if (running === grant.id) {
-      // Ends a waiting panel at once; the run moves on when the act returns.
-      window.domo.fullDiskDismiss();
-      render();
-    } else {
-      void runGrants();
-    }
-  });
   let tone = "";
   let line = null;
   let control = null;
   if (grant.met) {
     control = el("span", { class: "item-chip" }, [
       icon("checkmark", { strokeWidth: "1.7" }),
-      document.createTextNode(kind.done),
+      document.createTextNode("Granted"),
     ]);
   } else if (grant.relaunch) {
     line = statusLine("done", "Granted: relaunch to finish");
+  } else if (running === grant.id) {
+    tone = " running";
+    line = statusLine("live", grant.waiting, el("span", { class: "waiting-spinner" }));
+  } else if (missed?.id === grant.id) {
+    line = statusLine("error", missed.error || "That didn't finish, so nothing changed.");
+    control = button("Skip", "link-button", () => {
+      skipped.add(grant.id);
+      void startGrants();
+    });
   } else if (skipped.has(grant.id)) {
     line = statusLine("skipped", "Skipped. Finish anytime in Settings\u00a0›\u00a0Plugins.");
     control = button("Set up", "link-button", () => {
       skipped.delete(grant.id);
       render();
     });
-  } else if (running === grant.id) {
-    tone = " running";
-    line = statusLine("live", kind.live, el("span", { class: "waiting-spinner" }));
-    control = skip();
-  } else if (missed?.id === grant.id) {
-    line = statusLine("error", missed.error || "That didn't finish, so nothing changed.");
-    control = skip();
   }
   return el("div", { class: `item-row${tone}` }, [
-    el("span", { class: "item-icon" }, [icon(kind.glyph, { strokeWidth: "1.7" })]),
+    el("span", { class: "item-icon" }, [icon("access", { strokeWidth: "1.7" })]),
     el("span", { class: "item-copy" }, [
       el("span", { class: "item-name", text: grant.title }),
       el("span", { class: "item-for", text: `For ${grant.plugins.join(" · ")}` }),
@@ -667,19 +642,15 @@ function footerForStep() {
     };
   }
   if (step === "access") {
-    const open = openGrants().length;
-    const [label, action] = missed ? ["Try again", runGrants]
-      : running ? ["Setting up…", null]
-      : open ? [`Set up all ${open}`, runGrants]
-      : pluginsState?.grants.some((g) => g.relaunch) ? ["Relaunch to finish", () => window.domo.appRelaunch()]
-      : ["Continue", advance];
+    const { label, kind } = accessPrimary({ grants: pluginsState?.grants ?? [], skipped, running, missed });
+    const actions = { run: startGrants, relaunch: () => window.domo.appRelaunch(), advance };
     return {
       back: true,
       dot: 3,
       label,
-      arrow: action !== null,
-      disabled: action === null || pluginsState === null,
-      action,
+      arrow: kind !== null,
+      disabled: kind === null || pluginsState === null,
+      action: actions[kind] ?? null,
     };
   }
   if (step === "availability") {
@@ -786,6 +757,8 @@ async function apply(next) {
   state = resolveOnboardingState(state, next);
   if (state?.step !== "done") doneAgent = null;
   if (!onPluginStep()) pluginsState = null;
+  if (state?.step !== previousStep) missed = null;
+  if (!onPluginStep() && state?.step !== "availability") skipped.clear();
   if (state?.step !== "availability") availability = null;
   render();
   if (onPluginStep() && previousStep !== state.step) void refreshPlugins();
@@ -819,4 +792,9 @@ window.addEventListener("focus", () => {
 });
 
 window.domo.onOnboardingChanged(async () => apply(await window.domo.onboardingGet()));
+// Main's connector poll can land after the screen first loaded (a re-setup
+// with Google already connected): redraw from the fresh accounts.
+window.domo.onConnectorsChanged(() => {
+  if (onPluginStep()) void refreshPlugins();
+});
 void window.domo.onboardingGet().then(apply);
