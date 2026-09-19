@@ -914,8 +914,6 @@ ipcMain.handle(
       review: adversarialReview,
       settings: loadSettings(home),
       apiBaseUrl,
-      // The owner's real home, as the playground's path is resolved above.
-      home: os.homedir(),
       now: new Date(),
     }),
 );

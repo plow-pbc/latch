@@ -11,6 +11,7 @@ import {
 } from "../src/gatekeeperPreview.js";
 import { loadSettings } from "../src/settings.js";
 
+// The preview's fixed placeholder home — never this Mac's account.
 const HOME = "/Users/owner";
 // Friday 2026-09-18, local time: next Monday is 2026-09-21.
 const FRIDAY = new Date(2026, 8, 18, 15, 0, 0);
@@ -31,7 +32,6 @@ function deps(over: Partial<PreviewDeps> = {}): { deps: PreviewDeps; sent: Revie
       },
       settings,
       apiBaseUrl: "https://api.plow.test",
-      home: HOME,
       now: FRIDAY,
       ...over,
     },
