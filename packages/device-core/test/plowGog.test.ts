@@ -282,7 +282,7 @@ describe("planPlowGog", () => {
         ],
         account: null,
         confirmConflict: false,
-        conflictCheck: { from: "2026-08-28T10:00:00-07:00", to: "2026-08-28T11:00:00-07:00" },
+        conflictCheck: { from: "2026-08-28T10:00:00-07:00", to: "2026-08-28T11:00:00-07:00", calendar: "primary" },
       },
     },
     {
@@ -307,7 +307,7 @@ describe("planPlowGog", () => {
         gogArgv: ["plow-gog", "calendar", "create", "primary", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z", "--send-updates", "all"],
         account: null,
         confirmConflict: false,
-        conflictCheck: { from: "2026-08-28T10:00:00Z", to: "2026-08-28T11:00:00Z" },
+        conflictCheck: { from: "2026-08-28T10:00:00Z", to: "2026-08-28T11:00:00Z", calendar: "primary" },
       },
     },
     {
@@ -374,7 +374,7 @@ describe("planPlowGog", () => {
         ],
         account: null,
         confirmConflict: true,
-        conflictCheck: { from: "2026-08-28T10:00:00Z", to: "2026-08-28T11:00:00Z" },
+        conflictCheck: { from: "2026-08-28T10:00:00Z", to: "2026-08-28T11:00:00Z", calendar: "primary" },
       },
     },
     {

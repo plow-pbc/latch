@@ -1652,7 +1652,7 @@ export class DeviceAgent {
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     if (plan.conflictCheck !== null && !plan.confirmConflict) {
-      const { from, to } = plan.conflictCheck;
+      const { from, to, calendar } = plan.conflictCheck;
       // The owner is busy if ANY of their calendars is, whichever account the
       // event lands on. A busy-time read, not `calendar conflicts`: that verb
       // pairs commitments on DIFFERENT calendars, so a lone one left it empty
@@ -1671,7 +1671,10 @@ export class DeviceAgent {
       // refused on: one of them would otherwise block every booking.
       const couldNotCheck: string[] = [];
       for (const { a, result } of listed) {
-        const ids = result.exitCode === 0 ? shownCalendars(this.readJson(result.handle)) : [];
+        const shown = result.exitCode === 0 ? shownCalendars(this.readJson(result.handle)) : [];
+        // The destination rides the query on the account it books on.
+        const ids =
+          a.account === target.account && !shown.includes(calendar) ? [...shown, calendar] : shown;
         if (ids.length === 0) {
           unchecked.push({
             account: a.account,

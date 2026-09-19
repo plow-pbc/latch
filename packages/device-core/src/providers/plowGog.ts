@@ -53,7 +53,7 @@ export type PlowGogPlan =
       gogArgv: string[];
       account: string | null;
       confirmConflict: boolean;
-      conflictCheck: { from: string; to: string } | null;
+      conflictCheck: { from: string; to: string; calendar: string } | null;
     };
 
 /**
@@ -282,14 +282,16 @@ export function planPlowGog(argv: readonly string[], timeZone: string = ownerTim
   if (group === "calendar" && verb !== undefined && NOTIFYING.has(verb) && flagValue(stripped, "send-updates") === null) {
     gogArgv.push("--send-updates", "all");
   }
-  let conflictCheck: { from: string; to: string } | null = null;
+  let conflictCheck: { from: string; to: string; calendar: string } | null = null;
   if (group === "calendar" && verb !== undefined && CONFLICT_GATED.has(verb)) {
     const from = flagValue(stripped, "from");
     const to = flagValue(stripped, "to");
     // Timed bounds only: a date with no "T" is an all-day event, which skips
     // the gate (the retired relay contract).
     if (from !== null && to !== null && from.includes("T") && to.includes("T")) {
-      conflictCheck = { from, to };
+      // The calendar being booked ON is checked too, even when the owner does
+      // not show it: an event lands there whether or not they look at it.
+      conflictCheck = { from, to, calendar: stripped[2] ?? "primary" };
     }
   }
   return { kind: "single", gogArgv, account, confirmConflict, conflictCheck };

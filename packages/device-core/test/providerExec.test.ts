@@ -695,6 +695,10 @@ case "$*" in
     # read nothing, so a gate that stopped passing them fails these tests
     # instead of passing with the wrong question.
     case "$*" in
+      # The destination rides the query even when the owner hides it.
+      *"--cal primary,family@group.calendar.google.com,hidden --from 2026-08-28T10:00:00Z --to 2026-08-28T11:00:00Z"*)
+        echo '{"primary":{"busy":[]},"family@group.calendar.google.com":{"busy":[]},"hidden":{"busy":[{"start":"2026-08-28T10:15:00Z","end":"2026-08-28T10:45:00Z"}]}}'
+        exit 0 ;;
       *"--cal primary,family@group.calendar.google.com --from 2026-08-28T10:00:00Z --to 2026-08-28T11:00:00Z"*) ;;
       *) echo '{"argv-mismatch":{"errors":[{"reason":"theGateAskedTheWrongQuestion"}]}}'; exit 0 ;;
     esac
@@ -1064,6 +1068,7 @@ esac
     why: string;
     accounts: () => { account: string; token: string; isDefault: boolean }[];
     degraded?: { account: string; reason: string }[];
+    calendar?: string;
     extra: string[];
     expected: string;
   }>([
@@ -1098,6 +1103,17 @@ esac
       expected: "a@example.com: could not check",
     },
     {
+      // Booking onto a calendar the owner hides: an event lands there all the
+      // same, so the gate has to ask about it. Without the destination in the
+      // query the fake answers "wrong question" and this row reads
+      // "could not check" instead of a busy time.
+      why: "an existing event on the unshown calendar being booked on",
+      accounts: () => [AB[1]!],
+      calendar: "hidden",
+      extra: [],
+      expected: "busy 2026-08-28T10:15:00Z/2026-08-28T10:45:00Z",
+    },
+    {
       // A reason that might clear is not a calendar to write off: it could
       // have held the commitment, so the account is unchecked. Its notFound
       // twin books instead — the test below.
@@ -1121,10 +1137,10 @@ esac
       extra: ["--account", "b@example.com"],
       expected: "c@example.com: could not check (needs_reauth)",
     },
-  ])("refuses a timed create over $why, recorded as an error", async ({ accounts, degraded, extra, expected }) => {
+  ])("refuses a timed create over $why, recorded as an error", async ({ accounts, degraded, calendar, extra, expected }) => {
     const d = device(accountsMinter(accounts(), degraded ?? []), plowGogPlugin());
     const response = await run(d, [
-      "plow-gog", "calendar", "create", "primary", "--summary", "X",
+      "plow-gog", "calendar", "create", calendar ?? "primary", "--summary", "X",
       "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", ...extra,
     ]);
     expect(jv(response).get("status").str).toBe("error");
