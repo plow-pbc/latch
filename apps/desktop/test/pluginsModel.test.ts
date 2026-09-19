@@ -85,7 +85,7 @@ it.each([
 // relaunch, and setup's list keeps it.
 it("reads a permission waiting on a relaunch as unmet, with the relaunch as its action — still on setup's list", () => {
   const rows = pluginRows(build({ requires: { permissions: ["full_disk_access"] }, enabled: true, pending: ["full_disk_access"] }));
-  const relaunch = { id: "full_disk_access", title: "Full Disk Access", detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "Waiting for you in System Settings…", done: "Granted", met: false, relaunch: true };
+  const relaunch = { id: "full_disk_access", title: "Full Disk Access", detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "", done: "Granted", met: false, relaunch: true };
   expect(rows[0]!.requirements).toEqual([relaunch]);
   expect(grantList(rows)).toEqual([{ ...relaunch, plugins: ["wiki"] }]);
 });
@@ -149,7 +149,7 @@ describe("browserPluginRow", () => {
     // shows up while that setting is still off.
     ["needs setup with Full Disk Access and Safari when the setting is off", { ...base, safariJavaScript: false }, "needs-setup", [{ ...fda, met: false }, { ...safari, met: false }]],
     ["Full Disk Access reads met once granted, Safari still is not", { ...base, safariJavaScript: false, fullDiskAccess: true }, "needs-setup", [{ ...fda, met: true }, { ...safari, met: false }]],
-    ["Full Disk Access granted this run waits on a relaunch", { ...base, safariJavaScript: false, relaunchPending: ["full_disk_access"] }, "needs-setup", [{ ...fda, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", met: false, relaunch: true }, { ...safari, met: false }]],
+    ["Full Disk Access granted this run waits on a relaunch", { ...base, safariJavaScript: false, relaunchPending: ["full_disk_access"] }, "needs-setup", [{ ...fda, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "", met: false, relaunch: true }, { ...safari, met: false }]],
     ["needs setup with no button when the runtime is missing", { ...base, runtimePresent: false }, "needs-setup", [{ ...safari, met: true }, { ...runtime, met: false }]],
     ["off keeps status off but still lists its requirements", { ...base, enabled: false, safariJavaScript: false }, "off", [{ ...fda, met: false }, { ...safari, met: false }]],
   ] as const)("is %s", (_what, input, status, requirements) => {

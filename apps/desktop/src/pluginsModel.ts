@@ -72,10 +72,10 @@ export const accountRequirementId = (id: string): string => `account:${id}`;
 
 function permissionRequirement(key: string, met: boolean, relaunch: boolean): Requirement {
   const title = permissionTitle(key);
-  const waiting = "Waiting for you in System Settings…";
   const done = "Granted";
   if (relaunch) {
-    return { id: key, title, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting, done, met: false, relaunch: true };
+    // Setup never runs it, so no waiting line: its button is the relaunch.
+    return { id: key, title, detail: "Quit and reopen Plow Latch to finish.", action: "Relaunch Plow Latch", waiting: "", done, met: false, relaunch: true };
   }
   return {
     id: key,
@@ -84,7 +84,7 @@ function permissionRequirement(key: string, met: boolean, relaunch: boolean): Re
       ? "Drag Plow Latch into the list in System Settings."
       : "Allow it when macOS asks, or in System Settings.",
     action: `Grant ${title}`,
-    waiting,
+    waiting: "Waiting for you in System Settings…",
     done,
     met,
   };
