@@ -43,6 +43,8 @@ accounts rather than all, name them: \`--account a@x,b@y\`. A calendar id
 **Calendar events come back compact, with the day already named.** Each
 fanned-out \`calendar events\` item is \`{summary, startDayOfWeek, startLocal,
 endLocal, allDay?, attendees?, transparency?, declined?, id, account}\`.
+\`attendees\` is the email of everyone else invited who has not declined (no
+rooms): look them up in mail and messages to learn what the event is about.
 \`startLocal\`/\`endLocal\` are the owner's local time with its UTC offset (a
 bare date for all-day events, whose \`endLocal\` is the day AFTER the last
 one), and \`startDayOfWeek\` is the weekday of \`startLocal\` in the owner's

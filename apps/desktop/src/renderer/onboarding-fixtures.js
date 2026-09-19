@@ -166,6 +166,10 @@ export function onboardingFixtures(now) {
       ],
     },
   };
+  const customPurpose =
+    "Run my errands the way a personal assistant would: book appointments, reorder household " +
+    "supplies, answer routine email and keep the family calendar current. Never move money " +
+    "or share anything from my documents folder.";
   const allow = (reason) => ({ verdict: "allow", reason });
   const deny = (reason) => ({ verdict: "deny", reason });
   const homeResults = [
@@ -325,7 +329,7 @@ export function onboardingFixtures(now) {
         "Meet the Plow Gatekeeper",
         "Plow's adversarial reviewer protects your data from malicious queries, while allowing your agents to get useful work done.",
         "What access should it allow to your Mac?",
-        "Home", "Work",
+        "Use a default:", "Personal assistant", "Executive assistant",
         ...gatekeeperPresets.home.rows.map((r) => r.label),
         "Continue",
       ],
@@ -343,6 +347,15 @@ export function onboardingFixtures(now) {
       expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.work.rows.map((r) => r.label), "Continue"],
       expectValues: [gatekeeperPresets.work.text],
       reject: ["Back"],
+      expectDotCount: 6,
+    },
+    {
+      // A re-setup opens on the owner's saved draft, which can outgrow the presets' two lines.
+      name: "gatekeeper-custom",
+      state: { ...base, step: "gatekeeper", purpose: customPurpose },
+      cloud: noAgents,
+      gatekeeper: { presets: gatekeeperPresets, results: homeResults },
+      expectValues: [customPurpose],
       expectDotCount: 6,
     },
     {

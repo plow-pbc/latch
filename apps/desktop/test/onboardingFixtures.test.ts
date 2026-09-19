@@ -27,6 +27,7 @@ describe("onboarding visual fixtures", () => {
     expect(withGatekeeper.map((f) => f.name).sort()).toEqual([
       "gatekeeper-checking",
       "gatekeeper-couldnt-check",
+      "gatekeeper-custom",
       "gatekeeper-home",
       "gatekeeper-stopped",
       "gatekeeper-work",
