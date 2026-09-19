@@ -8,6 +8,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 class FakeWindow {
   static instances: FakeWindow[] = [];
+  // Lets a test simulate a window that fails partway through setup, after
+  // the panel already exists (setAlwaysOnTop is the first call pursue()
+  // makes on a freshly constructed panel).
+  static throwOnSetAlwaysOnTop: Error | null = null;
   readonly title: string | undefined;
   private destroyed = false;
   private visible = false;
@@ -34,7 +38,9 @@ class FakeWindow {
     return Promise.resolve();
   }
 
-  setAlwaysOnTop(): void {}
+  setAlwaysOnTop(): void {
+    if (FakeWindow.throwOnSetAlwaysOnTop) throw FakeWindow.throwOnSetAlwaysOnTop;
+  }
   setVisibleOnAllWorkspaces(): void {}
 
   isDestroyed(): boolean {
@@ -102,6 +108,7 @@ function makeDeps() {
 
 beforeEach(() => {
   FakeWindow.instances = [];
+  FakeWindow.throwOnSetAlwaysOnTop = null;
   vi.useFakeTimers();
 });
 
@@ -367,6 +374,32 @@ describe("FdaGrantFlow.start", () => {
 
     expect(result).toBe(false);
     expect(FakeWindow.instances).toHaveLength(0);
+    consoleError.mockRestore();
+  });
+
+  it("tears down a panel that failed partway through setup, leaving the flow clean for the next start()", async () => {
+    const deps = makeDeps();
+    const target = makeTarget("fullDiskAccess", () => false);
+    const flow = new FdaGrantFlow(deps);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    FakeWindow.throwOnSetAlwaysOnTop = new Error("setAlwaysOnTop boom");
+    const result = await flow.start(target);
+
+    expect(result).toBe(false);
+    expect(FakeWindow.instances).toHaveLength(1);
+    expect(FakeWindow.instances[0].isDestroyed()).toBe(true);
+
+    // The flow is left clean: starting the same switch again builds exactly
+    // one new panel, not a second orphan alongside the first.
+    FakeWindow.throwOnSetAlwaysOnTop = null;
+    const again = flow.start(target);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeWindow.instances).toHaveLength(2);
+    expect(FakeWindow.instances[1].isDestroyed()).toBe(false);
+
+    flow.stop();
+    await expect(again).resolves.toBe(false);
     consoleError.mockRestore();
   });
 });

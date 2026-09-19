@@ -248,15 +248,21 @@ export class FdaGrantFlow {
       this.probeTimer = setInterval(() => void this.checkGranted(), PROBE_INTERVAL_MS);
       this.timeoutTimer = setTimeout(() => this.stop(), FLOW_TIMEOUT_MS);
     } catch (err) {
-      // A throwing probe, or a BrowserWindow that fails to construct: fail
-      // the flow rather than leaving the caller's promise hanging forever —
-      // start() is no longer async, so nothing else awaits this rejection.
-      if (this.settle === settle) {
-        this.settle = null;
-        this.outcome = null;
-      }
-      settle(false);
+      // A throwing probe, a BrowserWindow that fails to construct, or
+      // anything else in between: fail the flow rather than leaving the
+      // caller's promise hanging forever — start() is no longer async, so
+      // nothing else awaits this rejection.
       console.error("FdaGrantFlow: flow failed", err);
+      if (this.settle === settle) {
+        // Still current: stop() is the existing teardown for whatever got
+        // built before the throw (panel, tracker, timers) — the panel might
+        // already exist at this point — and it settles the outcome too.
+        this.stop();
+      } else {
+        // A newer flow has since taken over; settle only this stale call's
+        // own promise, without touching state that belongs to it now.
+        settle(false);
+      }
     }
   }
 
