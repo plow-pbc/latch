@@ -2399,7 +2399,12 @@ app.whenReady().then(async () => {
       const off = rows.filter((r) => r.status === "needs-setup").map((r) => r.name);
       if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
     },
-    accessNeeded: async () => (await pluginsNow()).grants.some((g) => g.status !== "met"),
+    // A relaunched setup resumes on Plugins before the relay's connector
+    // poll: read the accounts first, or a connected Google needs connecting.
+    accessNeeded: async () => {
+      await connectors?.refresh();
+      return (await pluginsNow()).grants.some((g) => g.status !== "met");
+    },
   });
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   const cloudAgentsClient = new CloudAgentsClient(cloudApi);

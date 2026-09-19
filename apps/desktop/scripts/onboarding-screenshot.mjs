@@ -84,7 +84,6 @@ ipcMain.handle("power:setKeepAwake", async (_event, on) => {
   currentAwake = { enabled: on === true };
   return currentAwake;
 });
-ipcMain.handle("connectors:refresh", async () => null);
 ipcMain.handle("plugins:get", async () => currentFixture.plugins);
 ipcMain.handle("plugins:setEnabled", async () => currentFixture.plugins);
 ipcMain.handle("requirements:act", async () => ({ ...currentFixture.plugins, error: null }));
