@@ -376,6 +376,33 @@ describe("wizard steps around the existing verification flow", () => {
     expect(loadSettings(home).telemetryEnabled).toBe(true);
   });
 
+  it("does not resume into Plugins when reset() lands during applyPluginDefault", async () => {
+    let release: () => void = () => {};
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build({ applyPluginDefault: () => pending });
+
+    await onboarding.advance();
+    await settle();
+    expect(onboarding.state().step).toBe("privacy");
+
+    const advancing = onboarding.advance();
+    expect(onboarding.state().busy).toBe(true);
+
+    // Sign-out lands while the plugin default is still in flight.
+    signOutOfPlow(home);
+    expect(onboarding.reset().step).toBe("welcome");
+
+    release();
+    const settled = await advancing;
+
+    // The reset is left alone — not overwritten with Plugins.
+    expect(settled.step).toBe("welcome");
+    expect(onboarding.state().step).toBe("welcome");
+  });
+
   it("does not publish an ignored telemetry choice", () => {
     let notifications = 0;
     const onboarding = build({

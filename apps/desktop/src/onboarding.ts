@@ -223,6 +223,9 @@ export class Onboarding {
       // good.
       return this.run(async () => {
         await this.deps.applyPluginDefault?.();
+        // A reset() (sign-out) can land during this await and move the step
+        // itself — see the identical check in the plugins branch below.
+        if (this.step !== "privacy") return;
         this.step = "plugins";
       });
     }
