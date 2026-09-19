@@ -35,4 +35,12 @@ describe("onboarding visual fixtures", () => {
     const presets = gatekeeperPresets();
     for (const f of withGatekeeper) expect(f.gatekeeper.presets, f.name).toEqual(presets);
   });
+
+  it("carries the shared Back contract into browser previews", () => {
+    const reversible = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
+
+    for (const item of fixtures) {
+      expect(item.state.canGoBack, item.name).toBe(reversible.has(item.state.step));
+    }
+  });
 });

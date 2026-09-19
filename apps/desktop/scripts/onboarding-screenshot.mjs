@@ -19,15 +19,10 @@ const outDir = process.env.OUT_DIR ?? "/tmp";
 const REARM_NOTE =
   "That code still works — send it exactly as shown and this screen will move on by itself.";
 
-const BACK_STEPS = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
 const fixtureScreens = onboardingFixtures(Date.now()).map((fixture) => ({
   ...fixture,
-  state: fixture.state && {
-    ...fixture.state,
-    canGoBack: BACK_STEPS.has(fixture.state.step),
-  },
   expectFooter: fixture.state?.step !== "done",
-  expectBack: BACK_STEPS.has(fixture.state?.step),
+  expectBack: fixture.state?.canGoBack === true,
 }));
 const welcomeFixture = fixtureScreens[0];
 const SCREENS = [

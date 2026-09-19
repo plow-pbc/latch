@@ -1,4 +1,6 @@
 /** Shared states for the browser picker and the offscreen screenshot harness. */
+const BACK_STEPS = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
+
 export function onboardingFixtures(now) {
   const displayCode = "Z1SWY";
   const sendTo = "+1 555 987 6543";
@@ -206,7 +208,7 @@ export function onboardingFixtures(now) {
     grants: [{ ...fullDiskRelaunch, plugins: [iMessage] }],
   };
 
-  return [
+  const fixtures = [
     {
       name: "welcome",
       state: { ...base, step: "welcome" },
@@ -578,4 +580,11 @@ export function onboardingFixtures(now) {
       reject: ["Text Elm", "Enable Browser & import passwords"],
     },
   ];
+  return fixtures.map((fixture) => ({
+    ...fixture,
+    state: {
+      ...fixture.state,
+      canGoBack: BACK_STEPS.has(fixture.state.step),
+    },
+  }));
 }
