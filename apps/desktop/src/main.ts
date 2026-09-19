@@ -63,7 +63,8 @@ import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
-import { browserPluginRow, pluginRows } from "./pluginsModel.js";
+import { browserPluginRow, grantList, pluginRows, type GrantItem, type PluginRow } from "./pluginsModel.js";
+import { actOnRequirement } from "./requirements.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
@@ -1453,31 +1454,33 @@ function grantTargetFor(key: string): GrantTarget | null {
 }
 
 /**
- * A row's one action. What it is was decided by the model (the button's
+ * A row's one action, run to the end of its flow, answering whether the
+ * switch is on afterwards. What it is was decided by the model (the button's
  * label said so); this is the doing: the panel flow beside the right pane,
  * macOS's own dialog raised on purpose (a service, or an Automation pair
  * through the gated osascript probe), or a folder touched so macOS asks.
  * Every one of these is behind a click on this Mac — the one condition
  * under which this app raises a consent dialog.
  */
-ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
-  const key = typeof rawKey === "string" ? rawKey : "";
+async function actOnPermission(key: string): Promise<boolean> {
   const view = await capabilitiesNow();
   const row = view.sections.flatMap((s) => s.rows).find((r) => r.key === key);
-  if (!row || !device) return view;
+  if (!row || !device) return false;
+  const inPanel = async (): Promise<boolean> => {
+    const target = grantTargetFor(key);
+    return target ? fdaGrantFlow.start(target) : false;
+  };
   switch (row.action) {
     case "grant":
     case "open": {
       const pane = paneFor(key);
       // A pane the panel can do nothing beside (Screen Recording, Automation) is just
-      // opened; the owner finds the switch themselves.
+      // opened; the owner finds the switch themselves, and this app cannot watch it.
       if (pane && pane.panel === false) {
         await shell.openExternal(pane.url);
-        break;
+        return false;
       }
-      const target = grantTargetFor(key);
-      if (target) await fdaGrantFlow.start(target);
-      break;
+      return inPanel();
     }
     case "request": {
       const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
@@ -1487,44 +1490,56 @@ ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
           const settings = loadSettings(home);
           saveSettings(home, { ...settings, automation: { ...(settings.automation ?? {}), [app.bundleId]: status } });
         }
-      } else if (key === "contacts" || key === "calendars" || key === "accessibility") {
+        return status === "granted";
+      }
+      if (key === "contacts" || key === "calendars" || key === "accessibility") {
         const status = await device.hostProbes.requestPermission(key as RequestablePermission);
         // Refused before, or no usage string in this build: macOS answered
         // without asking, and only the pane can change that now.
-        if (status === "denied") {
-          const target = grantTargetFor(key);
-          if (target) await fdaGrantFlow.start(target);
-        }
+        return status === "denied" ? inPanel() : status === "granted";
       }
-      break;
+      return false;
     }
     case "ask": {
       const folder = CONSENT_FOLDERS.find((f) => f.permission === key);
-      if (folder) {
-        const [result] = await requestFolderAccess(os.homedir(), { folders: [folder] });
-        if (result && result.status !== "missing") {
-          const settings = loadSettings(home);
-          saveSettings(home, {
-            ...settings,
-            folderConsent: {
-              ...(settings.folderConsent ?? {}),
-              [key]: result.status === "granted" ? "granted" : result.status === "denied" ? "denied" : "not_asked",
-            },
-            folderConsentAt: { ...(settings.folderConsentAt ?? {}), [key]: new Date().toISOString() },
-          });
-        }
-        // macOS refused without asking — a Don't Allow it remembers — and
-        // only the pane can undo that: float the panel beside it.
-        if (result?.status === "denied") {
-          const target = grantTargetFor(key);
-          if (target) await fdaGrantFlow.start(target);
-        }
+      if (!folder) return false;
+      const [result] = await requestFolderAccess(os.homedir(), { folders: [folder] });
+      if (result && result.status !== "missing") {
+        const settings = loadSettings(home);
+        saveSettings(home, {
+          ...settings,
+          folderConsent: {
+            ...(settings.folderConsent ?? {}),
+            [key]: result.status === "granted" ? "granted" : result.status === "denied" ? "denied" : "not_asked",
+          },
+          folderConsentAt: { ...(settings.folderConsentAt ?? {}), [key]: new Date().toISOString() },
+        });
       }
-      break;
+      // macOS refused without asking — a Don't Allow it remembers — and
+      // only the pane can undo that: float the panel beside it.
+      return result?.status === "denied" ? inPanel() : result?.status === "granted";
     }
-    default:
-      break;
+    case "none":
+      return true;
   }
+}
+
+/**
+ * Bring the window that asked back to the front once its flow ends — the
+ * owner was last in System Settings, a browser or Safari. This app's port of
+ * PermissionFlow's `closePanel(returnToPreviousApp:)`.
+ */
+function returnToCaller(sender: Electron.WebContents): void {
+  const win = BrowserWindow.fromWebContents(sender);
+  if (!win || win.isDestroyed()) return;
+  app.focus({ steal: true });
+  win.show();
+  win.focus();
+}
+
+ipcMain.handle("capabilities:act", async (e, rawKey: unknown) => {
+  await actOnPermission(typeof rawKey === "string" ? rawKey : "");
+  returnToCaller(e.sender);
   return capabilitiesNow();
 });
 // "Not now" on a row: off the badge until a block newer than this lands.
@@ -1566,9 +1581,15 @@ function connectedAccountIds(): string[] {
   return (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [];
 }
 
-/** The whole tab, fresh: what is staged, and what each plugin still needs. */
-async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; error: string | null }> {
+/** The whole tab, fresh: what is staged, what each plugin still needs, and
+ *  the one ordered list of it setup walks. A permission is met when Settings'
+ *  own Permissions section reads it granted — one answer, so the two tabs
+ *  cannot disagree. */
+async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; error: string | null }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
+  const inventory = device ? await device.hostInventory() : null;
+  const view = await capabilitiesNow(inventory);
+  const granted = view.sections.flatMap((s) => s.rows).filter((r) => r.status === "granted").map((r) => r.key);
   const rows = pluginRows({
     plugins: stagedPlugins.map((p) => ({
       manifest: p.manifest,
@@ -1576,19 +1597,16 @@ async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; erro
       description: device?.pluginDescription(p.manifest.name) ?? null,
     })),
     connectedAccounts: connectedAccountIds(),
-    // Task 4 wires this to the real inventory; every requirement it gates
-    // reads unmet until then.
-    grantedPermissions: [],
+    grantedPermissions: granted,
   });
   rows.push(browserPluginRow({
     enabled: !disabled.has(BROWSER_PLUGIN),
     runtimePresent: device !== null && device.browserSessions !== null,
     safariJavaScript: process.platform === "darwin" ? await safariJavaScriptEnabled(unsandboxedRunner) : false,
-    // Task 4 wires this to the real inventory.
-    fullDiskAccess: false,
+    fullDiskAccess: granted.includes("full_disk_access"),
     description: device?.skills.skill(BROWSING_SKILL.name)?.description ?? BROWSING_SKILL.description,
   }));
-  return { rows, error: null };
+  return { rows, grants: grantList(rows), error: null };
 }
 
 ipcMain.handle("plugins:get", async () => pluginsNow());
@@ -1608,23 +1626,22 @@ ipcMain.handle("plugins:setEnabled", async (_e, name: string, on: boolean) => {
   return pluginsNow();
 });
 
-/** The Browser row's one action: enable Safari's "Allow JavaScript from
- *  Apple Events". An account row's button keeps the existing
- *  "connectors:connect" flow instead — there is nothing else for this one
- *  to do. */
-ipcMain.handle("plugins:enableSafari", async () => {
-  if (!(await probeFullDiskAccess())) {
-    return {
-      ...(await pluginsNow()),
-      error: "Safari's setting needs this app to have Full Disk Access (Settings › Permissions)",
-    };
-  }
-  try {
-    await enableSafariJavaScript(unsandboxedRunner);
-    return pluginsNow();
-  } catch (error) {
-    return { ...(await pluginsNow()), error: error instanceof Error ? error.message : String(error) };
-  }
+/** Every requirement button in the app: the act runs to its flow's end, the
+ *  owner is brought back here, and the answer is the fresh tab with whether
+ *  it landed. */
+ipcMain.handle("requirements:act", async (e, id: unknown) => {
+  const result = await actOnRequirement(typeof id === "string" ? id : "", {
+    permission: actOnPermission,
+    connectAccount: async () => {
+      await connectors?.connect();
+      return connectedAccountIds().includes("google");
+    },
+    fullDiskAccess: probeFullDiskAccess,
+    enableSafari: () => enableSafariJavaScript(unsandboxedRunner),
+  });
+  returnToCaller(e.sender);
+  const now = await pluginsNow();
+  return { ...now, granted: result.granted, error: result.error ?? now.error };
 });
 // The floating panel's poll: has the switch it points at landed?
 ipcMain.handle("grant:state", async () => {

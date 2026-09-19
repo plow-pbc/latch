@@ -83,19 +83,23 @@ contextBridge.exposeInMainWorld("domo", {
   // Settings' Permissions section (capabilitiesModel.ts): every switch with
   // its status and what it stopped, and the banner — one whole-state
   // shape per read, like every other pane. `act` does the row's one thing
-  // (the panel flow, a request, a folder touch) and answers with the fresh
-  // state; `dismiss` and `bannerSeen` record the owner's "not now".
+  // (the panel flow, a request, a folder touch), waits for it to end, and
+  // answers with the fresh state; `dismiss` and `bannerSeen` record the
+  // owner's "not now".
   capabilitiesGet: () => ipcRenderer.invoke("capabilities:get"),
   capabilitiesAct: (key: string) => ipcRenderer.invoke("capabilities:act", key),
   capabilitiesDismiss: (key: string) => ipcRenderer.invoke("capabilities:dismiss", key),
   capabilitiesBannerSeen: () => ipcRenderer.invoke("capabilities:bannerSeen"),
-  // The Plugins tab (pluginsModel.ts): one whole-state shape per read;
-  // `setEnabled` is the owner's off switch and answers with the fresh state.
+  // The Plugins tab (pluginsModel.ts): one whole-state shape per read, with
+  // `grants`, the ordered list setup walks; `setEnabled` is the owner's off
+  // switch and answers with the fresh state.
   pluginsGet: () => ipcRenderer.invoke("plugins:get"),
   pluginsSetEnabled: (name: string, on: boolean) => ipcRenderer.invoke("plugins:setEnabled", name, on),
-  // The Browser row's one action: enable Safari's JavaScript setting. Other
-  // rows still use connectorsConnect.
-  pluginsEnableSafari: () => ipcRenderer.invoke("plugins:enableSafari"),
+  // Any requirement's button, by id (requirements.ts): the panel, macOS's
+  // dialog, Google sign-in or Safari's setting, awaited to the flow's end.
+  // Answers with the fresh Plugins state plus `granted`, and `error` when the
+  // act could not be done.
+  requirementsAct: (id: string) => ipcRenderer.invoke("requirements:act", id),
   // A block by this Mac lands the tray item and the notification on its
   // switch (Settings), or on the Audit tab's Blocked view when it named none.
   onShowCapabilities: (cb: () => void) => ipcRenderer.on("ui:showCapabilities", cb),

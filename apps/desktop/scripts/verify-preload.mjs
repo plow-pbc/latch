@@ -19,7 +19,7 @@ import {
 import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
 import { capabilitiesView } from "../dist/capabilitiesModel.js";
-import { pluginRows } from "../dist/pluginsModel.js";
+import { grantList, pluginRows } from "../dist/pluginsModel.js";
 import { parseManifest } from "@domo/device-core";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -94,24 +94,27 @@ ipcMain.handle("grant:state", async () => ({ key: "full_disk_access", label: "Fu
 // The Plugins tab renders from the REAL view model (pluginsModel.ts) over the
 // SHIPPED gog manifest, read off disk: what the tab tells the owner is what the
 // file declares. Like main, it knows the Google accounts only once a connector
-// refresh has asked. The off switch answers with the fresh state, as main does.
+// refresh has asked. The off switch and a requirement's button answer with the
+// fresh state, as main does; the button's act lands nothing here.
 const probePlugins = { gog: true };
 const probeStaged = [{
   manifest: parseManifest(fs.readFileSync(path.join(dir, "../plugins/gog/latch-plugin.json"), "utf8")),
   description: "Gmail and Calendar, through gog.",
 }];
-const probePluginRows = () => ({
-  rows: pluginRows({
+const probePluginRows = () => {
+  const rows = pluginRows({
     plugins: probeStaged.map((p) => ({ ...p, enabled: probePlugins[p.manifest.name] })),
     connectedAccounts: probeAccountsLoaded && connectorProbe.google.accounts.length ? ["google"] : [],
     grantedPermissions: [],
-  }),
-});
+  });
+  return { rows, grants: grantList(rows) };
+};
 ipcMain.handle("plugins:get", async () => probePluginRows());
 ipcMain.handle("plugins:setEnabled", async (_e, name, on) => {
   probePlugins[name] = on === true;
   return probePluginRows();
 });
+ipcMain.handle("requirements:act", async () => ({ ...probePluginRows(), granted: false, error: null }));
 // The drag-to-authorize tile's display data: a fake bundle name and a 1px
 // icon, so the tile renders in the probe without a real .app behind it.
 ipcMain.handle("fullDisk:dragInfo", async () => ({

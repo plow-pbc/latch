@@ -2051,6 +2051,8 @@ function permissionsPane() {
   const act = async (key, button) => {
     button.disabled = true;
     const was = button.textContent;
+    // The act waits for its flow to end — the panel, a dialog, the owner in
+    // System Settings — so the button waits with it.
     button.textContent = "Waiting…";
     try {
       draw(await window.domo.capabilitiesAct(key));
@@ -2320,27 +2322,21 @@ async function renderPlugins() {
   };
 
   // A row with no action (e.g. the Browser row's missing runtime) shows
-  // just the sub text; one with an action gets a button whose click routes
-  // to the Browser row's own flow or the existing account-connect flow.
-  const unmetRow = (u, r) => {
-    const isBrowser = r.kind === "Browser";
+  // just the sub text; one with an action gets a button that runs that
+  // requirement by id, whatever kind it is.
+  const unmetRow = (u) => {
     const action = u.action
       ? el("button", { class: "btn attention", text: u.action, attrs: { type: "button" } })
       : null;
     if (action) {
       action.addEventListener("click", () =>
-        isBrowser
-          ? busy(action, "Enabling…", async () => {
-              // A failed write's error line is drawn BEFORE throwing —
-              // busy()'s catch only resets this button, which draw() has by
-              // then replaced; success leaves the redraw to busy()'s reload.
-              const v = await window.domo.pluginsEnableSafari();
-              if (v.error) {
-                draw(v);
-                throw new Error(v.error);
-              }
-            })
-          : busy(action, "Connecting…", () => window.domo.connectorsConnect()));
+        busy(action, "Waiting…", async () => {
+          // A failed act's error line is drawn BEFORE throwing — busy()'s
+          // catch only resets this button, which draw() has by then replaced.
+          const v = await window.domo.requirementsAct(u.id);
+          draw(v);
+          if (v.error) throw new Error(v.error);
+        }));
     }
     return el("div", { class: "cap-row plugin-req" }, [
       el("span", { class: "status-dot off" }),
@@ -2383,7 +2379,7 @@ async function renderPlugins() {
     const unmet = r.status !== "off" ? r.requirements.filter((q) => !q.met) : [];
     return el("div", { class: "cap-group open" }, [
       head,
-      unmet.length ? el("div", { class: "cap-group-rows" }, unmet.map((u) => unmetRow(u, r))) : null,
+      unmet.length ? el("div", { class: "cap-group-rows" }, unmet.map(unmetRow)) : null,
     ]);
   };
 
