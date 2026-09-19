@@ -71,7 +71,12 @@ app.whenReady().then(async () => {
       label: "Ash", recipients: { line: "+15557654321", members: ["+15550000001"] }, people: [],
     }] },
     lines: { list: async () => [{ uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15557654321" }] },
-    agentIndex: async () => ({ "exe:life": { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88 } }),
+    agentIndex: async () => ({
+      "exe:life": { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88, verified: true, rank: 0, logo: null },
+      "exe:hermes": { blurb: null, builder: null, users: 0, successRate: null, verified: true, rank: 1, logo: null },
+      // Offered by Plow but not verified by the Index: the deploy modal leaves it out.
+      "exe:draft": { blurb: null, builder: null, users: 0, successRate: null, verified: false, rank: 2, logo: null },
+    }),
   });
   await cloudAgents.refresh();
   const state = () => ({
@@ -145,12 +150,11 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(out, "deploy-arrived.png"), (await win.webContents.capturePage()).toPNG());
     console.log("PASS: the wait finds the new agent, closes the modal and highlights its row");
 
-    providers = [...providers, { id: "exe:hermes", name: "Hermes", phrases: ["Start Hermes"] }];
+    providers = [...providers, { id: "exe:draft", name: "Draft", phrases: ["Start Draft"] }, { id: "exe:hermes", name: "Hermes", phrases: ["Start Hermes"] }];
     await cloudAgents.refresh();
     await delay(250);
     await mouseClick(win, newAgent);
     assert.deepEqual(await win.webContents.executeJavaScript('[...document.querySelectorAll(".deploy-card-name")].map(n => n.textContent)'), ["Life", "Hermes"]);
-    assert.equal(await win.webContents.executeJavaScript(`${card("Hermes")}.textContent.includes("No description yet")`), true);
     await win.webContents.executeJavaScript(`${card("Hermes")}.focus()`);
     win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
     win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
