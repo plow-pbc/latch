@@ -520,8 +520,9 @@ describe("reviewer denial recovery", () => {
     expect(await device.handleIntent(request)).toEqual({
       status: "denied",
       reason:
-        "Gatekeeper's AI Reviewer denied this request. The Mac owner can review it in " +
-        "Plow Latch and allow one matching retry. Do not retry unchanged until the owner acts",
+        "Gatekeeper's AI Reviewer denied this request. Ask the user to open Plow Latch on their Mac, " +
+        "where they can review it, allow one matching retry, or improve their Gatekeeper instructions. " +
+        "Do not retry unchanged until the owner acts",
     });
   });
 });

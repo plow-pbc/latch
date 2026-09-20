@@ -121,6 +121,12 @@ describe("the server tells the agent what it is for", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/never tell the user .* pending/i);
   });
 
+  it("always sends the user to Plow Latch on their Mac after a denial", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/status 'denied'/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/open Plow Latch on their Mac/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/whenever/i);
+  });
+
   // The third answer: this Mac itself said no. The distinction agents got
   // wrong is stated outright, the fixed owner sentence is to be relayed
   // verbatim, and a confirmed verdict ends the attempt.
