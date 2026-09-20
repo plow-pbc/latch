@@ -191,7 +191,7 @@ doneAgentFixture.prepare = async (win) => {
   finishDestination = "not-called";
   await clickText(win, "Text Elm");
   if (openedAgent !== "agent_elm") throw new Error(`Text Elm opened ${String(openedAgent)}`);
-  if (openedDraft !== "Use Latch to run the `say` command: `say \"hello world\"` on my Mac.") {
+  if (openedDraft !== "Use Latch to say \"hello world\" out loud on my Mac.") {
     throw new Error(`Text Elm drafted ${String(openedDraft)}`);
   }
   await clickText(win, "Explore the app");
