@@ -78,8 +78,8 @@ export function activationSmsBody(displayCode: string): string {
 
 /** The draft Messages opens with, in the form the shipping Plow app uses
  * (`app/Phoenix/DaemonClient.swift`): `sms:<phone>?&body=<encoded>`. */
-export function smsUrl(sendTo: string, body: string): string {
-  return `sms:${sendTo}?&body=${encodeURIComponent(body)}`;
+export function smsUrl(sendTo: string, body?: string): string {
+  return `sms:${sendTo}${body ? `?&body=${encodeURIComponent(body)}` : ""}`;
 }
 
 export interface OnboardingActivation {
