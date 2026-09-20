@@ -89,6 +89,7 @@ import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates
 import { adversarialReview } from "./adversarialAgent.js";
 import { gatekeeperPresets, previewRow } from "./gatekeeperPreview.js";
 import {
+  dismissGatekeeperAttention,
   gatekeeperRecoveryView,
   type GatekeeperRecoveryView,
   representativeCommands,
@@ -621,6 +622,16 @@ ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);
 });
 ipcMain.handle("gatekeeperRecovery:get", async () => gatekeeperAttention);
+ipcMain.handle("gatekeeperRecovery:dismiss", async (_e, intentId: unknown) => {
+  if (typeof intentId !== "string") return gatekeeperAttention;
+  const before = gatekeeperAttention;
+  gatekeeperAttention = dismissGatekeeperAttention(gatekeeperAttention, intentId);
+  if (gatekeeperAttention !== before) {
+    refreshTray();
+    notifyRenderer("gatekeeperRecovery:changed");
+  }
+  return gatekeeperAttention;
+});
 ipcMain.handle("gatekeeperRecovery:suggest", async (_e, intentId: unknown) => {
   if (typeof intentId !== "string" || gatekeeperAttention?.intentId !== intentId || !device) {
     return { ok: false, reason: "That denied request is no longer available" };
@@ -650,7 +661,13 @@ ipcMain.handle("ui:getTab", async () => {
     void connectClient?.refreshRoster();
   }
   // Retired keys land where their content lives now, not on the default tab.
-  return tab === "connect" ? "agents" : tab === "capabilities" ? "plugins" : tab;
+  return tab === "connect"
+    ? "agents"
+    : tab === "capabilities"
+      ? "plugins"
+      : tab === "rules"
+        ? "audit"
+        : tab;
 });
 ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
@@ -2411,8 +2428,8 @@ app.whenReady().then(async () => {
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }
-  // An always-allow answer in the approval window stores a rule; a Rules pane
-  // already on screen used to show it only after a tab switch.
+  // An always-allow answer in the approval window stores a rule; Audit's open
+  // Gatekeeper card or rules modal should show it without a tab switch.
   device.policy.events.on("changed", () => notifyRenderer("rules:changed"));
   device.policy.events.on(
     "reviewer_denied",

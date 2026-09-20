@@ -148,6 +148,7 @@ let cloudFixture = CLOUD_EMPTY;
 let rosterFixture = [];
 const cloudRemovals = [];
 let connectorsFixture = CONNECTORS_EMPTY;
+let gatekeeperRecoveryFixture = null;
 
 // Nothing is imported or registered at the top level: Electron does not emit
 // `ready` until this entry module finishes evaluating, and a top-level await
@@ -158,7 +159,7 @@ const DEVICE_SETTINGS = {
   relayCredential: DEVICE_TOKEN,
   accountUid: "u_7Qk2p9",
   mcpUrl: MCP_URL,
-  // The Rules tab's Approvals card uses its interesting state here: the one
+  // The Audit tab's Gatekeeper card uses its interesting state here: the one
   // with a reviewer running and a purpose written for it to read.
   approvalMode: "adversarial",
   agentPurpose: "Help with grocery orders and calendar. Never touch code or SSH keys.",
@@ -167,7 +168,7 @@ const DEVICE_SETTINGS = {
 async function setUp() {
   const { ConnectClient } = await import(path.join(dist, "connectClient.js"));
   const { saveSettings, loadSettings } = await import(path.join(dist, "settings.js"));
-  // The Rules screenshot carries the Approvals card, so this harness also
+  // The Audit screenshot carries the Gatekeeper card, so this harness also
   // serves the reviewer's state and purpose statement from the throwaway home.
   const { readAgentPurpose, readInference, setAgentPurpose, setApprovalMode } = await import(
     path.join(dist, "settingsActions.js")
@@ -212,8 +213,41 @@ async function setUp() {
     return state();
   });
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
+  const gatekeeperActivity = {
+    id: "activity-gatekeeper-screenshot",
+    ts: "2026-09-20T19:00:00.000Z",
+    blockedAt: null,
+    decision: "Denied",
+    decisionTone: "red",
+    status: "",
+    tone: "zinc",
+    title: "Buy a $125 Lego set on Amazon",
+    kind: "command",
+    decisionKind: "denied",
+    statusKind: "none",
+    command: "open https://amazon.com/lego",
+    agentId: "agent-family",
+    agentDisplay: "Family assistant",
+    goal: "Buy a birthday present",
+    decidedBy: "AI Reviewer",
+    intentId: "intent-gatekeeper-screenshot",
+    exitCode: null,
+    capabilities: ["Browser: amazon.com"],
+    timeline: [{ text: "Denied by Gatekeeper", state: "bad", at: "2026-09-20T19:00:01.000Z" }],
+  };
+  ipcMain.handle("audit:page", async () => ({ rows: [gatekeeperActivity], total: 1, size: 1 }));
+  ipcMain.handle("audit:activity", async (_event, id) => id === gatekeeperActivity.id ? gatekeeperActivity : null);
+  ipcMain.handle("audit:clear", async () => false);
   ipcMain.handle("rules:list", async () => RULES);
-  ipcMain.handle("gatekeeperRecovery:get", async () => null);
+  ipcMain.handle("gatekeeperRecovery:get", async () => gatekeeperRecoveryFixture);
+  ipcMain.handle("gatekeeperRecovery:dismiss", async (_event, intentId) => {
+    if (gatekeeperRecoveryFixture?.intentId === intentId) gatekeeperRecoveryFixture = null;
+    return gatekeeperRecoveryFixture;
+  });
+  ipcMain.handle("gatekeeperRecovery:suggest", async () => ({
+    ok: true,
+    revision: "You are a family assistant authorized to make purchases for birthdays within the owner's stated budget.",
+  }));
   ipcMain.handle("rules:remove", async () => {});
   ipcMain.handle("settings:getInference", async () => readInference(home));
   ipcMain.handle("settings:setApprovalMode", async (_e, mode) => setApprovalMode(home, mode));
@@ -632,44 +666,54 @@ const SCREENS = [
     ],
   },
   {
-    name: "rules-approvals",
+    name: "audit-gatekeeper",
     cloud: CLOUD_EMPTY,
     prepare: async (win) => {
-      await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
-      await waitFor(win, `document.querySelector("#view .panel.rules")`, "the Rules pane");
+      gatekeeperRecoveryFixture = {
+        intentId: "intent-gatekeeper-screenshot",
+        agent: "Family assistant",
+        request: "Buy a $125 Lego set on Amazon",
+        capabilities: ["Browser: amazon.com"],
+        reason: "Purchases are not covered by the current family-assistant instructions.",
+      };
+      await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+      await waitFor(win, `document.querySelector("#view .audit-gatekeeper")`, "the Audit Gatekeeper card");
+      await waitFor(win, `document.querySelector("#view").innerText.includes("Suggest revised instructions")`, "the denial recovery action");
     },
     expect: [
-      "Approvals",
-      "What happens when an agent asks to do something on this Mac.",
-      "AI Reviewer and Deny still apply to every request",
-      "The reviewer sees which agent is asking, what it's asking to do, the exact bounds it would get, and the purpose you wrote for it.",
-      "It never sees your files, your history on this Mac, or anything the agent hasn't asked for.",
-      "AI Reviewer decides",
-      "What are agents for?",
-      // The purpose describes the errand, and an errand widens the job as
-      // readily as it narrows it. This line used to pin the opposite promise.
-      "it can widen what gets approved as easily as narrow it",
-      "Requests that fit may be approved without asking you.",
-      "Always-allow rules",
-      "Research assistant",
-      "Ops helper",
-      "Revoke Rule",
+      "Gatekeeper",
+      "Enabled",
+      "AI Reviewer decides each request using your instructions.",
+      "Instructions",
+      "View 2 rules",
+      "Denied",
+      "Revise Gatekeeper’s instructions if requests like this should be allowed.",
+      "Suggest revised instructions",
     ],
   },
   {
-    name: "rules-deny",
+    name: "audit-gatekeeper-deny",
     cloud: CLOUD_EMPTY,
     prepare: async (win) => {
-      await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
-      await waitFor(win, `document.querySelector("#view .panel.rules")`, "the Rules pane");
-      await clickElementText(win, ".chip", "Deny everything");
+      gatekeeperRecoveryFixture = null;
+      await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+      await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+      await waitFor(win, `document.querySelector("#view .audit-gatekeeper")`, "the Audit Gatekeeper card");
+      await win.webContents.executeJavaScript(`document.querySelector(".gatekeeper-mode").click()`);
+      await waitFor(win, `[...document.querySelectorAll(".menu-label")].some((node) => node.textContent === "Deny everything")`, "the Gatekeeper mode menu");
+      await win.webContents.executeJavaScript(`
+        [...document.querySelectorAll(".menu-label")]
+          .find((node) => node.textContent === "Deny everything")
+          .closest("button")
+          .click()
+      `);
       await waitFor(
         win,
-        `document.querySelector("#view").innerText.includes("Every request is refused without asking you.")`,
+        `document.querySelector("#view").innerText.includes("Every request is refused.")`,
         "the Deny mode explanation",
       );
     },
-    expect: ["Approvals", "Deny everything", "Every request is refused without asking you."],
+    expect: ["Gatekeeper", "Deny everything", "Every request is refused.", "These saved instructions will be used again when Gatekeeper is Enabled."],
   },
   {
     // The form is a MODAL now, not an inline expander — same click, same

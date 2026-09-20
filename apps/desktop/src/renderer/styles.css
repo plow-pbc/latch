@@ -213,6 +213,57 @@ body {
 .mono { font-family: var(--mono); }
 .faint { color: var(--faint); }
 
+/* Gatekeeper policy lives above Audit's master-detail activity view. */
+.audit-gatekeeper {
+  margin: 12px 14px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  flex: none;
+}
+.gatekeeper-head { display: flex; align-items: center; gap: 8px; }
+.gatekeeper-title { margin: 0; font-size: 15px; }
+.gatekeeper-mode {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--blue-bd); border-radius: 999px;
+  background: var(--blue-bg); color: var(--blue-fg);
+  padding: 3px 9px; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.gatekeeper-mode:disabled { opacity: 0.5; cursor: default; }
+.gatekeeper-mode-description { margin: 5px 0 0; }
+.gatekeeper-purpose { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.gatekeeper-field-head { display: flex; align-items: center; margin-bottom: 6px; }
+.gatekeeper-field-head label { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.gatekeeper-purpose textarea { min-height: 62px; box-sizing: border-box; }
+.gatekeeper-save-status { display: flex; align-items: center; gap: 7px; min-height: 18px; color: var(--faint); font-size: 11px; }
+.gatekeeper-save-status.save-saving::before {
+  content: ""; width: 9px; height: 9px; border: 1.5px solid var(--border-strong);
+  border-top-color: var(--blue-fg); border-radius: 50%; animation: reviewing-spin 0.8s linear infinite;
+}
+.gatekeeper-save-status.save-saved { color: var(--green-fg); }
+.gatekeeper-save-status.save-error { color: var(--red-fg); }
+.gatekeeper-inactive-note { margin: 6px 0 0; }
+.gatekeeper-notice {
+  display: flex; align-items: center; gap: 10px;
+  margin: 10px 14px 0; padding: 8px 10px;
+  border: 1px solid var(--zinc-bd); border-radius: var(--radius-sm);
+  background: var(--zinc-bg); color: var(--zinc-fg); flex: none;
+}
+.gatekeeper-notice[hidden] { display: none; }
+.gatekeeper-notice-mark {
+  width: 20px; height: 20px; display: grid; place-items: center; flex: none;
+  border-radius: 50%; background: var(--zinc-bd); font-weight: 700;
+}
+.gatekeeper-notice-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.gatekeeper-notice-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.gatekeeper-notice-dismiss, .gatekeeper-denial-dismiss {
+  border: 0; background: transparent; color: currentColor; font: inherit;
+  font-size: 18px; line-height: 1; padding: 3px; cursor: pointer; opacity: 0.7;
+}
+.gatekeeper-notice-dismiss:hover, .gatekeeper-denial-dismiss:hover { opacity: 1; }
+
 /* Master–detail audit layout */
 .a1 { display: flex; flex: 1 1 auto; min-height: 0; background: var(--card); }
 .list { flex: 1 1 auto; min-width: 0; overflow: auto; }
@@ -306,6 +357,18 @@ td { padding: 9px 12px; vertical-align: middle; }
 .detail { flex: none; display: flex; flex-direction: column; min-height: 0; }
 .detail-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 16px; }
 .detail h3 { margin: 0 0 10px; }
+.gatekeeper-denial-detail {
+  margin: 0 0 14px; padding: 11px 12px;
+  border: 1px solid var(--amber-bd); border-left-width: 4px;
+  border-radius: var(--radius-sm); background: var(--amber-bg); color: var(--amber-fg);
+}
+.gatekeeper-denial-head { display: flex; align-items: flex-start; gap: 8px; }
+.gatekeeper-denial-head h3 { color: inherit; }
+.gatekeeper-denial-detail p { margin: 5px 0 9px; line-height: 1.4; }
+.gatekeeper-denial-reason { opacity: 0.85; }
+.gatekeeper-denial-detail .btn { color: inherit; border-color: var(--amber-bd); background: var(--card); }
+.gatekeeper-denied-row > td { background: color-mix(in srgb, var(--amber-bg) 65%, var(--card)); }
+.gatekeeper-denied-row > td:first-child { box-shadow: inset 4px 0 0 var(--amber-fg); }
 .cmd {
   font-family: var(--mono);
   background: var(--bg);
@@ -509,6 +572,10 @@ textarea.text { min-height: 70px; resize: vertical; }
 /* A pick-one menu: every item leaves room for the check; the current one shows it. */
 .menu-item.checkable { position: relative; padding-left: 26px; }
 .menu-item.checked::before { content: "✓"; position: absolute; left: 9px; }
+.menu:has(.menu-description) { min-width: 300px; }
+.menu-label { display: block; font-weight: 600; }
+.menu-description { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+.menu-item.danger .menu-label { color: var(--red-fg); }
 .cap-row:first-of-type { border-top: 0; }
 .cap-row .status-dot { flex: none; }
 .cap-row .cap-name { font-weight: 600; }
@@ -974,6 +1041,26 @@ pre.script {
   box-shadow: var(--shadow);
   padding: 18px 20px;
   max-height: 100%; overflow: auto;
+}
+.modal-title-row { display: flex; align-items: center; gap: 8px; }
+.modal-title-row h2 { margin: 0; font-size: 16px; }
+.rules-modal { max-width: 640px; }
+.rules-modal > .faint { margin: 6px 0 14px; }
+.rules-modal .rule-list { max-height: 55vh; overflow: auto; }
+.rules-modal .rule-item { box-shadow: none; }
+.gatekeeper-suggestion-modal { max-width: 620px; }
+.gatekeeper-suggestion-context {
+  margin: 12px 0; padding: 9px 10px; border-left: 3px solid var(--amber-bd);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--amber-bg);
+}
+.gatekeeper-suggestion-context p { margin: 5px 0 0; }
+.gatekeeper-suggestion-body .field { margin-top: 12px; }
+.gatekeeper-current-purpose { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); white-space: pre-wrap; }
+.gatekeeper-suggestion-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+.gatekeeper-suggestion-loading { display: flex; align-items: center; gap: 8px; padding: 18px 0; color: var(--muted); }
+.gatekeeper-inline-spinner {
+  width: 12px; height: 12px; border: 2px solid var(--border-strong);
+  border-top-color: var(--blue-fg); border-radius: 50%; animation: reviewing-spin 0.8s linear infinite;
 }
 .modal .group-title { font-size: 15px; }
 .modal .field { margin-bottom: 0; }

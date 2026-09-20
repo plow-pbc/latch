@@ -28,7 +28,6 @@
              it belongs in the same pane once the app can ask for it. -->
         <button data-tab="agents">Agents</button>
         <button data-tab="audit" class="active">Audit</button>
-        <button data-tab="rules">Rules</button>
         <button data-tab="vault">Browser Vault</button>
         <!-- What is stopping this Mac's agents (pluginsModel.ts); the full
              permission inventory lives in Settings. -->
@@ -39,6 +38,7 @@
     <!-- Passive update notice: shown only when an update is staged and not
          dismissed (main.js drives it from updates:get). Never modal. -->
     <div id="updateBanner" class="update-banner" hidden></div>
+    <div id="gatekeeperNotice" class="gatekeeper-notice" hidden></div>
     <div id="view"></div>
     <script type="module" src="main.js"></script>
   </body>
