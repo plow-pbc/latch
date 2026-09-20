@@ -116,7 +116,7 @@ const EXPLAINED_DENIALS: Record<string, string> = {
   adversarial:
     "Gatekeeper's AI Reviewer denied this request. Ask the user to open Plow Latch on their Mac, " +
     "where they can review the denial or improve their Gatekeeper instructions. " +
-    "Do not retry unchanged until the owner updates those instructions",
+    "Do not retry unchanged until the owner changes their Gatekeeper policy",
   [DENIAL_SOURCE_NO_CREDITS]:
     "inference unavailable: this Plow account is out of credits, so the " +
     "adversarial reviewer could not run and the operation was denied",

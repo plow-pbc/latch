@@ -1020,6 +1020,8 @@ app.whenReady().then(async () => {
   const rulesModalView = await win.webContents.executeJavaScript(`(${() => ({
     opens: !!document.querySelector(".rules-modal"),
     empty: document.querySelector(".rules-modal")?.innerText.includes("No always-allow rules") ?? false,
+    explainsPluginReadPrefix: document.querySelector(".rules-modal")?.innerText
+      .includes("Plugin read rules also cover any query following the displayed command prefix") ?? false,
   })})()`);
   await win.webContents.executeJavaScript(`(() => {
     [...document.querySelectorAll(".rules-modal button")]
@@ -1944,6 +1946,7 @@ app.whenReady().then(async () => {
     approvalsReviewer.noRetryOverride &&
     rulesModalView.opens &&
     rulesModalView.empty &&
+    rulesModalView.explainsPluginReadPrefix &&
     staleSuggestionDiscarded &&
     gatekeeperRecovery.suggestionEditable &&
     gatekeeperRecovery.suggestionGeneralizes &&

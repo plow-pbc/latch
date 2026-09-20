@@ -899,7 +899,8 @@ function openRulesModal(trigger) {
       el("div", { class: "modal-title-row" }, [title, el("div", { class: "spacer" }), close]),
       el("p", {
         class: "faint",
-        text: "These exact agent and capability combinations can run without asking you again.",
+        text: "These agent and capability combinations can run without asking you again. " +
+          "Plugin read rules also cover any query following the displayed command prefix.",
       }),
       list,
     ],

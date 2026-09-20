@@ -406,7 +406,7 @@ describe("PolicyEngine", () => {
 });
 
 describe("reviewer denial recovery", () => {
-  it("tells the agent Gatekeeper denied and to wait for revised instructions", async () => {
+  it("tells the agent Gatekeeper denied and to wait for a policy change", async () => {
     const home = tempDir();
     const reviewerDenies: PolicyDelegate = {
       async decideIntent() {
@@ -428,7 +428,7 @@ describe("reviewer denial recovery", () => {
       reason:
         "Gatekeeper's AI Reviewer denied this request. Ask the user to open Plow Latch on their Mac, " +
         "where they can review the denial or improve their Gatekeeper instructions. " +
-        "Do not retry unchanged until the owner updates those instructions",
+        "Do not retry unchanged until the owner changes their Gatekeeper policy",
     });
   });
 });
