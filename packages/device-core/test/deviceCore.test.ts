@@ -170,6 +170,23 @@ describe("PolicyEngine", () => {
     expect(engine.armDeniedIntentOnce("missing-intent")).toBe(false);
   });
 
+  it("retains only the latest reviewer denial for recovery", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const reviewerDenies: PolicyDelegate = {
+      async decideIntent() {
+        return { decision: "deny" as const, source: "adversarial" };
+      },
+    };
+    const first = intentWith([{ kind: "network", allowed: true }]);
+    const second = intentWith([{ kind: "process.exec", argv: ["open", "https://example.com"] }]);
+
+    await engine.decide(first, reviewerDenies);
+    await engine.decide(second, reviewerDenies);
+
+    expect(engine.deniedIntent(first.intentId)).toBeNull();
+    expect(engine.deniedIntent(second.intentId)?.state).toBe("denied");
+  });
+
   it("does not let an armed override bypass a later global deny", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const caps: Capability[] = [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"] }];

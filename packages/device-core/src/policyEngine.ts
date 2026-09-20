@@ -89,7 +89,6 @@ export class PolicyEngine {
    * clears both these records and any armed override, which fails closed. */
   private readonly deniedIntents = new Map<string, DeniedIntent>();
   private readonly oneTimeOverrides = new Map<string, string>();
-  private static readonly MAX_DENIED_INTENTS = 50;
   /**
    * Emits `changed` once per write to the rule set — a rule stored by an
    * always-allow answer, or one removed. The main window's Rules pane draws
@@ -313,12 +312,8 @@ export class PolicyEngine {
     const ruleStored = typeof result !== "string" && result.ruleStored === true;
     if (decision === "always_allow" && !ruleStored) this.storeRule(intent);
     if (decision === "deny" && source === "adversarial") {
+      this.deniedIntents.clear();
       this.deniedIntents.set(intent.intentId, { intent, reason, state: "denied" });
-      while (this.deniedIntents.size > PolicyEngine.MAX_DENIED_INTENTS) {
-        const oldest = this.deniedIntents.keys().next().value as string | undefined;
-        if (oldest === undefined) break;
-        this.deniedIntents.delete(oldest);
-      }
       this.events.emit("reviewer_denied", { intentId: intent.intentId, intent, reason });
     }
     return makeGrant(intent, decision, source);
