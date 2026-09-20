@@ -314,12 +314,10 @@ function choosePreset(key) {
 function gatekeeperScreen() {
   const head = el("div", { class: "head-center" }, [
     el("h1", { text: "Meet the Plow Gatekeeper" }),
-    el("p", { class: "subhead" }, [
-      document.createTextNode(
-        "Plow's adversarial reviewer protects your data from malicious queries, while allowing your agents to get useful work done. ",
-      ),
-      el("strong", { text: "What access should it allow to your Mac?" }),
-    ]),
+    el("p", {
+      class: "subhead",
+      text: "Protect your data from malicious queries, while allowing your agents to get useful work done.",
+    }),
   ]);
   const g = gatekeeper;
   if (!g || !gatekeeperPresets) return el("div", { class: "step-inner gatekeeper-screen" }, [head, note(state)]);
@@ -333,7 +331,7 @@ function gatekeeperScreen() {
 
   const field = el("textarea", {
     class: "gk-text",
-    attrs: { rows: "3", spellcheck: "false", "aria-label": "What access should it allow to your Mac?" },
+    attrs: { rows: "3", spellcheck: "false", "aria-label": "What access should Plow Latch allow to your Mac?" },
   });
   field.value = g.text;
   field.addEventListener("input", () => {
@@ -382,8 +380,9 @@ function gatekeeperScreen() {
 
   return el("div", { class: "step-inner gatekeeper-screen" }, [
     head,
-    defaults,
+    el("p", { class: "gk-prompt", text: "What access should Plow Latch allow to your Mac?" }),
     field,
+    defaults,
     beamField,
     note(state),
   ]);
@@ -411,9 +410,12 @@ function continueFromGatekeeper() {
   return update(() => window.domo.onboardingAdvance(gatekeeper?.text ?? state.purpose));
 }
 
-function copyButton(value) {
+function copyButton(value, ariaLabel, compact = false) {
   const label = el("span", { text: "Copy" });
-  const node = el("button", { class: "copy-button", attrs: { type: "button", "aria-label": "Copy message" } }, [
+  const node = el("button", {
+    class: `copy-button${compact ? " compact" : ""}`,
+    attrs: { type: "button", "aria-label": ariaLabel },
+  }, [
     icon("copy", { strokeWidth: "1.7" }),
     label,
   ]);
@@ -421,9 +423,11 @@ function copyButton(value) {
     await navigator.clipboard.writeText(value).then(() => {
       node.classList.add("copied");
       label.textContent = "Copied";
+      node.setAttribute("aria-label", ariaLabel.replace(/^Copy /, "Copied "));
       setTimeout(() => {
         node.classList.remove("copied");
         label.textContent = "Copy";
+        node.setAttribute("aria-label", ariaLabel);
       }, 2000);
     }).catch(() => {});
   });
@@ -457,14 +461,30 @@ function note(current) {
   });
 }
 
+function retryActivation(node, message = null) {
+  node.replaceChildren(
+    ...(message ? [el("span", { class: "status-text", text: message })] : []),
+    button("Try again", "link-button", () => update(() => window.domo.onboardingNewCode())),
+  );
+  node.classList.add("expired");
+}
+
 function startActivationCountdown(node, until) {
   const tick = () => {
     const left = Math.max(0, until - Date.now());
+    if (left === 0) {
+      clearInterval(expiryTimer);
+      expiryTimer = null;
+      retryActivation(node);
+      return;
+    }
     const minutes = Math.floor(left / 60000);
     const seconds = Math.floor((left % 60000) / 1000);
-    node.textContent = left > 0
-      ? `Listening for ${minutes}:${String(seconds).padStart(2, "0")}`
-      : "Still listening — you can try the same message or request another code.";
+    node.replaceChildren(
+      el("span", { class: "waiting-spinner" }),
+      el("span", { class: "status-text", text: "Waiting for your text" }),
+      el("span", { class: "countdown", text: `${minutes}:${String(seconds).padStart(2, "0")}` }),
+    );
   };
   tick();
   expiryTimer = setInterval(tick, 1000);
@@ -474,31 +494,21 @@ function verifyScreen() {
   const activation = state.activation;
   const parts = [
     el("div", { class: "head-center" }, [
-      el("h1", { text: "Verify your phone to connect this Mac" }),
-      el("p", {
-        class: "subhead",
-        text: "Send the message below from the phone number you want to use with Plow.",
-      }),
+      el("h1", { text: "Connect with a text" }),
     ]),
   ];
 
   if (activation) {
     parts.push(
-      el("div", { class: "send-block" }, [
-        el("div", { class: "send-head" }, [
-          el("span", { class: "section-label", text: "Send to:" }),
+      el("div", { class: "message-preview" }, [
+        el("div", { class: "message-contact" }, [
+          el("span", { class: "message-avatar", text: "P", attrs: { "aria-hidden": "true" } }),
           el("span", { class: "send-to", text: activation.sendTo }),
+          copyButton(activation.sendTo, "Copy phone number", true),
         ]),
-        el("div", { class: "message-field" }, [
+        el("div", { class: "message-bubble" }, [
           activationMessage(activation),
-          copyButton(activation.smsBody),
-        ]),
-        el("p", { class: "caution" }, [
-          icon("lock", { strokeWidth: "1.7" }),
-          el("span", {}, [
-            el("strong", { text: "Keep this private. " }),
-            document.createTextNode("Anyone who sends this code from their number can link it to this Plow account."),
-          ]),
+          copyButton(activation.smsBody, "Copy activation message", true),
         ]),
       ]),
     );
@@ -507,23 +517,9 @@ function verifyScreen() {
   }
 
   if (activation) {
-    parts.push(el("div", { class: "waiting-status" }, [
-      ...(state.activationStale ? [] : [el("span", { class: "waiting-spinner" })]),
-      el("span", {
-        class: "status-text",
-        text: state.activationStale ? "Still not signed in" : "Waiting for your text…",
-      }),
-    ]));
-
-    const countdown = el("p", { class: "countdown", attrs: { "aria-live": "off" } });
-    if (!state.activationStale) startActivationCountdown(countdown, activation.pollUntil);
-    parts.push(countdown);
-
-    if (state.activationStale) {
-      parts.push(el("div", { class: "inline-actions" }, [
-        button("Try again", "link-button", () => update(() => window.domo.onboardingNewCode())),
-      ]));
-    }
+    const waiting = el("div", { class: "waiting-status", attrs: { "aria-live": "polite" } });
+    if (state.activationStale) retryActivation(waiting, "Still not signed in");
+    else startActivationCountdown(waiting, activation.pollUntil);
 
     {
       const activate = button("", "verify-activate", async () => {
@@ -533,19 +529,11 @@ function verifyScreen() {
       });
       activate.append(
         icon("messages", { strokeWidth: "1.7" }),
-        document.createTextNode("Open Messages to activate"),
+        document.createTextNode("Send in Messages"),
       );
-
-      const actions = [activate];
-      if (!state.activationStale) {
-        actions.push(el("p", { class: "alternate" }, [
-          button("Still waiting? Send it again", "link-button", () =>
-            update(() => window.domo.onboardingNewCode()),
-          ),
-        ]));
-      }
-      parts.push(el("div", { class: "verify-actions" }, actions));
+      parts.push(el("div", { class: "verify-actions" }, [activate]));
     }
+    parts.push(waiting);
   } else {
     if (!state.busy) {
       parts.push(el("div", { class: "inline-actions" }, [
@@ -745,8 +733,9 @@ function pluginsScreen() {
     ]),
   ];
   if (pluginsState) {
+    const choices = pluginsState.rows.filter((row) => row.status === "off" || row.requirements.length > 0);
     parts.push(
-      el("div", { class: "item-rows" }, pluginsState.rows.map(pluginRow)),
+      el("div", { class: "item-rows" }, choices.map(pluginRow)),
     );
   }
   parts.push(toggleRow(

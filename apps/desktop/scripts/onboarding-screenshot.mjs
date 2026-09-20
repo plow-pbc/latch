@@ -116,7 +116,7 @@ verifyRearmFixture.prepare = async (win) => {
   const displayCodeBefore = await win.webContents.executeJavaScript(
     `document.querySelector(".message-code")?.textContent.trim() ?? ""`,
   );
-  await clickText(win, "Still waiting? Send it again");
+  await clickText(win, "Try again");
   const displayCodeAfter = await win.webContents.executeJavaScript(
     `document.querySelector(".message-code")?.textContent.trim() ?? ""`,
   );
@@ -124,10 +124,10 @@ verifyRearmFixture.prepare = async (win) => {
     `document.querySelector(".state-note.neutral:not(.error)")?.textContent.trim() ?? ""`,
   );
   if (newCodeRequests !== requestsBefore + 1) {
-    throw new Error("Send it again did not request a re-arm");
+    throw new Error("Try again did not request a re-arm");
   }
   if (!displayCodeBefore || displayCodeAfter !== displayCodeBefore) {
-    throw new Error(`Send it again changed the display code: ${displayCodeBefore} → ${displayCodeAfter}`);
+    throw new Error(`Try again changed the display code: ${displayCodeBefore} → ${displayCodeAfter}`);
   }
   if (neutralNote !== REARM_NOTE) throw new Error("The re-arm note was not rendered neutrally");
 };

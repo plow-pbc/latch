@@ -66,7 +66,9 @@ export async function waitFor(win, expr, label, timeoutMs = 10_000) {
  * these panes uppercase their labels in CSS, and this checks what the screen
  * says, not how it is set. `reject` fails on text a state must not render.
  * `expectValues` is matched against field values,
- * which is where a revealed secret lands. `expectFocus` is matched against the
+ * which is where a revealed secret lands. `expectAriaLabels` requires every
+ * named control, and `expectOrder` requires selectors to appear top-to-bottom.
+ * `expectFocus` is matched against the
  * focused element's label (its text, or an input's placeholder) — the screen's
  * promise that Return does what the highlighted control advertises.
  * `expectEnabled` names a button that must remain actionable in that state.
@@ -93,6 +95,12 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     const title = await win.webContents.executeJavaScript("document.title");
     const ariaLabels = await win.webContents.executeJavaScript(
       `[...document.querySelectorAll("[aria-label]")].map((el) => el.getAttribute("aria-label"))`,
+    );
+    const orderedSelectors = await win.webContents.executeJavaScript(
+      `(selectors => selectors.map((selector) => {
+        const node = document.querySelector(selector);
+        return node ? { selector, top: node.getBoundingClientRect().top } : { selector, top: null };
+      }))(${JSON.stringify(screen.expectOrder ?? [])})`,
     );
     const focused = await win.webContents.executeJavaScript(
       `(document.activeElement?.textContent || document.activeElement?.getAttribute("placeholder") || "").trim()`,
@@ -130,6 +138,16 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
       ...(screen.expectAriaLabel && !ariaLabels.includes(screen.expectAriaLabel)
         ? [`aria-label "${screen.expectAriaLabel}"`]
         : []),
+      ...(screen.expectAriaLabels ?? [])
+        .filter((label) => !ariaLabels.includes(label))
+        .map((label) => `aria-label "${label}"`),
+      ...orderedSelectors.flatMap((item, index) => {
+        if (item.top === null) return [`ordered selector "${item.selector}"`];
+        const previous = orderedSelectors[index - 1];
+        return previous && previous.top !== null && item.top < previous.top
+          ? [`"${item.selector}" below "${previous.selector}"`]
+          : [];
+      }),
       ...(screen.expectFocus && !focused.includes(screen.expectFocus)
         ? [`focus on "${screen.expectFocus}" (focused: "${focused}")`]
         : []),
