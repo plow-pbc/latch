@@ -609,6 +609,11 @@ ipcMain.handle("audit:clear", async () => {
   });
   if (response !== 1) return false;
   device.audit.clear();
+  if (gatekeeperAttention) {
+    gatekeeperAttention = null;
+    refreshTray();
+    notifyRenderer("gatekeeperRecovery:changed");
+  }
   return true;
 });
 // Approvals still awaiting an answer, so the UI can show what is outstanding

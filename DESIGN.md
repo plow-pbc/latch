@@ -153,15 +153,14 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   nothing — no audit line, no telemetry, no rule.
   A separate, owner-invoked **Gatekeeper revision coach** may run after an AI
   Reviewer denial. It sees the current owner-authored purpose, the denied
-  request and capability displays, and at most ten distinct recent local audit
-  activity titles. Those titles are representative operation requests, not raw
-  Plow conversations. The coach is asked for a complete replacement that
-  allows commands *similar to* the denied command by generalizing purpose and
-  effect while preserving unrelated restrictions; it is explicitly forbidden
-  from encoding the exact merchant, product, amount, path, recipient, URL, or
-  command. The result is editable display text until the owner explicitly
-  saves it. This history never reaches the live allow/deny reviewer, which
-  remains on `history: []` to avoid the denial ratchet described above.
+  request, and its capability displays. The coach is asked for a complete
+  replacement that allows commands *similar to* the denied command by
+  generalizing purpose and effect while preserving unrelated restrictions; it
+  is explicitly forbidden from encoding the exact merchant, product, amount,
+  path, recipient, URL, or command. The result is editable display text until
+  the owner explicitly saves it. No audit history reaches either this coach or
+  the live allow/deny reviewer, which remains on `history: []` to avoid the
+  denial ratchet described above.
   WHETHER the reviewer runs is decided in precedence order by
   `packages/device-core/src/policyEngine.ts`: a stored always-allow rule
   short-circuits Ask and Approve, while global AI Reviewer and Deny modes decide

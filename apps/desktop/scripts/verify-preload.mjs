@@ -68,11 +68,13 @@ ipcMain.handle("audit:page", async () => {
 });
 ipcMain.handle("audit:activity", async (_event, id) =>
   !auditCleared && id === gatekeeperActivity.id ? gatekeeperActivity : null);
-ipcMain.handle("audit:clear", async () => {
+ipcMain.handle("audit:clear", async (event) => {
   if (holdAuditClear) {
     await new Promise((resolve) => { resolveAuditClear = resolve; });
   }
   auditCleared = true;
+  gatekeeperRecoveryProbe = null;
+  event.sender.send("gatekeeperRecovery:changed");
   return true;
 });
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
@@ -1269,7 +1271,9 @@ app.whenReady().then(async () => {
   resolveAuditClear();
   resolveAuditClear = null;
   await waitForNode(() => auditCleared, "Audit to finish clearing");
-  globalNotice.clearPreservesNewerAttention = gatekeeperRecoveryProbe?.intentId === "intent-after-clear";
+  await waitFor(win, `document.querySelector(".gatekeeper-notice")?.hidden === true`,
+    "Clear Log to clear denial attention with the erased activity");
+  globalNotice.clearRemovesConcurrentAttention = gatekeeperRecoveryProbe === null;
 
   // …and the Agents pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
@@ -1962,7 +1966,7 @@ app.whenReady().then(async () => {
     globalNotice.dismiss &&
     globalNotice.routed &&
     globalNotice.dismissedWithoutDeletingRow &&
-    globalNotice.clearPreservesNewerAttention &&
+    globalNotice.clearRemovesConcurrentAttention &&
     settings.noApprovalModeGroup &&
     settings.noModeChipsHere &&
     settings.saysNothingAdversarial &&

@@ -215,10 +215,8 @@ async function renderAudit() {
   const count = el("span", { class: "count" });
   const clearBtn = el("button", { class: "btn small", text: "Clear Log" });
   clearBtn.addEventListener("click", async () => {
-    const attentionIntentId = gatekeeperAttention?.intentId;
     const cleared = await window.domo.auditClear();
     if (cleared) {
-      if (attentionIntentId) await dismissGatekeeperRecovery(attentionIntentId);
       selectedId = null;
       auditDetail = { id: null, activity: null };
       refreshAudit({ changed: new Set(["*"]) });
