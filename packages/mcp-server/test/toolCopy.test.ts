@@ -19,6 +19,7 @@ import {
   HeadlessPolicy,
   INTERACTIVE_VERIFICATION,
   LIVE_WEB_ROUTING,
+  PAYMENT_AUTHORIZATION,
   SAFARI_HARD_BLOCK_ROUTING,
 } from "@domo/device-core";
 import {
@@ -511,10 +512,17 @@ describe("every tool says what kind of tool it is", () => {
 });
 
 describe("what the agent-facing copy must and must not say", () => {
-  it("qualifies separate payment approval with the bundled v1 bank registry", async () => {
+  it("explains threshold payment authorization for the bundled v1 bank registry", async () => {
     const browserTool = (await descriptions(makeServer())).plow_browser;
     for (const copy of [BROWSING_SKILL.body, browserTool]) {
       expect(copy).toMatch(/bundled v1 bank registry/i);
+      expect(copy).toMatch(/plow_request_payment/);
+      expect(copy).toMatch(/threshold/i);
+      expect(copy).toContain(PAYMENT_AUTHORIZATION);
+      expect(copy).toMatch(/frame_url reported by forms/i);
+      expect(copy).toMatch(/not the eventual transaction/i);
+      expect(copy).toMatch(/fresh authorization/i);
+      expect(copy).not.toContain("👍");
     }
   });
 

@@ -5,13 +5,13 @@
  * This is the detection signal for the banking-credential gate:
  * when the browser is about to type a credential into one of these sites (or a
  * subdomain of one), the release is treated as financial and must carry an
- * owner-approved payment approval first. See `financialGate.ts`.
+ * payment authorization first. See `financialGate.ts`.
  *
  * ── Accepted residual ────────────────────────────────────────────────────────
  * This list is deliberately not exhaustive. An unlisted institution, or a
  * credit card filled on an arbitrary merchant site, does not trigger the gate.
  * That fail-open gap is accepted for v1. For every listed exact domain and
- * subdomain, the per-payment owner approval remains mandatory and fail-closed.
+ * subdomain, the per-payment authorization remains mandatory and fail-closed.
  * Over-matching costs an extra approval prompt; a missed institution remains
  * outside this v1 gate. Add a domain when real usage exposes a gap, without
  * adding a second registry or item-tagging system.

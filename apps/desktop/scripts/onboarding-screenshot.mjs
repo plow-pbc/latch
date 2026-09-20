@@ -117,7 +117,7 @@ verifyRearmFixture.prepare = async (win) => {
   const displayCodeBefore = await win.webContents.executeJavaScript(
     `document.querySelector(".message-code")?.textContent.trim() ?? ""`,
   );
-  await clickText(win, "Still waiting? Send it again");
+  await clickText(win, "Try again");
   const displayCodeAfter = await win.webContents.executeJavaScript(
     `document.querySelector(".message-code")?.textContent.trim() ?? ""`,
   );
@@ -125,12 +125,27 @@ verifyRearmFixture.prepare = async (win) => {
     `document.querySelector(".state-note.neutral:not(.error)")?.textContent.trim() ?? ""`,
   );
   if (newCodeRequests !== requestsBefore + 1) {
-    throw new Error("Send it again did not request a re-arm");
+    throw new Error("Try again did not request a re-arm");
   }
   if (!displayCodeBefore || displayCodeAfter !== displayCodeBefore) {
-    throw new Error(`Send it again changed the display code: ${displayCodeBefore} → ${displayCodeAfter}`);
+    throw new Error(`Try again changed the display code: ${displayCodeBefore} → ${displayCodeAfter}`);
   }
   if (neutralNote !== REARM_NOTE) throw new Error("The re-arm note was not rendered neutrally");
+};
+
+const verifyExpiredFixture = SCREENS.find((fixture) => fixture.name === "verify-expired");
+verifyExpiredFixture.prepare = async (win) => {
+  const retainedFocus = await win.webContents.executeJavaScript(`(async () => {
+    const retry = [...document.querySelectorAll("button")]
+      .find((button) => button.textContent.trim() === "Try again");
+    if (!retry) return false;
+    retry.focus();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const retained = document.activeElement === retry;
+    document.querySelector(".verify-activate")?.focus();
+    return retained;
+  })()`);
+  if (!retainedFocus) throw new Error("The expired retry was replaced after it received focus");
 };
 // A fixture's `click` opens that row's reason, the way the owner would.
 for (const fixture of SCREENS.filter((f) => f.click)) {

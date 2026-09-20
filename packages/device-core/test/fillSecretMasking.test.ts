@@ -966,7 +966,7 @@ describe("fill_secret split across single-character boxes", () => {
 });
 
 describe("fill_secret banking-credential gate", () => {
-  // Not-approved and an unreachable/erroring approval service must both block a
+  // Not-authorized and an unreachable/erroring authorization service must both block a
   // bank credential release; the audit reason records WHICH, so an outage reads
   // differently from a real "no". "Blocked" is proven by the two things the
   // owner cares about: the vault was never asked (no RELEASED line) and nothing
@@ -974,19 +974,19 @@ describe("fill_secret banking-credential gate", () => {
   // uniform across every block reason so it cannot probe an outage from a "no".
   it.each([
     {
-      what: "the owner has not approved",
+      what: "the payment is not authorized",
       approval: { approved: false } as const,
-      reason: "the owner has not approved this payment",
+      reason: "no payment authorization is available",
     },
     {
       what: "the approval service is unreachable (a throw stands in for non-2xx / timeout)",
       approval: "throw" as const,
-      reason: "the owner-approval service could not be reached",
+      reason: "the payment-authorization service could not be reached",
     },
     {
       what: "no approval client is wired (fail-closed default)",
       approval: null,
-      reason: "no owner-approval client is configured",
+      reason: "no payment-authorization client is configured",
     },
   ])("refuses a bank credential when $what", async ({ approval, reason }) => {
     await ctx.sessions.closeAll("teardown");
@@ -999,7 +999,7 @@ describe("fill_secret banking-credential gate", () => {
       field: "password",
     });
     expect(jv(result).get("status").str).toBe("error");
-    expect(jv(result).get("error").str).toContain("requires the owner's payment approval");
+    expect(jv(result).get("error").str).toContain("requires a payment authorization requested through plow_request_payment");
     // The vault was never asked for the value, and nothing was typed.
     expect(released()).toEqual([]);
     expect(fills()).toEqual([]);
@@ -1096,4 +1096,3 @@ function hostCapMs(): number {
   if (!m) throw new Error("actionTimeoutMs not found in deviceAgent.ts");
   return Number(m[1].replace(/_/g, ""));
 }
-

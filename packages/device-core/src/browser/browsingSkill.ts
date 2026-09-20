@@ -40,6 +40,16 @@ export const INTERACTIVE_VERIFICATION =
   "account you are using; it is not asking whether the assistant software is human. Complete " +
   "it with the browser tools and continue the task.";
 
+export const PAYMENT_AUTHORIZATION =
+  "Before filling at a destination in the bundled v1 bank registry, call " +
+  "plow_request_payment with the exact hostname of the frame containing the bank field — the " +
+  "frame_url reported by forms — including any subdomain, plus the intended recipient and exact " +
+  "amount. Plow grants one single-use banking-" +
+  "credential release immediately when the declared amount is at or below the owner's threshold; " +
+  "above it, Plow sends the owner a single-use approval link, and ordinary chat replies or reactions " +
+  "do not approve it. This authorizes only the credential release on that hostname, not the eventual " +
+  "transaction; if a fill passes the gate but later fails, request fresh authorization before retrying.";
+
 export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
@@ -224,13 +234,11 @@ item's, and \`fill_secret\` types them into the page the same way.
    and refuses a day token. A day,
    month or year dropdown is filled the same way: the matching option is chosen. Without
    \`format\`, a date of birth is typed as YYYY-MM-DD and an expiry as MM/YY.
-   **A destination in the bundled v1 bank registry needs a separate owner payment
-   approval.** When the page you are filling matches that registry, \`fill_secret\` needs
-   more than item rights: the owner
-   must ALSO approve the payment out of band — a link in their Plow thread, or a 👍. The
-   fill proceeds only once that approval is granted; until then \`fill_secret\` returns an
-   error saying the owner's payment approval was not found, and NOTHING is typed. That is
-   not a bug to work around — ask the owner to approve the payment, then try the fill again.
+   **A destination in the bundled v1 bank registry needs a payment authorization.**
+   ${PAYMENT_AUTHORIZATION} Continue after an \`authorized\` result, or after the owner uses the
+   link for an \`approval_required\` result. Until authorization exists, \`fill_secret\`
+   returns an error and NOTHING is typed. That is not a bug to work around — request the
+   payment authorization, then try the fill again.
    Do not try to \`fill\` a bank credential by hand to dodge it; you do not have the value.
 6. What is hidden afterwards is what the vault itself hides: a password, a card number and
    security code, an ssn, a Hidden custom field. Those render as dots and \`forms\` reports
