@@ -45,7 +45,6 @@ let sentUrls = null;
 
 /** The revision the form last sent with it. */
 let sentRevision = null;
-let importRequested = false;
 let pendingExchange = null;
 
 function seed(input) {
@@ -108,10 +107,6 @@ async function setUp() {
     ciphers.delete(itemId);
   });
   ipcMain.handle("vault:exchangePending", async () => pendingExchange);
-  ipcMain.handle("vault:importRequested", async () => {
-    return importRequested;
-  });
-  ipcMain.handle("vault:importAcknowledged", async () => { importRequested = false; });
   ipcMain.handle("vault:importSources", async () => ({
     apple: { icon: null, exchange: false },
     onePassword: { icon: null },
@@ -138,22 +133,17 @@ async function setUp() {
 /** Each shot: how to get the screen into that state, and what must be on it. */
 const SCREENS = [
   {
-    name: "onboarding-exchange",
-    openImport: true,
+    name: "credential-exchange",
     openExchange: true,
     prepare: async (win) => {
-      if (importRequested) throw new Error("Exchange did not acknowledge the coexisting onboarding import");
       const sheets = await win.webContents.executeJavaScript(`document.querySelectorAll(".overlay.show").length`);
-      if (sheets !== 1) throw new Error(`Exchange and onboarding opened ${sheets} import sheets`);
+      if (sheets !== 1) throw new Error(`Credential exchange opened ${sheets} import sheets`);
     },
     expect: ["Ready to import", "Exchange login", "1 login from Apple Passwords"],
   },
   {
-    name: "onboarding-import",
-    openImport: true,
-    prepare: async () => {
-      if (importRequested) throw new Error("Onboarding import was not acknowledged after the sheet mounted");
-    },
+    name: "import",
+    prepare: async (win) => clickText(win, "Import"),
     expect: ["Import passwords", "Apple Passwords", "1Password", "Chrome", "CSV file"],
   },
   {
@@ -393,7 +383,6 @@ app.whenReady().then(async () => {
     prefix: "vault",
     screens: SCREENS,
     load: async (fixture) => {
-      importRequested = fixture.openImport === true;
       pendingExchange = fixture.openExchange === true ? {
         source: "Apple Passwords",
         items: [{

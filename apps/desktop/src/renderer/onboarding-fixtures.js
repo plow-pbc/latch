@@ -21,9 +21,10 @@ export function onboardingFixtures(now) {
     telemetryEnabled: true,
     purpose: "",
   };
-  const amazonBrowserExample = {
-    prompt: "Amazon overcharged me for a solar panel—can you get a refund?",
-    site: "Amazon",
+  const noAgents = { cloudAgents: [], cloudAgentsError: null };
+  const elm = {
+    cloudAgentsError: null,
+    cloudAgents: [{ agentId: "agent_elm", name: "Elm", canMessage: true }],
   };
   // The Plugins tab's state as main answers it (pluginsModel.ts): the shipped
   // plugins as staged, then the browser, and the ordered grants setup walks.
@@ -87,13 +88,6 @@ export function onboardingFixtures(now) {
       { ...safari, plugins: ["Browser use"] },
       { ...google, plugins: [gmail] },
     ],
-  };
-  const browserReady = {
-    rows: rows("off", "off", fullDisk, "off").map((plugin) =>
-      plugin.name === "browser"
-        ? { ...plugin, status: "ready", requirements: [{ ...safari, status: "met" }] }
-        : plugin),
-    grants: [{ ...safari, status: "met", plugins: ["Browser use"] }],
   };
   const fullDiskDone = {
     rows: rows("needs-setup", "ready", fullDiskMet, "off"),
@@ -542,54 +536,18 @@ export function onboardingFixtures(now) {
     {
       name: "done-agent",
       state: { ...base, step: "done" },
-      plugins: browserReady,
-      browserExample: amazonBrowserExample,
-      expect: [
-        "Your agent asks. Plow signs in.",
-        "Latch takes care of logging in, so your agent never sees your passwords.",
-        "Amazon overcharged me for a solar panel—can you get a refund?",
-        "Gatekeeper",
-        "Browser Vault",
-        "Amazon",
-        "Signed in",
-        "Import passwords",
-        "Not now",
-      ],
-      reject: [
-        "Reconcile bank deposits",
-        "Negotiate and verify an Amazon credit",
-        "Arrange follow-up care",
-        "Cancel Hipcamp bookings",
-        "Text Elm",
-      ],
-      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
+      cloud: elm,
+      expect: ["You're all set", "Text Elm", "Explore the app"],
+      reject: ["Import passwords", "Enable Browser & import passwords", "Not now", "Browser Vault"],
+      expectFocus: "Text Elm",
     },
     {
-      name: "done-browser-off",
+      name: "done-noagent",
       state: { ...base, step: "done" },
-      plugins: onlyWiki,
-      browserExample: amazonBrowserExample,
-      expect: ["Your agent asks. Plow signs in.", "Enable Browser & import passwords", "Not now"],
-      reject: ["Text Elm"],
-      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
-    },
-    {
-      name: "done-browser-loading",
-      state: { ...base, step: "done" },
-      pluginsPending: true,
-      browserExample: amazonBrowserExample,
-      expect: ["Your agent asks. Plow signs in.", "Import passwords", "Not now"],
-      reject: ["Text Elm", "Enable Browser & import passwords"],
-      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
-    },
-    {
-      name: "done-example-loading",
-      state: { ...base, step: "done" },
-      plugins: browserReady,
-      browserExamplePending: true,
-      expect: ["Your agent asks. Plow signs in.", "Ask your agent to take care of something that needs a sign-in.", "Import passwords", "Not now"],
-      reject: ["Enable Browser & import passwords"],
-      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
+      cloud: noAgents,
+      expect: ["You're all set", "Explore the app"],
+      reject: ["Text Elm", "Import passwords", "Enable Browser & import passwords", "Not now", "Browser Vault"],
+      expectFocus: "Explore the app",
     },
   ];
   return fixtures.map((fixture) => ({

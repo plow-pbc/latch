@@ -1,5 +1,5 @@
 /**
- * One catalog for setup's fixed Gatekeeper probes and its real outcome examples.
+ * One catalog for setup's fixed Gatekeeper preview probes.
  * Every operation is preview-only: it is reviewed, never executed.
  */
 import type { Capability } from "@domo/protocol";
@@ -11,16 +11,10 @@ export interface Operation {
   capabilities: Capability[];
 }
 
-export interface FinishExample {
-  prompt: string;
-  site: string;
-}
-
 export interface OnboardingExample {
   label: string;
   icon: string;
   operation: Operation;
-  finish?: FinishExample;
 }
 
 /** `plow_run_command`'s shape: the exec, an explicit network flag, then reads. */
@@ -117,50 +111,3 @@ export const GATEKEEPER_DECKS = {
     },
   ],
 } as const satisfies Record<PresetKey, readonly OnboardingExample[]>;
-
-function outcomeBrowser(
-  label: string,
-  origins: string[],
-  credential: string,
-  site: string,
-): OnboardingExample {
-  return {
-    label,
-    icon: "key",
-    operation: {
-      request: `widen browser session — browse: ${origins.join(", ")}; fill credentials: ${credential}`,
-      capabilities: [
-        { kind: "browser", origins },
-        { kind: "credential", access: "fill", items: [credential] },
-      ],
-    },
-    finish: { prompt: label, site },
-  };
-}
-
-export const FINISH_CANDIDATES = [
-  outcomeBrowser(
-    "Amazon overcharged me for a solar panel—can you get a refund?",
-    ["amazon.com", "*.amazon.com"],
-    "00000000-0000-4000-8000-000000000012",
-    "Amazon",
-  ),
-  outcomeBrowser(
-    "Pay the mortgages on my rental properties.",
-    ["mortgage.example", "*.mortgage.example"],
-    "00000000-0000-4000-8000-000000000011",
-    "your mortgage servicer",
-  ),
-  outcomeBrowser(
-    "Sign in to Kaiser and arrange a dermatology follow-up.",
-    ["healthy.kaiserpermanente.org", "*.kaiserpermanente.org"],
-    "00000000-0000-4000-8000-000000000013",
-    "Kaiser",
-  ),
-  outcomeBrowser(
-    "Reschedule my Hipcamp reservations.",
-    ["hipcamp.com", "*.hipcamp.com"],
-    "00000000-0000-4000-8000-000000000014",
-    "Hipcamp",
-  ),
-] as const satisfies readonly OnboardingExample[];

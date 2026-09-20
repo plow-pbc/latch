@@ -53,8 +53,6 @@ contextBridge.exposeInMainWorld("domo", {
   // path never touches the renderer either — main runs the open dialog and
   // reads the file itself.
   vaultImportSources: () => ipcRenderer.invoke("vault:importSources"),
-  vaultImportRequested: () => ipcRenderer.invoke("vault:importRequested"),
-  vaultImportAcknowledged: () => ipcRenderer.invoke("vault:importAcknowledged"),
   vaultImportInspect: (text: string) => ipcRenderer.invoke("vault:importInspect", text),
   vaultImportFile: () => ipcRenderer.invoke("vault:importFile"),
   // The 1Password vaults the owner kept, by id: main re-stages just their rows
@@ -182,12 +180,11 @@ contextBridge.exposeInMainWorld("domo", {
   gatekeeperPresets: () => ipcRenderer.invoke("onboarding:gatekeeperPresets"),
   gatekeeperPreview: (preset: string, index: number, draft: string) =>
     ipcRenderer.invoke("onboarding:gatekeeperPreview", preset, index, draft),
-  onboardingBrowserExample: () => ipcRenderer.invoke("onboarding:browserExample"),
   // The renderer is sandboxed and cannot open a URL; main owns the `sms:` one,
   // so the renderer never has to build it or be trusted with it.
   onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
   onboardingNewCode: () => ipcRenderer.invoke("onboarding:newCode"),
-  onboardingFinish: (destination?: string) => ipcRenderer.invoke("onboarding:finish", destination),
+  onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
   onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
 
   // Connected accounts. OAuth stays in main: these calls carry only the
@@ -214,6 +211,10 @@ contextBridge.exposeInMainWorld("domo", {
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
+  cloudAgents: (): Promise<{
+    cloudAgents: Array<{ agentId: string; name: string; canMessage: boolean }>;
+    cloudAgentsError: string | null;
+  } | null> => ipcRenderer.invoke("cloud:agents"),
   cloudNewAgentMessages: (providerId: string) => ipcRenderer.invoke("cloud:newAgentMessages", providerId),
   cloudAwaitNewAgent: (providerId: string): Promise<string | null> => ipcRenderer.invoke("cloud:awaitNewAgent", providerId),
   cloudChangeLine: (input: { agentId: string; lineUid: string }) =>

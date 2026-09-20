@@ -235,7 +235,7 @@ the stable `device_id` and has no `ready` frame. The two request/response frame
 
 Download the app and walk through eight stages: Welcome → Verify phone → Privacy
 → Gatekeeper → Give your agents superpowers → Grant access → Keep this Mac reachable →
-Your agent asks. Plow signs in. Verification is an
+You're all set. Verification is an
 SMS activation: the app shows the exact message to send from the phone, then
 notices the verified text and links the Mac. Nothing is pasted out of a browser
 and the user never visits the portal.

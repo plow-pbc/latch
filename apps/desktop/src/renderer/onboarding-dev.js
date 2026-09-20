@@ -46,9 +46,8 @@ window.domo = {
     if (results === "pending" || !results) return new Promise(() => {});
     return Promise.resolve(results[index]);
   },
-  onboardingBrowserExample: async () => selected.browserExamplePending
-    ? new Promise(() => {})
-    : selected.browserExample ?? null,
+  cloudAgents: async () => selected.cloud ?? null,
+  cloudOpenMessages: async () => {},
   pluginsGet: plugins,
   pluginsSetEnabled: plugins,
   requirementsAct: async () => ({ ...selected.plugins, error: null }),

@@ -937,21 +937,11 @@ export async function renderVault(view, isCurrent = () => true) {
   newBtn.addEventListener("click", () => vsheet(renderVaultIn));
   masthead.appendChild(el("div", { class: "mast-acts" }, [importBtn, newBtn]));
 
-  // Two paths open the SAME importer the button above uses: a credential
-  // exchange main staged, or setup's one-shot "Import passwords" handoff.
-  // The exchange wins if both arrive together because it already carries
-  // credentials that must be reviewed; either path still lands in
-  // vimportSheet, so onboarding never owns a second import implementation.
+  // A credential exchange opens the same importer the button above uses.
   void (async () => {
     const exchange = await window.domo.vaultExchangePending().catch(() => null);
-    const requested = await window.domo.vaultImportRequested().catch(() => false);
     if (!alive()) return;
-    const mounted = exchange ? await openImport(exchange)
-      : requested ? await openImport()
-      : false;
-    if (requested && mounted) {
-      await window.domo.vaultImportAcknowledged().catch(() => {});
-    }
+    if (exchange) await openImport(exchange);
   })();
 
   const list = el("div", { class: "vlist" });

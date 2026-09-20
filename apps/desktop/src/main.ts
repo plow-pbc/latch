@@ -87,7 +87,7 @@ import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
-import { gatekeeperPresets, previewRow, selectAllowedFinishExample } from "./gatekeeperPreview.js";
+import { gatekeeperPresets, previewRow } from "./gatekeeperPreview.js";
 import {
   ApprovalDecision,
   ApprovalQueue,
@@ -253,7 +253,6 @@ let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 let telemetry: Telemetry | null = null;
-let vaultImportRequested = false;
 
 // MARK: The audit log's live index (auditIndex.ts)
 
@@ -810,6 +809,14 @@ ipcMain.handle("cloud:refresh", async () => {
   await cloudAgents?.refresh();
   return agentsTabState();
 });
+// Setup needs only the cloud-agent projection. Keep connect-client state — in
+// particular its roster and one-time credential — off this narrower bridge.
+ipcMain.handle("cloud:agents", async () => {
+  await cloudAgents?.refresh();
+  if (!cloudAgents) return null;
+  const { cloudAgents: rows, cloudAgentsError } = cloudAgents.state();
+  return { cloudAgents: rows, cloudAgentsError };
+});
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
   // The ROSTER, not the cloud agents: what was just minted is a credential,
@@ -911,14 +918,6 @@ ipcMain.handle(
       apiBaseUrl,
     }),
 );
-ipcMain.handle("onboarding:browserExample", async () => {
-  const settings = loadSettings(home);
-  return selectAllowedFinishExample(settings.agentPurpose ?? "", {
-    review: adversarialReview,
-    settings,
-    apiBaseUrl,
-  });
-});
 /**
  * Open Messages with the activation text drafted.
  *
@@ -934,16 +933,7 @@ ipcMain.handle("onboarding:openMessages", async () => {
 // The last step of the wizard. It does not just close the setup window — it
 // hands the user over to the app, which is the whole point of the gate: the
 // main window has not existed until now.
-ipcMain.handle("onboarding:finish", async (_event, destination?: string) => {
-  if (destination === "import" || destination === "enable-browser-and-import") {
-    if (destination === "enable-browser-and-import") {
-      await updateDisabledPlugins((disabled) => disabled.delete(BROWSER_PLUGIN));
-    }
-    vaultImportRequested = true;
-    const settings = loadSettings(home);
-    settings.selectedTab = "vault";
-    saveSettings(home, settings);
-  }
+ipcMain.handle("onboarding:finish", async () => {
   gate.sync();
 });
 
@@ -1130,11 +1120,6 @@ ipcMain.handle("vault:importSources", async () => {
     chrome: { icon: chromeApp ? await iconOf(chromeApp) : null },
   };
 });
-
-// Setup can finish before the main window exists. The Vault pane consumes this
-// one-shot request only once it has rendered far enough to host vimportSheet.
-ipcMain.handle("vault:importRequested", async () => vaultImportRequested);
-ipcMain.handle("vault:importAcknowledged", async () => { vaultImportRequested = false; });
 
 // Pasted text: 1Password's "Copy item JSON", or CSV text.
 ipcMain.handle("vault:importInspect", async (_e, text: string) => stageImport(parsePasswordExport(String(text))));

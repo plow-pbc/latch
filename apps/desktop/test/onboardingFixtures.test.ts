@@ -46,18 +46,11 @@ describe("onboarding visual fixtures", () => {
     for (const f of withGatekeeper) expect(f.gatekeeper.presets, f.name).toEqual(presets);
   });
 
-  it("gives every Done fixture the same display-safe browser example", () => {
+  it("finishes with the app handoff and offers a messageable agent when one exists", () => {
     const done = fixtures.filter((f) => f.state?.step === "done");
-    expect(done).toHaveLength(4);
-    for (const f of done) {
-      if (!f.browserExamplePending) {
-        expect(f.browserExample).toEqual({
-          prompt: "Amazon overcharged me for a solar panel—can you get a refund?",
-          site: "Amazon",
-        });
-      }
-      expect(f.expectAriaLabel).toBe("Agents including Claude, OpenAI, and Cursor");
-    }
+    expect(done.map((f) => f.name)).toEqual(["done-agent", "done-noagent"]);
+    expect(fixture("done-agent").expect).toEqual(["You're all set", "Text Elm", "Explore the app"]);
+    expect(fixture("done-noagent").expect).toEqual(["You're all set", "Explore the app"]);
   });
 
   it("starts every fresh plugin row on, including Browser", () => {
