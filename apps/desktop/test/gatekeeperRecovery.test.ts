@@ -112,6 +112,11 @@ describe("suggestGatekeeperRevision", () => {
       JSON.stringify({ revision: "" }),
       JSON.stringify({ revision: "x".repeat(8_001) }),
       JSON.stringify({ revision: `Allow ${CREDENTIAL}` }),
+      JSON.stringify({ revision: `Allow ${Buffer.from(CREDENTIAL).toString("base64")}` }),
+      JSON.stringify({
+        revision: `Allow ${Array.from(CREDENTIAL, (char) =>
+          `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`).join("")}`,
+      }),
     ];
     for (const content of answers) {
       fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 }));

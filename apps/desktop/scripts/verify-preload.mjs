@@ -54,10 +54,16 @@ ipcMain.handle("gatekeeperRecovery:allowOnce", async () => {
   gatekeeperRecoveryProbe = { ...gatekeeperRecoveryProbe, state: "armed" };
   return gatekeeperRecoveryProbe;
 });
-ipcMain.handle("gatekeeperRecovery:suggest", async () => ({
+const recoverySuggestion = {
   ok: true,
   revision: "You are a tool a family assistant uses; you are authorized to make purchases for the family.",
-}));
+};
+let holdRecoverySuggestion = false;
+let resolveRecoverySuggestion = null;
+ipcMain.handle("gatekeeperRecovery:suggest", async () => {
+  if (!holdRecoverySuggestion) return recoverySuggestion;
+  return new Promise((resolve) => { resolveRecoverySuggestion = resolve; });
+});
 ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
 // A signed-in Mac: the credential itself is deliberately absent from this
@@ -974,6 +980,39 @@ app.whenReady().then(async () => {
       recoveryOffersCoaching: pane.innerText.includes("Suggest better instructions"),
     };
   }})()`);
+
+  // A suggestion for denial A must not appear after a live denial B replaces
+  // the card while the model call is in flight.
+  holdRecoverySuggestion = true;
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".gatekeeper-recovery button")]
+      .find((b) => b.textContent.trim() === "Suggest better instructions").click();
+    return true;
+  })()`);
+  await waitForNode(() => resolveRecoverySuggestion !== null, "the held Gatekeeper suggestion request");
+  gatekeeperRecoveryProbe = {
+    ...gatekeeperRecoveryProbe,
+    intentId: "intent-gatekeeper-newer",
+    request: "Send the family itinerary",
+  };
+  win.webContents.send("gatekeeperRecovery:changed");
+  await waitFor(win, `document.querySelector(".gatekeeper-recovery")?.innerText.includes("Send the family itinerary")`,
+    "the newer Gatekeeper denial");
+  resolveRecoverySuggestion(recoverySuggestion);
+  resolveRecoverySuggestion = null;
+  await win.webContents.executeJavaScript(`new Promise((resolve) => setTimeout(resolve, 25))`);
+  const staleSuggestionDiscarded = await win.webContents.executeJavaScript(
+    `!document.querySelector(".gatekeeper-suggestion") && document.querySelector(".gatekeeper-recovery")?.innerText.includes("Send the family itinerary")`,
+  );
+  holdRecoverySuggestion = false;
+  gatekeeperRecoveryProbe = {
+    ...gatekeeperRecoveryProbe,
+    intentId: "intent-gatekeeper-probe",
+    request: "Buy a $125 Lego set on Amazon",
+  };
+  win.webContents.send("gatekeeperRecovery:changed");
+  await waitFor(win, `document.querySelector(".gatekeeper-recovery")?.innerText.includes("Buy a $125 Lego set on Amazon")`,
+    "the original Gatekeeper recovery probe");
   const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
     const title = [...document.querySelectorAll(".rules .item > .group-title")]
       .find((t) => t.textContent.trim() === "Approvals");
@@ -1791,6 +1830,7 @@ app.whenReady().then(async () => {
     approvalsReviewer.recoveryNamesDenial &&
     approvalsReviewer.recoveryOffersBoundedOverride &&
     approvalsReviewer.recoveryOffersCoaching &&
+    staleSuggestionDiscarded &&
     gatekeeperRecovery.armedExplained &&
     gatekeeperRecovery.suggestionEditable &&
     gatekeeperRecovery.suggestionGeneralizes &&

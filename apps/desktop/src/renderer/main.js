@@ -715,19 +715,22 @@ async function renderRules() {
     if (recovery.state === "denied") {
       const allow = el("button", { class: "btn", text: "Allow one retry" });
       allow.addEventListener("click", async () => {
+        const generation = recoveryGeneration;
         allow.disabled = true;
         const latest = await window.domo.gatekeeperRecoveryAllowOnce(recovery.intentId);
-        drawRecovery(latest);
+        if (generation === recoveryGeneration) drawRecovery(latest);
       });
       actions.appendChild(allow);
     }
 
     const suggest = el("button", { class: "btn", text: "Suggest better instructions" });
     suggest.addEventListener("click", async () => {
+      const generation = recoveryGeneration;
       suggest.disabled = true;
       suggest.textContent = "Thinking…";
       actionError.hidden = true;
       const result = await window.domo.gatekeeperRecoverySuggest(recovery.intentId);
+      if (generation !== recoveryGeneration) return;
       suggest.disabled = false;
       suggest.textContent = "Suggest better instructions";
       if (!result?.ok) {

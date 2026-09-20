@@ -1,6 +1,6 @@
 import { capabilityDisplay } from "@domo/protocol";
 import type { AuditActivityRow, DeniedIntent } from "@domo/device-core";
-import { normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
+import { echoesCredential, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 import {
   REVIEWER_MAX_TOKENS,
   REVIEWER_MODEL,
@@ -9,7 +9,6 @@ import {
 } from "./adversarialAgent.js";
 
 const MAX_REVISION_LENGTH = 8_000;
-const SECRET_HEAD = 10;
 
 export interface GatekeeperRevisionArgs {
   currentPurpose: string;
@@ -114,12 +113,7 @@ function parseRevision(text: string, credential: string): string | null {
   if (typeof revision !== "string") return null;
   const trimmed = revision.trim();
   if (!trimmed || trimmed.length > MAX_REVISION_LENGTH) return null;
-  const secret = credential.trim();
-  if (
-    secret.length >= SECRET_HEAD &&
-    (trimmed.includes(secret) ||
-      (secret.length > SECRET_HEAD && trimmed.includes(secret.slice(0, SECRET_HEAD))))
-  ) return null;
+  if (echoesCredential(trimmed, credential)) return null;
   return trimmed;
 }
 

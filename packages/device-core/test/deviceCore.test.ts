@@ -197,6 +197,30 @@ describe("PolicyEngine", () => {
     expect((await engine.decide(intentWith(caps), reviewerDenies)).source).toBe("owner_override");
   });
 
+  it("allows only one of two concurrent exact retries", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"] }];
+    const denied = intentWith(caps);
+    const release: (() => void)[] = [];
+    const reviewerDenies: PolicyDelegate = {
+      mayGrantFromOwnerOverride: () => new Promise<boolean>((resolve) => release.push(() => resolve(true))),
+      async decideIntent() {
+        return { decision: "deny" as const, source: "adversarial" };
+      },
+    };
+    await engine.decide(denied, { decideIntent: reviewerDenies.decideIntent });
+    engine.armDeniedIntentOnce(denied.intentId);
+
+    const first = engine.decide(intentWith(caps), reviewerDenies);
+    const second = engine.decide(intentWith(caps), reviewerDenies);
+    await vi.waitFor(() => expect(release).toHaveLength(2));
+    release.forEach((resolve) => resolve());
+
+    const grants = await Promise.all([first, second]);
+    expect(grants.filter((grant) => grant.source === "owner_override")).toHaveLength(1);
+    expect(grants.filter((grant) => grant.decision === "deny")).toHaveLength(1);
+  });
+
   it("always_allow stores a rule reused on the next matching intent", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const always = new HeadlessPolicy({ intent: "always_allow" });

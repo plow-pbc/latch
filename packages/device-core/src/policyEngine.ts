@@ -288,7 +288,11 @@ export class PolicyEngine {
   async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {
     const overrideKey = oneTimeFingerprint(intent);
     const overriddenIntentId = this.oneTimeOverrides.get(overrideKey);
-    if (overriddenIntentId !== undefined && (await mayGrantFromOwnerOverride(intent, delegate))) {
+    if (
+      overriddenIntentId !== undefined &&
+      (await mayGrantFromOwnerOverride(intent, delegate)) &&
+      this.oneTimeOverrides.get(overrideKey) === overriddenIntentId
+    ) {
       this.oneTimeOverrides.delete(overrideKey);
       const denied = this.deniedIntents.get(overriddenIntentId);
       if (denied) denied.state = "consumed";
