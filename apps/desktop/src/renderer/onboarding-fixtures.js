@@ -1,3 +1,5 @@
+import { queriesForPlugins } from "./onboardingExampleCatalog.js";
+
 /** Shared states for the browser picker and the offscreen screenshot harness. */
 const BACK_STEPS = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
 
@@ -80,14 +82,8 @@ export function onboardingFixtures(now) {
     done: "On",
     status: "open",
   };
-  const examples = {
-    gog: "Can you find three times that work and send them?",
-    messages: "Do you see my thread with the contractor? Are we all paid up?",
-    wiki: "What should I know before replying to this guest about the cabin?",
-    browser: "How much is in my rental account—and did the tenants pay?",
-  };
   const row = (name, title, summary, kind, status, requirements) =>
-    ({ name, title, summary, kind, description: null, example: examples[name] ?? null, status, requirements });
+    ({ name, title, summary, kind, description: null, status, requirements });
   const gmail = "Gmail and Google Calendar";
   const iMessage = "iMessage history";
   /** The four rows, with each switch state and how this Mac reads Full Disk Access. */
@@ -97,19 +93,27 @@ export function onboardingFixtures(now) {
     row("wiki", "Obsidian-style wiki", "A notebook your agents keep about the people and projects in your life.", "CLI", "ready", []),
     row("browser", "Browser use", "Browse and fill in forms in a private browser, with Safari as a fallback.", "Browser", browserStatus, [fda, safari]),
   ];
-  const onlyWiki = { rows: rows("off", "off", fullDisk, "off"), grants: [] };
-  const picked = {
-    rows: rows("needs-setup", "needs-setup", fullDisk),
-    grants: [
-      { ...fullDisk, plugins: [iMessage, "Browser use"] },
-      { ...safari, plugins: ["Browser use"] },
-      { ...google, plugins: [gmail] },
-    ],
+  const pluginState = (pluginRows, grants) => {
+    const titles = new Map(pluginRows.map((plugin) => [plugin.name, plugin.title]));
+    return {
+      rows: pluginRows,
+      grants,
+      examples: queriesForPlugins([...titles.keys()]).slice(0, 4).map(({ label, plugins }) => ({
+        query: label,
+        plugins: plugins.map((plugin) => titles.get(plugin)),
+      })),
+    };
   };
-  const fullDiskDone = {
-    rows: rows("needs-setup", "ready", fullDiskMet, "off"),
-    grants: [{ ...fullDiskMet, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
-  };
+  const onlyWiki = pluginState(rows("off", "off", fullDisk, "off"), []);
+  const picked = pluginState(rows("needs-setup", "needs-setup", fullDisk), [
+    { ...fullDisk, plugins: [iMessage, "Browser use"] },
+    { ...safari, plugins: ["Browser use"] },
+    { ...google, plugins: [gmail] },
+  ]);
+  const fullDiskDone = pluginState(
+    rows("needs-setup", "ready", fullDiskMet, "off"),
+    [{ ...fullDiskMet, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
+  );
   // The Gatekeeper step's presets as main serves them (gatekeeperPreview.ts) on
   // Friday 2026-09-18, and the verdicts its example decks are rehearsed to read.
   const online = "Network: allowed";
@@ -403,7 +407,7 @@ export function onboardingFixtures(now) {
       expect: [
         "Give your agents superpowers",
         "Plugins teach your agent how to reliably use your Mac",
-        "Can you find three times that work and send them?",
+        "Check the family calendar",
         gmail,
         iMessage,
         "Browser use",

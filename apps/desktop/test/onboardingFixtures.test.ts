@@ -32,6 +32,18 @@ describe("onboarding visual fixtures", () => {
     expect(fresh.reject).toContain("Obsidian-style wiki");
   });
 
+  it("shows shared queries only for plugins present in the setup inventory", () => {
+    expect(fixture("plugins-fresh").plugins.examples).toEqual([
+      { query: "Check the family calendar", plugins: ["Gmail and Google Calendar"] },
+      { query: "Text Mary “Running late”", plugins: ["iMessage history"] },
+      { query: "Sign in to Instacart with your password", plugins: ["Browser use"] },
+      { query: "Find unread email from your team", plugins: ["Gmail and Google Calendar"] },
+    ]);
+    expect(fixture("plugins-fresh").plugins.examples).not.toContainEqual(
+      expect.objectContaining({ query: expect.stringContaining("cabin") }),
+    );
+  });
+
   it("draws the gatekeeper from the presets main serves", () => {
     const withGatekeeper = fixtures.filter((f) => f.gatekeeper);
     expect(withGatekeeper.map((f) => f.name).sort()).toEqual([

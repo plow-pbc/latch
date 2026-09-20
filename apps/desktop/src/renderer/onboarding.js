@@ -737,7 +737,7 @@ function pluginsScreen() {
     void update(() => window.domo.onboardingSetTelemetry(telemetry.checked));
   });
 
-  const examples = (pluginsState?.rows ?? []).filter((row) => row.example);
+  const examples = pluginsState?.examples ?? [];
   const parts = [
     el("div", { class: "head-center" }, [
       el("h1", { text: "Give your agents superpowers" }),
@@ -745,10 +745,10 @@ function pluginsScreen() {
         class: "subhead",
         text: "Plugins teach your agent how to reliably use your Mac",
       }),
-      examples.length ? el("div", { class: "plugin-examples", attrs: { "aria-label": "Things you can ask" } },
-        examples.map((row) => el("span", { class: "plugin-example" }, [
-          el("small", { text: row.title }),
-          el("span", { text: `“${row.example}”` }),
+      examples.length ? el("div", { class: `plugin-examples count-${examples.length}`, attrs: { "aria-label": "Things you can ask" } },
+        examples.map((example) => el("span", { class: "plugin-example" }, [
+          el("small", { text: example.plugins.join(" + ") }),
+          el("span", { text: `“${example.query}”` }),
         ]))) : null,
     ]),
   ];

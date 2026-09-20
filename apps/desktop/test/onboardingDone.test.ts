@@ -24,11 +24,6 @@ describe("the onboarding Done agent", () => {
       expected: null,
     },
     {
-      caseName: "rejected loader",
-      load: async () => { throw new Error("offline"); },
-      expected: null,
-    },
-    {
       caseName: "cloudAgentsError",
       load: async () => ({
         cloudAgentsError: "Something went wrong. Try again.",

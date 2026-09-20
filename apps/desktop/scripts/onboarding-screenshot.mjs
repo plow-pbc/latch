@@ -158,10 +158,10 @@ for (const fixture of SCREENS.filter((f) => f.click)) {
 }
 
 const pluginQueries = [
-  "Can you find three times that work and send them?",
-  "Do you see my thread with the contractor? Are we all paid up?",
-  "What should I know before replying to this guest about the cabin?",
-  "How much is in my rental account—and did the tenants pay?",
+  "Check the family calendar",
+  "Text Mary “Running late”",
+  "Sign in to Instacart with your password",
+  "Find unread email from your team",
 ];
 const pluginsFreshFixture = SCREENS.find((fixture) => fixture.name === "plugins-fresh");
 pluginsFreshFixture.prepare = async (win) => {

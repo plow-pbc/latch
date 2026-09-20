@@ -12,6 +12,7 @@ import {
   browserPluginRow,
   BROWSER_RUNTIME,
   grantList,
+  pluginExamples,
   pluginRows,
   SAFARI_JAVASCRIPT,
   type PluginRow,
@@ -149,19 +150,6 @@ describe("the shipped plugins", () => {
     expect(row).toMatchObject({ name, title });
   });
 
-  it.each([
-    ["gog", "Can you find three times that work and send them?"],
-    ["messages", "Do you see my thread with the contractor? Are we all paid up?"],
-    ["wiki", "What should I know before replying to this guest about the cabin?"],
-  ])("owns the onboarding example for shipped plugin %s", (name, example) => {
-    const [row] = pluginRows({ plugins: [{ manifest: shipped(name), enabled: true }], connectedAccounts: [], grantedPermissions: [], relaunchPending: [] });
-    expect(row!.example).toBe(example);
-  });
-
-  it("does not invent an onboarding example for an unknown plugin", () => {
-    const [row] = pluginRows({ plugins: [{ manifest: manifest(none, "other"), enabled: true }], connectedAccounts: [], grantedPermissions: [], relaunchPending: [] });
-    expect(row!.example).toBeNull();
-  });
 });
 
 describe("browserPluginRow", () => {
@@ -182,7 +170,6 @@ describe("browserPluginRow", () => {
   ] as const)("is %s", (_what, input, status, requirements) => {
     const row = browserPluginRow(input);
     expect(row).toMatchObject({ name: BROWSER_PLUGIN, title: "Browser use", kind: "Browser", status });
-    expect(row.example).toBe("How much is in my rental account—and did the tenants pay?");
     // The words the owner reads, exactly — a swap of the two would otherwise pass.
     expect(row.requirements).toEqual(requirements);
   });
@@ -196,9 +183,34 @@ describe("browserPluginRow", () => {
   });
 });
 
+describe("plugin examples", () => {
+  const row = (name: string, title: string): PluginRow => ({
+    name, title, summary: null, kind: name === BROWSER_PLUGIN ? "Browser" : "CLI",
+    description: null, status: "off", requirements: [],
+  });
+
+  it("labels the first four catalog queries whose plugins are present", () => {
+    expect(pluginExamples([
+      row("gog", "Gmail and Google Calendar"),
+      row("messages", "iMessage history"),
+      row("wiki", "Obsidian-style wiki"),
+      row(BROWSER_PLUGIN, "Browser use"),
+    ], 4)).toEqual([
+      { query: "Check the family calendar", plugins: ["Gmail and Google Calendar"] },
+      { query: "Text Mary “Running late”", plugins: ["iMessage history"] },
+      { query: "Sign in to Instacart with your password", plugins: ["Browser use"] },
+      { query: "Find unread email from your team", plugins: ["Gmail and Google Calendar"] },
+    ]);
+  });
+
+  it("does not advertise queries for plugins absent from the inventory", () => {
+    expect(pluginExamples([row("wiki", "Obsidian-style wiki")])).toEqual([]);
+  });
+});
+
 describe("grantList", () => {
   const rowWith = (title: string, status: PluginRow["status"], requirements: PluginRow["requirements"]): PluginRow => ({
-    name: title.toLowerCase(), title, summary: null, kind: "CLI", description: null, example: null, status, requirements,
+    name: title.toLowerCase(), title, summary: null, kind: "CLI", description: null, status, requirements,
   });
 
   it("dedupes a permission two switched-on plugins share, listing both titles once", () => {

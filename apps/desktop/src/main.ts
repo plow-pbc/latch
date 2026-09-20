@@ -63,7 +63,7 @@ import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { capabilitiesView, CapabilitiesView, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
-import { browserPluginRow, grantList, pluginRows, type GrantItem, type PluginRow } from "./pluginsModel.js";
+import { browserPluginRow, grantList, pluginExamples, pluginRows, type GrantItem, type PluginExample, type PluginRow } from "./pluginsModel.js";
 import { actOnRequirement } from "./requirements.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
@@ -1623,7 +1623,7 @@ function connectorAccountNotices(): Record<string, { message: string; noteKind: 
  *  cannot disagree. The inventory asks only about the Automation pairs a
  *  staged plugin declares: this runs on every refresh, and the full sweep
  *  waits out a probe timeout on any app not answering Apple events. */
-async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }> {
+async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; examples: PluginExample[] }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
   const automationTargets = stagedPlugins
     .flatMap((p) => p.manifest.requires.permissions)
@@ -1653,7 +1653,7 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[] }>
     relaunchPending,
     description: device?.skills.skill(BROWSING_SKILL.name)?.description ?? BROWSING_SKILL.description,
   }));
-  return { rows, grants: grantList(rows) };
+  return { rows, grants: grantList(rows), examples: pluginExamples(rows) };
 }
 
 /** Plugins → Continue: does a switched-on plugin still need a grant? A resumed
