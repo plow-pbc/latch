@@ -1,4 +1,6 @@
 /** Shared states for the browser picker and the offscreen screenshot harness. */
+const BACK_STEPS = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
+
 export function onboardingFixtures(now) {
   const displayCode = "Z1SWY";
   const sendTo = "+1 555 987 6543";
@@ -9,6 +11,7 @@ export function onboardingFixtures(now) {
     smsUrl: `sms:${sendTo}?&body=Plow%20Activate%3A%20${displayCode}`,
     pollUntil: now + 4 * 60_000 + 30_000,
   };
+  const expiredActivation = { ...activation, pollUntil: now - 1 };
   const base = {
     message: "",
     noteKind: "error",
@@ -206,7 +209,7 @@ export function onboardingFixtures(now) {
     grants: [{ ...fullDiskRelaunch, plugins: [iMessage] }],
   };
 
-  return [
+  const fixtures = [
     {
       name: "welcome",
       state: { ...base, step: "welcome" },
@@ -218,51 +221,47 @@ export function onboardingFixtures(now) {
       ],
       expectFocus: "Get started",
       expectTitle: "Plow Latch. Set Up.",
-      expectAriaLabel: "Plow Latch Set Up",
+      expectAriaLabels: ["Plow Latch Set Up"],
     },
     {
       name: "verify",
       state: { ...base, step: "activate", activation },
       cloud: noAgents,
       expect: [
-        "Verify your phone to connect this Mac",
-        "Send the message below from the phone number you want to use with Plow",
+        "Connect with a text",
         displayCode,
         `Plow Activate: ${displayCode}`,
         sendTo,
-        "Send to:",
-        "Keep this private",
-        "Anyone who sends this code from their number can link it to this Plow account",
+        "Private activation code",
+        "Anyone who sends it can link this account",
         "Waiting for your text",
-        "Listening for 4:",
-        "Open Messages to activate",
+        "4:",
+        "Send in Messages",
         "Continue",
-        "Still waiting? Send it again",
       ],
-      reject: ["Get a new code", "Use a phone code instead"],
-      expectFocus: "Open Messages to activate",
+      reject: ["Send the message below", "Keep this private", "Still waiting? Send it again", "Get a new code", "Use a phone code instead"],
+      expectAriaLabels: ["Copy phone number", "Copy activation message"],
+      expectFocus: "Send in Messages",
     },
     {
       name: "verify-rearm",
-      state: { ...base, step: "activate", activation },
+      state: { ...base, step: "activate", activation: expiredActivation },
       cloud: noAgents,
       expect: [
-        "Verify your phone to connect this Mac",
-        "Send the message below from the phone number you want to use with Plow",
+        "Connect with a text",
         displayCode,
         `Plow Activate: ${displayCode}`,
         sendTo,
-        "Send to:",
-        "Keep this private",
-        "Anyone who sends this code from their number can link it to this Plow account",
+        "Private activation code",
+        "Anyone who sends it can link this account",
         "Waiting for your text",
-        "Open Messages to activate",
+        "Send in Messages",
         "Continue",
-        "Still waiting? Send it again",
         "That code still works — send it exactly as shown and this screen will move on by itself.",
       ],
       reject: ["Get a new code", "Use a phone code instead"],
-      expectFocus: "Open Messages to activate",
+      expectAriaLabels: ["Copy phone number", "Copy activation message"],
+      expectFocus: "Send in Messages",
     },
     {
       name: "verify-unavailable",
@@ -281,17 +280,35 @@ export function onboardingFixtures(now) {
       state: { ...base, step: "waiting", activation },
       cloud: noAgents,
       expect: [
-        "Verify your phone to connect this Mac",
+        "Connect with a text",
         displayCode,
         `Plow Activate: ${displayCode}`,
+        "Private activation code",
+        "Anyone who sends it can link this account",
         "Waiting for your text",
-        "Listening for 4:",
-        "Open Messages to activate",
-        "Still waiting? Send it again",
+        "4:",
+        "Send in Messages",
         "Continue",
       ],
       reject: ["Get a new code", "Use a phone code instead"],
-      expectFocus: "Open Messages to activate",
+      expectAriaLabels: ["Copy phone number", "Copy activation message"],
+      expectFocus: "Send in Messages",
+    },
+    {
+      name: "verify-expired",
+      state: { ...base, step: "waiting", activation: expiredActivation },
+      cloud: noAgents,
+      expect: [
+        "Connect with a text",
+        `Plow Activate: ${displayCode}`,
+        "Private activation code",
+        "Anyone who sends it can link this account",
+        "Try again",
+        "Send in Messages",
+      ],
+      reject: ["Waiting for your text", "Still waiting? Send it again"],
+      expectAriaLabels: ["Copy phone number", "Copy activation message"],
+      expectFocus: "Send in Messages",
     },
     {
       name: "waiting-gave-up",
@@ -304,9 +321,16 @@ export function onboardingFixtures(now) {
           "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or try again.",
       },
       cloud: noAgents,
-      expect: ["Still not signed in", "it has to start with", "Plow Activate:", "Try again"],
+      expect: [
+        "Private activation code",
+        "Anyone who sends it can link this account",
+        "Still not signed in",
+        "it has to start with",
+        "Plow Activate:",
+        "Try again",
+      ],
       reject: ["Still waiting? Send it again", "Get a new code", "Use a phone code instead"],
-      expectFocus: "Open Messages to activate",
+      expectFocus: "Send in Messages",
     },
     {
       name: "privacy",
@@ -336,15 +360,17 @@ export function onboardingFixtures(now) {
       gatekeeper: { presets: gatekeeperPresets, results: homeResults },
       expect: [
         "Meet the Plow Gatekeeper",
-        "Plow's adversarial reviewer protects your data from malicious queries, while allowing your agents to get useful work done.",
-        "What access should it allow to your Mac?",
+        "Protect your data from malicious queries, while allowing your agents to get useful work done.",
+        "What access should Plow Latch allow to your Mac?",
         "Use a default:", "Personal assistant", "Executive assistant",
         ...gatekeeperPresets.home.rows.map((r) => r.label),
+        "Back",
         "Continue",
       ],
       expectValues: [gatekeeperPresets.home.text],
       // A closed row's detail is out of the page's text.
-      reject: ["Back", "Tap a request", "Name the work", "never sees it", "Gatekeeper Verdict"],
+      reject: ["Plow's adversarial reviewer", "Tap a request", "Name the work", "never sees it", "Gatekeeper Verdict"],
+      expectOrder: [".gatekeeper-screen .subhead", ".gk-prompt", ".gk-text", ".gk-defaults", ".gk-field"],
       expectFocus: "Continue",
       expectDotCount: 6,
     },
@@ -353,9 +379,8 @@ export function onboardingFixtures(now) {
       state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.work.text },
       cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: workResults },
-      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.work.rows.map((r) => r.label), "Continue"],
+      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.work.rows.map((r) => r.label), "Back", "Continue"],
       expectValues: [gatekeeperPresets.work.text],
-      reject: ["Back"],
       expectDotCount: 6,
     },
     {
@@ -412,14 +437,13 @@ export function onboardingFixtures(now) {
         "Can you find three times that work and send them?",
         gmail,
         iMessage,
-        "Obsidian-style wiki",
         "Browser use",
         "Share usage data so we can improve Plow",
         "Never your messages or your data",
         "Back",
         "Continue",
       ],
-      reject: ["You'll grant next", "Nothing to grant", "Required:", `for ${iMessage}`],
+      reject: ["Obsidian-style wiki", "You'll grant next", "Nothing to grant", "Required:", `for ${iMessage}`],
       expectFocus: "Continue",
       expectDotCount: 6,
     },
@@ -574,4 +598,11 @@ export function onboardingFixtures(now) {
       reject: ["Text Elm", "Enable Browser & import passwords"],
     },
   ];
+  return fixtures.map((fixture) => ({
+    ...fixture,
+    state: {
+      ...fixture.state,
+      canGoBack: BACK_STEPS.has(fixture.state.step),
+    },
+  }));
 }

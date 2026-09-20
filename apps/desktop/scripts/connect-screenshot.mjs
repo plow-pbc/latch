@@ -322,7 +322,7 @@ const SCREENS = [
       "mary@work.com", "Add another",
     ],
     reject: ["Slack", CONNECTOR_TIMEOUT_NOTE, "Set default"],
-    expectAriaLabel: "Account actions",
+    expectAriaLabels: ["Account actions"],
   },
   {
     name: "capabilities-connect-connecting",

@@ -218,7 +218,7 @@ export class BrowserSessions {
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
     /** Consulted before releasing a credential into a financial destination.
-     * `null` means no owner-approval client is wired, which fails closed: every
+     * `null` means no payment-authorization client is wired, which fails closed: every
      * financial release is blocked. Production injects the real plow-consume
      * client (see `DeviceAgent`). */
     private readonly approval: PaymentApprovalClient | null = null,
@@ -973,7 +973,7 @@ export class BrowserSessions {
 
   /**
    * The fail-closed collapse for the financial gate. Returns `null` when the
-   * owner's single-use payment approval was consumed successfully (release may
+   * single-use payment authorization was consumed successfully (release may
    * proceed), or a short reason string when the release must be BLOCKED.
    *
    * Every non-approval path blocks and is told apart only for the owner's audit
@@ -983,12 +983,12 @@ export class BrowserSessions {
    * surfaces here as a thrown error — no separate timeout machinery needed.
    */
   private async blockedByApproval(sessionId: string, domain: string): Promise<string | null> {
-    if (!this.approval) return "no owner-approval client is configured";
+    if (!this.approval) return "no payment-authorization client is configured";
     try {
       const { approved } = await this.approval.consumePaymentApproval({ sessionId, domain });
-      return approved === true ? null : "the owner has not approved this payment";
+      return approved === true ? null : "no payment authorization is available";
     } catch {
-      return "the owner-approval service could not be reached";
+      return "the payment-authorization service could not be reached";
     }
   }
 
@@ -1143,7 +1143,7 @@ export class BrowserSessions {
 
     // FAIL-CLOSED FINANCIAL GATE. Before the vault is even asked for the value,
     // a release whose device-observed destination matches the bundled v1 bank
-    // registry must carry an owner-approved payment approval, consumed
+    // registry must carry a payment authorization, consumed
     // single-use from the plow cloud. Non-matching destinations never reach the
     // approval client and behave exactly as before; a missed registry entry is
     // the accepted v1 residual documented in financialGate.ts.
@@ -1166,7 +1166,8 @@ export class BrowserSessions {
           status: "error",
           error:
             `${field} was not filled: releasing a banking credential onto ${frameHost} ` +
-            `requires the owner's payment approval, and none was found. Nothing was released.`,
+            `requires a payment authorization requested through plow_request_payment, ` +
+            `and none was found. Nothing was released.`,
         };
       }
       // Approved: record that the gate was consulted and passed, then fall
