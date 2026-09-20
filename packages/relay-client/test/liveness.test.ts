@@ -61,7 +61,7 @@ class FakeConn implements Connection {
   }
 }
 
-describe("a socket that goes silent", () => {
+describe("a socket that drops, and the reconnect that follows", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
@@ -248,34 +248,13 @@ describe("a socket that goes silent", () => {
 
     await client.stop();
   });
-});
-
-describe("a relay that hands the socket over", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
 
   it("redials at once on 4010, and keeps the backoff it had", async () => {
     // A rolling deploy closes every socket with 4010 "moved" while the next
     // instance is already accepting them. Waiting out a backoff would idle the
     // Mac for nothing, and counting the drop as a failure would make the next
     // real one — a relay that is actually down — wait longer than it should.
-    const conns: FakeConn[] = [];
-    const client = new RelayClient({
-      url: "ws://example.invalid/relay",
-      credential: "plow_sk_test",
-      deviceId: "device-1",
-      serve: async () => new Response("no"),
-      // Full jitter pinned to the ceiling, so each backoff lands at a time the
-      // test can name.
-      random: () => 1,
-      dial: () => ({
-        connect: async () => {
-          const conn = new FakeConn();
-          conns.push(conn);
-          return conn;
-        },
-      }),
-    });
+    const { client, conns } = harness();
     await client.start();
 
     // An ordinary drop, before any handshake clears the counter: first attempt,
