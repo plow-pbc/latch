@@ -702,7 +702,7 @@ async function signOutThisMac(): Promise<void> {
   // A second click, before the button re-rendered. The first already signed
   // out; going round again would reset the setup window and mint a fresh code
   // over the one the user may have just texted.
-  if (!isSignedIn(home)) return;
+  if (!isSignedIn(home) && !relay) return;
   // Before the credential is cleared, so the event still keys on the account
   // that is signing out rather than the anonymous install id.
   telemetry?.track("signed_out");
@@ -2088,8 +2088,9 @@ const gate = new WindowGate({
  * is what makes this safe to call on every settings change.
  */
 async function startRelay(): Promise<void> {
-  await relay?.stop();
+  const previousRelay = relay;
   relay = null;
+  await previousRelay?.stop();
   connected = false;
   notifyRenderer("status:changed");
 
