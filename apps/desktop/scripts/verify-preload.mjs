@@ -60,6 +60,8 @@ let gatekeeperActivity = {
   timeline: [{ text: "Denied by Gatekeeper", state: "bad", at: "2026-09-20T19:00:01.000Z" }],
 };
 let auditCleared = false;
+let holdAuditClear = false;
+let resolveAuditClear = null;
 ipcMain.handle("audit:page", async () => {
   const rows = auditCleared ? [] : [gatekeeperActivity];
   return { rows, total: rows.length, size: rows.length };
@@ -67,6 +69,9 @@ ipcMain.handle("audit:page", async () => {
 ipcMain.handle("audit:activity", async (_event, id) =>
   !auditCleared && id === gatekeeperActivity.id ? gatekeeperActivity : null);
 ipcMain.handle("audit:clear", async () => {
+  if (holdAuditClear) {
+    await new Promise((resolve) => { resolveAuditClear = resolve; });
+  }
   auditCleared = true;
   return true;
 });
@@ -996,7 +1001,7 @@ app.whenReady().then(async () => {
         "Keep it out of everything else on this computer — no files, no other sites.",
       ) ?? false,
       labelled: pane.querySelector(".gatekeeper-field-head label")?.textContent.trim() === "Instructions",
-      explainsEnabled: pane.innerText.includes("Requests not already allowed by a rule or the Plow workspace go to the AI Reviewer."),
+      explainsEnabled: pane.innerText.includes("Requests outside the Plow workspace go to the AI Reviewer."),
       noAdversarialWord: !/adversarial/i.test(pane.innerText),
       recoveryNamesDenial: pane.innerText.includes("Gatekeeper denied this request"),
       recoveryOffersCoaching: pane.innerText.includes("Suggest revised instructions"),
@@ -1103,13 +1108,21 @@ app.whenReady().then(async () => {
   const gatekeeperRecoveryShot = process.env.GATEKEEPER_RECOVERY_OUT ?? "/tmp/gatekeeper-recovery.png";
   await captureAfterPaint(win, gatekeeperRecoveryShot);
   await win.webContents.executeJavaScript(`(() => {
+    const field = document.querySelector("#view .gatekeeper-purpose textarea.text");
+    field.value = "A pending draft that the coached replacement must supersede.";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  })()`);
+  await win.webContents.executeJavaScript(`(() => {
     [...document.querySelectorAll(".gatekeeper-suggestion-modal button")]
       .find((b) => b.textContent.trim() === "Save instructions").click();
     return true;
   })()`);
   await waitFor(win, `!document.querySelector(".gatekeeper-suggestion-modal")`,
     "the saved suggestion modal to close");
+  await win.webContents.executeJavaScript(`new Promise((resolve) => setTimeout(resolve, 650))`);
   gatekeeperRecovery.savedAndDismissed = gatekeeperRecoveryProbe === null;
+  gatekeeperRecovery.savedPurposeWon = loadSettings(probeHome).agentPurpose === recoverySuggestion.revision;
 
   // The field autosaves after typing pauses, and what goes back on screen is
   // what the setter stored.
@@ -1235,13 +1248,28 @@ app.whenReady().then(async () => {
   win.webContents.send("ui:showGatekeeperRecovery");
   await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
     "the denial detail before clearing Audit");
+  holdAuditClear = true;
   await win.webContents.executeJavaScript(`
     [...document.querySelectorAll("#view button")]
       .find((button) => button.textContent.trim() === "Clear Log")
       .click()
   `);
-  await waitForNode(() => gatekeeperRecoveryProbe === null, "clearing Audit to dismiss denial attention");
-  globalNotice.clearDismissesAttention = auditCleared;
+  await waitForNode(() => resolveAuditClear !== null, "the held Audit clear");
+  gatekeeperRecoveryProbe = {
+    intentId: "intent-after-clear",
+    agent: "Family assistant",
+    request: "A newer denied request",
+    capabilities: ["Network: allowed"],
+    reason: "Newer denial",
+  };
+  win.webContents.send("gatekeeperRecovery:changed");
+  await waitFor(win, `!document.querySelector(".gatekeeper-denial-detail")`,
+    "the newer denial attention to replace the cleared row's attention");
+  holdAuditClear = false;
+  resolveAuditClear();
+  resolveAuditClear = null;
+  await waitForNode(() => auditCleared, "Audit to finish clearing");
+  globalNotice.clearPreservesNewerAttention = gatekeeperRecoveryProbe?.intentId === "intent-after-clear";
 
   // …and the Agents pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
@@ -1920,6 +1948,7 @@ app.whenReady().then(async () => {
     gatekeeperRecovery.noKeepAction &&
     gatekeeperRecovery.hasDismiss &&
     gatekeeperRecovery.savedAndDismissed &&
+    gatekeeperRecovery.savedPurposeWon &&
     purposeRoundTrip.stored &&
     purposeRoundTrip.fieldShowsWhatWasStored &&
     gatekeeperCloseFlush.allowed &&
@@ -1933,7 +1962,7 @@ app.whenReady().then(async () => {
     globalNotice.dismiss &&
     globalNotice.routed &&
     globalNotice.dismissedWithoutDeletingRow &&
-    globalNotice.clearDismissesAttention &&
+    globalNotice.clearPreservesNewerAttention &&
     settings.noApprovalModeGroup &&
     settings.noModeChipsHere &&
     settings.saysNothingAdversarial &&

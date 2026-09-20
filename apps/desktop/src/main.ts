@@ -92,7 +92,6 @@ import {
   dismissGatekeeperAttention,
   gatekeeperRecoveryView,
   type GatekeeperRecoveryView,
-  representativeCommands,
   suggestGatekeeperRevision,
 } from "./gatekeeperRecovery.js";
 import {
@@ -643,7 +642,6 @@ ipcMain.handle("gatekeeperRecovery:suggest", async (_e, intentId: unknown) => {
     currentPurpose: settings.agentPurpose ?? "",
     deniedRequest: denied.intent.request,
     capabilities: denied.intent.capabilities.map((capability) => capabilityDisplay(capability)),
-    typicalCommands: representativeCommands(ensureAuditIndex().activities(), intentId),
     plowCredential: settings.relayCredential ?? "",
     apiBaseUrl,
   });

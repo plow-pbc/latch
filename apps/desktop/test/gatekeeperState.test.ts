@@ -9,7 +9,7 @@ afterEach(() => vi.useRealTimers());
 
 describe("Gatekeeper mode presentation", () => {
   it.each([
-    ["adversarial", "Enabled", "Requests not already allowed by a rule or the Plow workspace go to the AI Reviewer."],
+    ["adversarial", "Enabled", "Requests outside the Plow workspace go to the AI Reviewer."],
     ["ask", "Ask every time", "Requests not already allowed by a rule or the Plow workspace open an approval window."],
     ["approve", "Approve everything", "Every request runs without review."],
     ["deny", "Deny everything", "Every request is refused."],

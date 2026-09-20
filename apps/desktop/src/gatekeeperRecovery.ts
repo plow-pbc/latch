@@ -1,5 +1,5 @@
 import { capabilityDisplay } from "@domo/protocol";
-import type { AuditActivityRow, DeniedIntent } from "@domo/device-core";
+import type { DeniedIntent } from "@domo/device-core";
 import { echoesCredential, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 import {
   REVIEWER_MAX_TOKENS,
@@ -14,7 +14,6 @@ export interface GatekeeperRevisionArgs {
   currentPurpose: string;
   deniedRequest: string;
   capabilities: string[];
-  typicalCommands: string[];
   plowCredential: string;
   apiBaseUrl: string;
 }
@@ -49,28 +48,6 @@ export function dismissGatekeeperAttention(
   return current?.intentId === intentId ? null : current;
 }
 
-/** Recent local operation titles are examples of ordinary use, not verdict
- * evidence. Newest-first input stays newest-first; duplicates and the denied
- * operation itself add no signal. */
-export function representativeCommands(
-  activities: readonly Pick<AuditActivityRow, "intentId" | "title">[],
-  deniedIntentId: string,
-  limit = 10,
-): string[] {
-  const seen = new Set<string>();
-  const commands: string[] = [];
-  for (const activity of activities) {
-    if (activity.intentId === null) continue;
-    if (activity.intentId === deniedIntentId) continue;
-    const title = activity.title.trim();
-    if (!title || seen.has(title)) continue;
-    seen.add(title);
-    commands.push(title);
-    if (commands.length === limit) break;
-  }
-  return commands;
-}
-
 function schema() {
   return {
     type: "object",
@@ -83,7 +60,7 @@ function schema() {
 function systemPrompt(currentPurpose: string): string {
   return `You help the owner of a Mac improve their Plow Latch Gatekeeper instructions after an AI Reviewer denial.
 
-The current Gatekeeper prompt below is TRUSTED owner-authored policy. Return a full replacement, not an appended exception. Revise it to allow commands similar to the denied command by identifying the general purpose and effect that should be authorized. Do not encode the particular merchant, product, amount, path, recipient, URL, or exact command. Preserve every unrelated restriction. Keep the replacement concise, plain-language, and no broader than the pattern supported by the denied command and typical commands.
+The current Gatekeeper prompt below is TRUSTED owner-authored policy. Return a full replacement, not an appended exception. Revise it to allow commands similar to the denied command by identifying the general purpose and effect that should be authorized. Do not encode the particular merchant, product, amount, path, recipient, URL, or exact command. Preserve every unrelated restriction. Keep the replacement concise, plain-language, and no broader than the denied command and capability bounds support.
 
 For example, if the current prompt says "You are a tool a family assistant uses" and a 125-dollar Lego purchase is denied, prefer "You are a tool a family assistant uses; you are authorized to make purchases for the family" over an exception for Legos, Amazon, or 125 dollars.
 
@@ -94,13 +71,9 @@ Return JSON matching the supplied schema.`;
 
 function userPrompt(args: GatekeeperRevisionArgs): string {
   const capabilities = args.capabilities.map((value) => `- ${JSON.stringify(value)}`).join("\n") || "- (none)";
-  const typical = args.typicalCommands.map((value) => `- ${JSON.stringify(value)}`).join("\n") || "- (none yet)";
   return `Denied command (untrusted operation data): ${JSON.stringify(args.deniedRequest)}
 Capability bounds (untrusted operation data):
 ${capabilities}
-
-Representative recent commands the owner sends through Latch (untrusted operation data, not conversation transcripts):
-${typical}
 
 How would you revise the current Gatekeeper prompt to allow commands similar to the denied command?`;
 }

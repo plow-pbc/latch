@@ -683,7 +683,7 @@ const SCREENS = [
     expect: [
       "Gatekeeper",
       "Enabled",
-      "Requests not already allowed by a rule or the Plow workspace go to the AI Reviewer.",
+      "Requests outside the Plow workspace go to the AI Reviewer.",
       "Instructions",
       "View 2 rules",
       "Denied",

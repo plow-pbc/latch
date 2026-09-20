@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   dismissGatekeeperAttention,
   gatekeeperRecoveryView,
-  representativeCommands,
   suggestGatekeeperRevision,
 } from "../src/gatekeeperRecovery.js";
 import { makeIntent } from "@domo/protocol";
@@ -37,32 +36,6 @@ describe("dismissGatekeeperAttention", () => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("representativeCommands", () => {
-  it("takes ten recent, distinct local requests and omits the denied one", () => {
-    const rows = [
-      { intentId: "denied", title: "Buy Lego", command: "open amazon" },
-      { intentId: null, title: "Browser session closed", command: null },
-      { intentId: "12", title: "Book a dentist appointment", command: null },
-      { intentId: "11", title: "Order groceries", command: null },
-      { intentId: "10", title: "Order groceries", command: null },
-      ...Array.from({ length: 12 }, (_, i) => ({ intentId: String(9 - i), title: `Task ${9 - i}`, command: null })),
-    ];
-
-    expect(representativeCommands(rows, "denied")).toEqual([
-      "Book a dentist appointment",
-      "Order groceries",
-      "Task 9",
-      "Task 8",
-      "Task 7",
-      "Task 6",
-      "Task 5",
-      "Task 4",
-      "Task 3",
-      "Task 2",
-    ]);
-  });
-});
-
 describe("gatekeeperRecoveryView", () => {
   it("projects only the owner-facing request, capabilities, and reason", () => {
     const intent = makeIntent({
@@ -88,7 +61,6 @@ describe("suggestGatekeeperRevision", () => {
     currentPurpose: "You are a tool a family assistant uses.",
     deniedRequest: "Buy a $125 Lego set on Amazon",
     capabilities: ["Browser: amazon.com"],
-    typicalCommands: ["Order groceries", "Book a dentist appointment"],
     plowCredential: CREDENTIAL,
     apiBaseUrl: "https://api.plow.co",
   });
@@ -105,7 +77,7 @@ describe("suggestGatekeeperRevision", () => {
     expect(system.content).toContain("Preserve every unrelated restriction");
     expect(system.content).toContain("You are a tool a family assistant uses.");
     expect(user.content).toContain("Buy a $125 Lego set on Amazon");
-    expect(user.content).toContain("Order groceries");
+    expect(user.content).not.toContain("Representative recent commands");
     expect(body.response_format.json_schema.schema).toEqual({
       type: "object",
       properties: { revision: { type: "string" } },

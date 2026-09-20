@@ -2,7 +2,7 @@ const MODES = {
   adversarial: {
     mode: "adversarial",
     label: "Enabled",
-    description: "Requests not already allowed by a rule or the Plow workspace go to the AI Reviewer.",
+    description: "Requests outside the Plow workspace go to the AI Reviewer.",
   },
   ask: {
     mode: "ask",

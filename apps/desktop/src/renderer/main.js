@@ -215,9 +215,10 @@ async function renderAudit() {
   const count = el("span", { class: "count" });
   const clearBtn = el("button", { class: "btn small", text: "Clear Log" });
   clearBtn.addEventListener("click", async () => {
+    const attentionIntentId = gatekeeperAttention?.intentId;
     const cleared = await window.domo.auditClear();
     if (cleared) {
-      if (gatekeeperAttention) await dismissGatekeeperRecovery(gatekeeperAttention.intentId);
+      if (attentionIntentId) await dismissGatekeeperRecovery(attentionIntentId);
       selectedId = null;
       auditDetail = { id: null, activity: null };
       refreshAudit({ changed: new Set(["*"]) });
@@ -752,8 +753,11 @@ function openGatekeeperSuggestionModal(trigger, attention) {
     const save = el("button", { class: "btn primary", text: "Save instructions" });
     save.addEventListener("click", async () => {
       save.disabled = true;
-      const stored = await window.domo.agentPurposeSet(suggestion.value);
-      auditMounted?.gatekeeper.setPurpose(stored);
+      const saved = await auditMounted?.gatekeeper.savePurpose(suggestion.value);
+      if (!saved) {
+        save.disabled = false;
+        return;
+      }
       await dismissGatekeeperRecovery(attention.intentId);
       closeGatekeeperSuggestionModal();
     });
@@ -1042,9 +1046,11 @@ function createGatekeeperCard() {
       if (state.phase === "error") purposeInput.focus();
       return state.phase !== "error";
     },
-    setPurpose(value) {
+    async savePurpose(value) {
+      await ready;
       purposeInput.value = value;
-      setSaveState({ phase: "saved", draft: value });
+      autosave.edit(value);
+      return (await autosave.flush()).phase !== "error";
     },
     dispose() {
       unsubscribe?.();
@@ -2915,8 +2921,7 @@ async function selectTab(tab) {
   // Already there: a rebuild would throw away an open form for no navigation at
   // all, which is the loss this guard exists to prevent.
   if (tab === currentTab) return true;
-  if (currentTab === "vault" && !(await vaultConfirmLeave())) return false;
-  if (currentTab === "audit" && auditMounted && !(await auditMounted.gatekeeper.flushPrompt())) return false;
+  if (!(await confirmCurrentTabLeave())) return false;
   if (currentTab === "audit") auditMounted?.gatekeeper.dispose();
   currentTab = tab;
   drawGatekeeperNotice();
@@ -2934,6 +2939,12 @@ async function selectTab(tab) {
   if (tab !== "agents") agentsMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
+  return true;
+}
+
+async function confirmCurrentTabLeave() {
+  if (currentTab === "vault") return vaultConfirmLeave();
+  if (currentTab === "audit" && auditMounted) return auditMounted.gatekeeper.flushPrompt();
   return true;
 }
 
@@ -3001,15 +3012,7 @@ window.domo.onConfirmLeave(async (hasPendingAgentSetup) => {
     window.domo.confirmLeaveReply(false);
     return;
   }
-  if (currentTab === "vault") {
-    window.domo.confirmLeaveReply(await vaultConfirmLeave());
-    return;
-  }
-  if (currentTab === "audit" && auditMounted) {
-    window.domo.confirmLeaveReply(await auditMounted.gatekeeper.flushPrompt());
-    return;
-  }
-  window.domo.confirmLeaveReply(true);
+  window.domo.confirmLeaveReply(await confirmCurrentTabLeave());
 });
 
 // Only check once Settings is actually on screen — see checkForUpdatesFromMenu.
