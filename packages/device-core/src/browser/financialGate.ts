@@ -1,12 +1,12 @@
 /**
  * The fail-closed gate that blocks releasing a BANKING credential unless an
- * owner-approved payment approval exists.
+ * payment authorization exists.
  *
  * This module holds two things:
  *   1. DETECTION — `isFinancialDestination`: is a given credential release
  *      "financial"?
  *   2. The client SEAM — `PaymentApprovalClient` — that asks the plow cloud
- *      whether the owner approved this payment (single-use CONSUME).
+ *      whether this payment was authorized (single-use CONSUME).
  *
  * Enforcement lives in `BrowserSessions.fillSecret()`: it runs detection on the
  * DEVICE-observed destination host (which the agent cannot spoof), and — when
@@ -22,7 +22,7 @@
  * Detection uses the accepted v1 bank-domain registry in `bankDomains.ts`.
  * The device-observed destination host is what the browser actually resolved
  * for the field, so an agent cannot spoof the host checked here. A listed exact
- * domain or subdomain fails closed through the owner-approval consume step.
+ * domain or subdomain fails closed through the payment-authorization consume step.
  * Unlisted institutions and cards filled on arbitrary merchant sites are an
  * accepted v1 residual: they do not trigger this gate. See `bankDomains.ts` for
  * the deliberately simple process for maintaining the registry.
@@ -64,7 +64,7 @@ export interface PaymentApprovalResult {
 }
 
 /**
- * The seam. A real implementation CONSUMES a single-use owner payment approval
+ * The seam. A real implementation CONSUMES a single-use payment authorization
  * from the plow cloud bound to this session + domain: a `true` answer consumes
  * the approval, so this is called exactly once, at the moment of release.
  *

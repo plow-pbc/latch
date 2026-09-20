@@ -224,13 +224,14 @@ item's, and \`fill_secret\` types them into the page the same way.
    and refuses a day token. A day,
    month or year dropdown is filled the same way: the matching option is chosen. Without
    \`format\`, a date of birth is typed as YYYY-MM-DD and an expiry as MM/YY.
-   **A destination in the bundled v1 bank registry needs a separate owner payment
-   approval.** When the page you are filling matches that registry, \`fill_secret\` needs
-   more than item rights: the owner
-   must ALSO approve the payment out of band — a link in their Plow thread, or a 👍. The
-   fill proceeds only once that approval is granted; until then \`fill_secret\` returns an
-   error saying the owner's payment approval was not found, and NOTHING is typed. That is
-   not a bug to work around — ask the owner to approve the payment, then try the fill again.
+   **A destination in the bundled v1 bank registry needs a payment authorization.** Before
+   filling there, call \`plow_request_payment\` once with the bank domain, recipient, and exact
+   amount. Plow authorizes payments at or below the owner's configured threshold immediately;
+   above it, Plow sends the owner a single-use approval link. Continue after an \`authorized\`
+   result, or after the owner uses the link for an \`approval_required\` result. Ordinary chat
+   replies and reactions do not approve a payment. Until authorization exists, \`fill_secret\`
+   returns an error and NOTHING is typed. That is not a bug to work around — request the
+   payment authorization, then try the fill again.
    Do not try to \`fill\` a bank credential by hand to dodge it; you do not have the value.
 6. What is hidden afterwards is what the vault itself hides: a password, a card number and
    security code, an ssn, a Hidden custom field. Those render as dots and \`forms\` reports
