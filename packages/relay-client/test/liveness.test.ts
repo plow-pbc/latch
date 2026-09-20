@@ -22,7 +22,7 @@ import { HEARTBEAT_INTERVAL_MS } from "../src/wire.js";
  * inbound frames only when the test says so. */
 class FakeConn implements Connection {
   onLine: ((line: Buffer) => void) | null = null;
-  onClose: ((code?: number) => void) | null = null;
+  onClose: (() => void) | null = null;
   readonly sent: Record<string, unknown>[] = [];
   closed = false;
   /** Stops answering, the way a dead network does — nothing is delivered and
@@ -41,14 +41,9 @@ class FakeConn implements Connection {
   }
 
   close(): void {
-    this.dropped();
-  }
-
-  /** The relay hangs up, with the close code it sent. */
-  dropped(code?: number): void {
     if (this.closed) return;
     this.closed = true;
-    this.onClose?.(code);
+    this.onClose?.();
   }
 
   deliver(frame: Record<string, unknown>): void {
@@ -61,7 +56,7 @@ class FakeConn implements Connection {
   }
 }
 
-describe("a socket that drops, and the reconnect that follows", () => {
+describe("a socket that goes silent", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
@@ -245,38 +240,6 @@ describe("a socket that drops, and the reconnect that follows", () => {
     }
     expect(conns[0].closed).toBe(false);
     expect(client.isConnected).toBe(true);
-
-    await client.stop();
-  });
-
-  it("redials at once on 4010, and keeps the backoff it had", async () => {
-    // A rolling deploy closes every socket with 4010 "moved" while the next
-    // instance is already accepting them. Waiting out a backoff would idle the
-    // Mac for nothing, and counting the drop as a failure would make the next
-    // real one — a relay that is actually down — wait longer than it should.
-    const { client, conns } = harness();
-    await client.start();
-
-    // An ordinary drop, before any handshake clears the counter: first attempt,
-    // 500ms.
-    conns[0].dropped(1006);
-    await vi.advanceTimersByTimeAsync(499);
-    expect(conns).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(conns).toHaveLength(2);
-
-    // The deploy moves this one. No delay at all.
-    conns[1].dropped(4010);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(conns).toHaveLength(3);
-
-    // And it cost nothing: the next ordinary drop backs off as the second
-    // attempt (1000ms), not the third, so the handover was never counted.
-    conns[2].dropped(1006);
-    await vi.advanceTimersByTimeAsync(999);
-    expect(conns).toHaveLength(3);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(conns).toHaveLength(4);
 
     await client.stop();
   });

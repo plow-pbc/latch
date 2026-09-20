@@ -18,7 +18,7 @@ import { Connection, ConnectionDialer, RPCError } from "./transport.js";
 
 export class WebSocketConnection implements Connection {
   onLine: ((line: Buffer) => void) | null = null;
-  onClose: ((code?: number) => void) | null = null;
+  onClose: (() => void) | null = null;
 
   private started = false;
   private closed = false;
@@ -35,7 +35,7 @@ export class WebSocketConnection implements Connection {
       if (this.started) this.onLine?.(buf);
       else this.queued.push(buf);
     });
-    ws.on("close", (code: number) => this.handleClosed(code));
+    ws.on("close", () => this.handleClosed());
     ws.on("error", () => this.handleClosed());
   }
 
@@ -65,11 +65,11 @@ export class WebSocketConnection implements Connection {
     this.onClose?.();
   }
 
-  private handleClosed(code?: number): void {
+  private handleClosed(): void {
     if (this.closed) return;
     this.closed = true;
     this.ws.terminate();
-    this.onClose?.(code);
+    this.onClose?.();
   }
 }
 
