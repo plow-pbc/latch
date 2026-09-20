@@ -100,7 +100,6 @@ import {
   Decided,
   decideIntent,
   ReviewHint,
-  ownerOverrideMayGrant,
   storedRuleMayGrant,
 } from "./reviewPolicy.js";
 import {
@@ -355,10 +354,6 @@ class ElectronPolicy implements PolicyDelegate {
    */
   mayGrantFromStoredRule(): boolean {
     return storedRuleMayGrant(loadSettings(home));
-  }
-
-  mayGrantFromOwnerOverride(): boolean {
-    return ownerOverrideMayGrant(loadSettings(home));
   }
 
   // The branching itself lives in reviewPolicy.ts so it is testable without a
@@ -626,16 +621,6 @@ ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);
 });
 ipcMain.handle("gatekeeperRecovery:get", async () => gatekeeperAttention);
-ipcMain.handle("gatekeeperRecovery:allowOnce", async (_e, intentId: unknown) => {
-  if (typeof intentId !== "string" || gatekeeperAttention?.intentId !== intentId || !device) {
-    return gatekeeperAttention;
-  }
-  device.policy.armDeniedIntentOnce(intentId);
-  const denied = device.policy.deniedIntent(intentId);
-  gatekeeperAttention = denied ? gatekeeperRecoveryView(denied) : null;
-  notifyRenderer("gatekeeperRecovery:changed");
-  return gatekeeperAttention;
-});
 ipcMain.handle("gatekeeperRecovery:suggest", async (_e, intentId: unknown) => {
   if (typeof intentId !== "string" || gatekeeperAttention?.intentId !== intentId || !device) {
     return { ok: false, reason: "That denied request is no longer available" };
@@ -2433,14 +2418,6 @@ app.whenReady().then(async () => {
     "reviewer_denied",
     ({ intentId }: { intentId: string }) => noteGatekeeperDenial(intentId),
   );
-  device.policy.events.on(
-    "override_armed",
-    ({ intentId }: { intentId: string }) => updateGatekeeperOverride(intentId),
-  );
-  device.policy.events.on(
-    "override_consumed",
-    ({ intentId }: { intentId: string }) => updateGatekeeperOverride(intentId),
-  );
   // Live-refresh the audit view whenever a new event is recorded: fold the
   // line into the index (once it exists — before first use the initial load
   // reads it off disk) and tell the renderer which rows moved. A rotation or
@@ -2834,18 +2811,10 @@ function noteGatekeeperDenial(intentId: string): void {
   gatekeeperNotified.add(key);
   const notification = new Notification({
     title: "Gatekeeper denied an agent request",
-    body: "Open Plow Latch to review it, allow one matching retry, or improve your Gatekeeper instructions.",
+    body: "Open Plow Latch to review it or improve your Gatekeeper instructions.",
   });
   notification.on("click", showGatekeeperRecovery);
   notification.show();
-}
-
-function updateGatekeeperOverride(intentId: string): void {
-  if (gatekeeperAttention?.intentId !== intentId) return;
-  const denied = device?.policy.deniedIntent(intentId);
-  gatekeeperAttention = denied ? gatekeeperRecoveryView(denied) : null;
-  refreshTray();
-  notifyRenderer("gatekeeperRecovery:changed");
 }
 
 function showGatekeeperRecovery(): void {

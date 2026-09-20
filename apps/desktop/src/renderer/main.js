@@ -697,31 +697,14 @@ async function renderRules() {
       recoveryCard.replaceChildren();
       return;
     }
-    const status = recovery.state === "armed"
-      ? "You overrode Gatekeeper for this request. One matching retry is allowed; your Gatekeeper instructions have not changed."
-      : recovery.state === "consumed"
-        ? "You overrode Gatekeeper for this request. The matching request was allowed once; your Gatekeeper instructions have not changed."
-        : "Gatekeeper denied this request. You can allow one matching retry without changing your standing instructions.";
-    const badge = recovery.state === "armed"
-      ? { tone: "blue", text: "Override ready" }
-      : recovery.state === "consumed"
-        ? { tone: "green", text: "Allowed once" }
-        : { tone: "red", text: "Denied" };
-    const statusLine = el("p", { class: `gatekeeper-recovery-status ${recovery.state}`, text: status });
+    const badge = { tone: "red", text: "Denied" };
+    const statusLine = el("p", {
+      class: "gatekeeper-recovery-status denied",
+      text: "Gatekeeper denied this request. Review it or improve your standing instructions.",
+    });
     const actionError = el("p", { class: "warn", text: "" });
     actionError.hidden = true;
     const actions = el("div", { class: "row gatekeeper-recovery-actions" });
-
-    if (recovery.state === "denied") {
-      const allow = el("button", { class: "btn", text: "Allow one retry" });
-      allow.addEventListener("click", async () => {
-        const generation = recoveryGeneration;
-        allow.disabled = true;
-        const latest = await window.domo.gatekeeperRecoveryAllowOnce(recovery.intentId);
-        if (generation === recoveryGeneration) drawRecovery(latest);
-      });
-      actions.appendChild(allow);
-    }
 
     const suggest = el("button", { class: "btn", text: "Suggest better instructions" });
     suggest.addEventListener("click", async () => {

@@ -28,7 +28,6 @@ import {
   ReviewHint,
   decideIntent,
   inferenceStatus,
-  ownerOverrideMayGrant,
   reviewerAvailable,
   storedRuleMayGrant,
 } from "../src/reviewPolicy.js";
@@ -642,17 +641,6 @@ describe("storedRuleMayGrant", () => {
     expect(storedRuleMayGrant(settings({ approvalMode: mode as Settings["approvalMode"] }))).toBe(
       expected,
     );
-  });
-});
-
-describe("ownerOverrideMayGrant", () => {
-  it.each([
-    ["adversarial", true],
-    ["approve", true],
-    ["ask", true],
-    ["deny", false],
-  ])("under %s mode: %s", (mode, expected) => {
-    expect(ownerOverrideMayGrant(settings({ approvalMode: mode as Settings["approvalMode"] }))).toBe(expected);
   });
 });
 

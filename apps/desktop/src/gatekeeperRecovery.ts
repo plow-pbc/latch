@@ -29,7 +29,6 @@ export interface GatekeeperRecoveryView {
   request: string;
   capabilities: string[];
   reason: string | null;
-  state: DeniedIntent["state"];
 }
 
 export function gatekeeperRecoveryView(denied: DeniedIntent): GatekeeperRecoveryView {
@@ -39,7 +38,6 @@ export function gatekeeperRecoveryView(denied: DeniedIntent): GatekeeperRecovery
     request: denied.intent.request,
     capabilities: denied.intent.capabilities.map(capabilityDisplay),
     reason: denied.reason,
-    state: denied.state,
   };
 }
 
