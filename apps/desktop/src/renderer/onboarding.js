@@ -543,7 +543,7 @@ function verifyScreen() {
       ]),
       el("p", { class: "activation-warning" }, [
         icon("lock", { strokeWidth: "1.7" }),
-        el("span", { text: "Keep this code private—it links a phone to your account." }),
+        el("span", { text: "Keep this code private—anyone who sends it can link their phone to your account." }),
       ]),
     );
   } else if (idle?.kind === "loading") {
