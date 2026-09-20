@@ -213,6 +213,7 @@ async function setUp() {
   });
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("rules:list", async () => RULES);
+  ipcMain.handle("gatekeeperRecovery:get", async () => null);
   ipcMain.handle("rules:remove", async () => {});
   ipcMain.handle("settings:getInference", async () => readInference(home));
   ipcMain.handle("settings:setApprovalMode", async (_e, mode) => setApprovalMode(home, mode));
