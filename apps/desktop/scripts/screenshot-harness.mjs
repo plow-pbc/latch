@@ -76,6 +76,7 @@ export async function waitFor(win, expr, label, timeoutMs = 10_000) {
  * than error styling.
  * `expectFooter` and `expectBack` pin the shared onboarding navigation shell;
  * both inspect visibility, not merely whether the persistent nodes exist.
+ * `expectPrimary` does the same for the footer's primary action.
  */
 export async function shootScreens({ win, outDir, prefix, screens, load, beforeShot }) {
   fs.mkdirSync(outDir, { recursive: true });
@@ -126,6 +127,16 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
           && getComputedStyle(el).display !== "none";
       })()`,
     );
+    const primaryVisible = await win.webContents.executeJavaScript(
+      `(() => {
+        const footer = document.querySelector(".wizard-footer");
+        const el = footer?.querySelector(".nav-next");
+        return !!footer && !footer.hidden && getComputedStyle(footer).display !== "none"
+          && !!el && getComputedStyle(el).visibility !== "hidden"
+          && getComputedStyle(el).display !== "none"
+          && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0;
+      })()`,
+    );
     const missing = [
       ...(screen.expect ?? []).filter((needle) => !text.includes(needle.toLowerCase())),
       ...(screen.reject ?? [])
@@ -162,6 +173,9 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
         : []),
       ...(screen.expectBack !== undefined && backVisible !== screen.expectBack
         ? [`Back visible=${screen.expectBack} (found: ${backVisible})`]
+        : []),
+      ...(screen.expectPrimary !== undefined && primaryVisible !== screen.expectPrimary
+        ? [`primary visible=${screen.expectPrimary} (found: ${primaryVisible})`]
         : []),
     ];
     if (missing.length) failures += 1;

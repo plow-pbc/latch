@@ -515,29 +515,35 @@ function verifyScreen() {
     : { kind: state.message ? "failure" : "idle", text: state.message, action: "Try again" };
   const parts = [
     el("div", { class: "head-center" }, [
-      el("h1", { text: "Connect with a text" }),
+      el("h1", { text: "Verify your phone" }),
+      activation ? el("p", {
+        class: "subhead",
+        text: "Send this text from the phone you’ll use with Plow.",
+      }) : null,
     ]),
   ];
 
   if (activation) {
     parts.push(
-      el("div", { class: "message-preview" }, [
-        el("div", { class: "message-contact" }, [
-          el("span", { class: "message-avatar", text: "P", attrs: { "aria-hidden": "true" } }),
-          el("span", { class: "send-to", text: activation.sendTo }),
-          copyButton(activation.sendTo, "Copy phone number"),
+      el("div", { class: "activation-details" }, [
+        el("div", { class: "activation-row" }, [
+          el("span", { class: "activation-label", text: "To" }),
+          el("span", { class: "activation-value" }, [
+            el("span", { class: "send-to", text: activation.sendTo }),
+            copyButton(activation.sendTo, "Copy phone number"),
+          ]),
         ]),
-        el("div", { class: "message-bubble" }, [
-          activationMessage(activation),
-          copyButton(activation.smsBody, "Copy activation message"),
+        el("div", { class: "activation-row" }, [
+          el("span", { class: "activation-label", text: "Text" }),
+          el("span", { class: "activation-value" }, [
+            activationMessage(activation),
+            copyButton(activation.smsBody, "Copy activation message"),
+          ]),
         ]),
       ]),
       el("p", { class: "activation-warning" }, [
         icon("lock", { strokeWidth: "1.7" }),
-        el("span", {}, [
-          el("strong", { text: "Private activation code. " }),
-          document.createTextNode("Anyone who sends it can link this account."),
-        ]),
+        el("span", { text: "Keep this code private—it links a phone to your account." }),
       ]),
     );
   } else if (idle?.kind === "loading") {
@@ -557,7 +563,7 @@ function verifyScreen() {
       });
       activate.append(
         icon("messages", { strokeWidth: "1.7" }),
-        document.createTextNode("Send in Messages"),
+        document.createTextNode("Open in Messages"),
       );
       parts.push(el("div", { class: "verify-actions" }, [activate]));
     }
@@ -925,7 +931,7 @@ function footerForStep() {
     };
   }
   if (step === "activate" || step === "waiting") {
-    return { dot: 0, label: "Continue", arrow: true, disabled: true, action: null };
+    return { dot: 0, label: "Continue", arrow: true, primaryHidden: true, disabled: true, action: null };
   }
   if (step === "privacy") {
     return {
@@ -1022,6 +1028,7 @@ function render() {
   if (!config.hidden) {
     backButton.hidden = state.canGoBack !== true;
     backButton.disabled = !!state.busy;
+    primaryButton.hidden = !!config.primaryHidden;
     dotRow.hidden = config.dot === null;
     dots.forEach((dot, index) => {
       dot.classList.toggle("active", index === config.dot);
