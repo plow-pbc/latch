@@ -81,9 +81,9 @@ export class PolicyEngine {
   private readonly deniedIntents = new Map<string, DeniedIntent>();
   /**
    * Emits `changed` once per write to the rule set — a rule stored by an
-   * always-allow answer, or one removed. The main window's Rules pane draws
-   * from `allRules()` and has no other way to learn that an approval dialog
-   * just added one while it was on screen.
+   * always-allow answer, or one removed. Audit's rules modal draws from
+   * `allRules()` and has no other way to learn that an approval dialog just
+   * added one while it was on screen.
    *
    * Alongside it, the write itself: `stored` with `{ rule, intentId }` (the
    * intent whose answer made the rule) and `revoked` with `{ rule }`. The

@@ -37,8 +37,30 @@ saveSettings(probeHome, {
 
 // Stub the IPC handlers the renderer calls on load, so this probe needs no
 // device — we're testing the bridge + render path, not the data.
-ipcMain.handle("audit:page", async () => ({ rows: [], total: 0, size: 0 }));
-ipcMain.handle("audit:activity", async () => null);
+let gatekeeperActivity = {
+  id: "activity-gatekeeper-probe",
+  ts: "2026-09-20T19:00:00.000Z",
+  blockedAt: null,
+  decision: "Denied",
+  decisionTone: "red",
+  status: "",
+  tone: "zinc",
+  title: "Buy a $125 Lego set on Amazon",
+  kind: "command",
+  decisionKind: "denied",
+  statusKind: "none",
+  command: "open https://amazon.com/lego",
+  agentId: "agent-family",
+  agentDisplay: "Family assistant",
+  goal: "Buy a birthday present",
+  decidedBy: "AI Reviewer",
+  intentId: "intent-gatekeeper-probe",
+  exitCode: null,
+  capabilities: ["Browser: amazon.com"],
+  timeline: [{ text: "Denied by Gatekeeper", state: "bad", at: "2026-09-20T19:00:01.000Z" }],
+};
+ipcMain.handle("audit:page", async () => ({ rows: [gatekeeperActivity], total: 1, size: 1 }));
+ipcMain.handle("audit:activity", async (_event, id) => id === gatekeeperActivity.id ? gatekeeperActivity : null);
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
 ipcMain.handle("rules:list", async () => []);
 let gatekeeperRecoveryProbe = {
@@ -47,11 +69,10 @@ let gatekeeperRecoveryProbe = {
   request: "Buy a $125 Lego set on Amazon",
   capabilities: ["Browser: amazon.com"],
   reason: "Purchases are not covered by the current family-assistant instructions.",
-  state: "denied",
 };
 ipcMain.handle("gatekeeperRecovery:get", async () => gatekeeperRecoveryProbe);
-ipcMain.handle("gatekeeperRecovery:allowOnce", async () => {
-  gatekeeperRecoveryProbe = { ...gatekeeperRecoveryProbe, state: "armed" };
+ipcMain.handle("gatekeeperRecovery:dismiss", async (_event, intentId) => {
+  if (gatekeeperRecoveryProbe?.intentId === intentId) gatekeeperRecoveryProbe = null;
   return gatekeeperRecoveryProbe;
 });
 const recoverySuggestion = {
@@ -174,7 +195,10 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 // The purpose statement, through the real setter — the one path that may write
 // it. Nothing an agent can reach registers a handler on either channel.
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
-ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
+ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => {
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  return setAgentPurpose(probeHome, purpose);
+});
 const cloudThreadTitle = "Willow · You · Robin";
 const cloudAgent = {
   agentId: "cag_probe",
@@ -436,6 +460,8 @@ app.whenReady().then(async () => {
       bridgeKeys: window.domo ? Object.keys(window.domo).length : 0,
       viewChildren: document.getElementById("view")?.childElementCount ?? -1,
       statusText: document.getElementById("statusText")?.textContent ?? "",
+      noRulesTab: !document.querySelector('#seg button[data-tab="rules"]'),
+      gatekeeperInAudit: !!document.querySelector("#view .audit-gatekeeper"),
     };
   }})()`);
 
@@ -627,33 +653,37 @@ app.whenReady().then(async () => {
     approvalMode: "ask",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && !c.classList.contains("disabled"))`,
-    "the AI Reviewer chip to render enabled");
+  await waitFor(win, `document.querySelector(".gatekeeper-mode")?.dataset.mode === "ask"`,
+    "the Gatekeeper mode control to show Ask");
   // The credential goes AFTER the pane rendered, with no notification — so the
   // chip is still enabled and the renderer still believes it can select this.
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
   await win.webContents.executeJavaScript(`(() => {
-    const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "AI Reviewer decides");
-    chip.click();
+    document.querySelector(".gatekeeper-mode").click();
     return true;
   })()`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && c.classList.contains("active"))`,
+  await waitFor(win, `[...document.querySelectorAll(".menu-item")].some((item) => item.textContent.includes("Enabled"))`,
+    "the Gatekeeper mode menu to open");
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".menu-item")]
+      .find((item) => item.textContent.includes("Enabled")).click();
+    return true;
+  })()`);
+  await waitFor(win, `document.querySelector(".gatekeeper-mode")?.dataset.mode === "adversarial"`,
     "the pane to follow main's acceptance of the reviewer mode");
   const optimisticMode = {
     // Losing the credential no longer rewrites the mode behind the user.
     storedIsAdversarial: loadSettings(probeHome).approvalMode === "adversarial",
     // What the pane claims, against what main actually stored.
-    chipAgrees: await win.webContents.executeJavaScript(`(() => {
-      const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "AI Reviewer decides");
-      return !!chip && chip.classList.contains("active");
-    })()`),
+    chipAgrees: await win.webContents.executeJavaScript(
+      `document.querySelector(".gatekeeper-mode")?.dataset.mode === "adversarial"`,
+    ),
     // …and the purpose field follows the MODE, not the credential. The owner
     // picked "AI Reviewer decides" and that choice stands, so what the reviewer
     // will read stays on offer — there is nothing to write it into yet, which
     // the note beside it says.
     purposeFieldStillOffered: await win.webContents.executeJavaScript(
-      `!!document.querySelector("#view .revealed textarea.text")?.checkVisibility()`,
+      `!!document.querySelector("#view .gatekeeper-purpose textarea.text")?.checkVisibility()`,
     ),
   };
 
@@ -920,9 +950,8 @@ app.whenReady().then(async () => {
   await clickCloudButton(win, "Close");
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the failed detail to close");
 
-  // The Approvals card: the modes, and the owner's purpose statement. Two
-  // states, because the card has two — the field under the reviewer chip, and
-  // one honest line in its place under every other one.
+  // Gatekeeper now lives at the top of Audit: its mode is a title-level menu,
+  // and its instructions remain visible in every mode.
   saveSettings(probeHome, {
     ...loadSettings(probeHome),
     relayCredential: "plow_sk_probe_credential",
@@ -930,63 +959,52 @@ app.whenReady().then(async () => {
     agentPurpose: "Groceries and calendar only.",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && c.classList.contains("active"))`,
-    "the Approvals card in its reviewer state");
+  await waitFor(win, `document.querySelector(".gatekeeper-mode")?.textContent.includes("Enabled")`,
+    "the Gatekeeper card in its reviewer state");
   const approvalsReviewer = await win.webContents.executeJavaScript(`(${() => {
     const pane = document.querySelector("#view");
-    const field = pane.querySelector(".revealed textarea.text");
-    const description = [...pane.querySelectorAll(".group-title")]
-      .find((title) => title.textContent.trim() === "Approvals")
-      ?.parentElement?.querySelector(".group-desc")?.textContent ?? "";
+    const field = pane.querySelector(".gatekeeper-purpose textarea.text");
     return {
-      chipLabels: [...pane.querySelectorAll(".chips .chip")].map((c) => c.textContent.trim()),
-      inRulesPane: !!pane.querySelector(".panel.rules"),
-      // The stored text, in the field, and the two things said beside it.
+      noRulesTab: !document.querySelector('#seg button[data-tab="rules"]'),
+      inAudit: !!pane.querySelector(".audit-gatekeeper"),
+      title: pane.querySelector(".gatekeeper-title")?.textContent.trim(),
+      enabled: pane.querySelector(".gatekeeper-mode")?.textContent.includes("Enabled") ?? false,
       showsStoredPurpose: !!field && field.checkVisibility() && field.value === "Groceries and calendar only.",
       purposeExampleHasBoundary: field?.placeholder.endsWith(
         "Keep it out of everything else on this computer — no files, no other sites.",
       ) ?? false,
-      labelled: pane.innerText.includes("What are agents for?"),
-      describesGlobalPrecedence: description.includes(
-        "AI Reviewer and Deny still apply to every request",
-      ),
-      noPerAgentSwitch: !description.includes("own AI Reviewer") &&
-        !description.includes("per-agent"),
-      // The purpose is the ERRAND, and an errand widens as readily as it
-      // narrows: an owner who writes "Manage my SSH keys" has just made those
-      // keys the job. This probe used to pin the opposite claim — that the
-      // field "can only narrow what gets approved" — which was both untrue and
-      // the wrong direction, so it pins the new contract and the absence of
-      // the old promise.
-      saysItCanWiden: pane.innerText.includes(
-        "it can widen what gets approved as easily as narrow it",
-      ),
-      noOnlyNarrowsClaim: !pane.innerText.includes("only narrow"),
-      saysItMayApprove: pane.innerText.includes("Requests that fit may be approved without asking you."),
-      // The card is context, not enforcement: no capability list here, and the
-      // word this rename retired is nowhere on screen.
+      labelled: pane.querySelector(".gatekeeper-field-head label")?.textContent.trim() === "Instructions",
+      explainsEnabled: pane.innerText.includes("AI Reviewer decides each request using your instructions."),
       noAdversarialWord: !/adversarial/i.test(pane.innerText),
-      noHintLineTakingItsPlace: !pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
-      noFalseReviewerInputs: !pane.innerText.includes("goal and plan") &&
-        !pane.innerText.includes("recent activity on this Mac"),
-      // The suggestions checkbox is gone: in Ask mode the reviewer always
-      // suggests, so there is no toggle to show in any mode.
-      noSuggestionsCheckbox: !pane.innerText.includes("Let the reviewer suggest"),
-      recoveryNamesDenial: pane.innerText.includes("Review a Gatekeeper denial") &&
-        pane.innerText.includes("Buy a $125 Lego set on Amazon"),
-      recoveryOffersBoundedOverride: pane.innerText.includes("Allow one retry") &&
-        pane.innerText.includes("without changing your standing instructions"),
-      recoveryOffersCoaching: pane.innerText.includes("Suggest better instructions"),
+      recoveryNamesDenial: pane.innerText.includes("Gatekeeper denied this request"),
+      recoveryOffersCoaching: pane.innerText.includes("Suggest revised instructions"),
+      noRetryOverride: !pane.innerText.includes("Allow one retry") && !pane.innerText.includes("Keep as-is"),
     };
   }})()`);
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".audit-gatekeeper button")]
+      .find((button) => button.textContent.includes("View 0 rules")).click();
+    return true;
+  })()`);
+  await waitFor(win, `document.querySelector(".rules-modal")?.innerText.includes("No always-allow rules")`,
+    "the rules preview modal");
+  const rulesModalView = await win.webContents.executeJavaScript(`(${() => ({
+    opens: !!document.querySelector(".rules-modal"),
+    empty: document.querySelector(".rules-modal")?.innerText.includes("No always-allow rules") ?? false,
+  })})()`);
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".rules-modal button")]
+      .find((button) => button.textContent.trim() === "Close").click();
+    return true;
+  })()`);
+  await waitFor(win, `!document.querySelector(".rules-modal")`, "the rules preview modal to close");
 
   // A suggestion for denial A must not appear after a live denial B replaces
   // the card while the model call is in flight.
   holdRecoverySuggestion = true;
   await win.webContents.executeJavaScript(`(() => {
-    [...document.querySelectorAll(".gatekeeper-recovery button")]
-      .find((b) => b.textContent.trim() === "Suggest better instructions").click();
+    [...document.querySelectorAll(".gatekeeper-denial-detail button")]
+      .find((b) => b.textContent.trim() === "Suggest revised instructions").click();
     return true;
   })()`);
   await waitForNode(() => resolveRecoverySuggestion !== null, "the held Gatekeeper suggestion request");
@@ -995,14 +1013,19 @@ app.whenReady().then(async () => {
     intentId: "intent-gatekeeper-newer",
     request: "Send the family itinerary",
   };
+  gatekeeperActivity = {
+    ...gatekeeperActivity,
+    intentId: "intent-gatekeeper-newer",
+    title: "Send the family itinerary",
+  };
   win.webContents.send("gatekeeperRecovery:changed");
-  await waitFor(win, `document.querySelector(".gatekeeper-recovery")?.innerText.includes("Send the family itinerary")`,
-    "the newer Gatekeeper denial");
+  await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
+    "the newer Gatekeeper denial detail");
   resolveRecoverySuggestion(recoverySuggestion);
   resolveRecoverySuggestion = null;
   await win.webContents.executeJavaScript(`new Promise((resolve) => setTimeout(resolve, 25))`);
   const staleSuggestionDiscarded = await win.webContents.executeJavaScript(
-    `!document.querySelector(".gatekeeper-suggestion") && document.querySelector(".gatekeeper-recovery")?.innerText.includes("Send the family itinerary")`,
+    `!document.querySelector(".gatekeeper-suggestion") && document.querySelector(".gatekeeper-suggestion-modal")?.innerText.includes("newer Gatekeeper denial")`,
   );
   holdRecoverySuggestion = false;
   gatekeeperRecoveryProbe = {
@@ -1010,13 +1033,16 @@ app.whenReady().then(async () => {
     intentId: "intent-gatekeeper-probe",
     request: "Buy a $125 Lego set on Amazon",
   };
+  gatekeeperActivity = {
+    ...gatekeeperActivity,
+    intentId: "intent-gatekeeper-probe",
+    title: "Buy a $125 Lego set on Amazon",
+  };
   win.webContents.send("gatekeeperRecovery:changed");
-  await waitFor(win, `document.querySelector(".gatekeeper-recovery")?.innerText.includes("Buy a $125 Lego set on Amazon")`,
+  await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
     "the original Gatekeeper recovery probe");
   const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
-    const title = [...document.querySelectorAll(".rules .item > .group-title")]
-      .find((t) => t.textContent.trim() === "Approvals");
-    title?.scrollIntoView({ block: "start" });
+    document.querySelector(".audit-gatekeeper")?.scrollIntoView({ block: "start" });
     return true;
   })()`);
   await scrollToApprovals();
@@ -1026,129 +1052,96 @@ app.whenReady().then(async () => {
   );
   fs.writeFileSync(approvalsShot, (await win.webContents.capturePage()).toPNG());
 
-  // Override and coaching are separate owner actions. Arming one redraws the
-  // card with explicit one-shot language; asking for a suggestion displays an
-  // editable full replacement but does not save it.
+  // Close the stale modal, then ask again for the current denial. The coach's
+  // editable replacement must not apply until Save instructions is clicked.
   await win.webContents.executeJavaScript(`(() => {
-    [...document.querySelectorAll(".gatekeeper-recovery button")]
-      .find((b) => b.textContent.trim() === "Allow one retry").click();
+    [...document.querySelectorAll(".gatekeeper-suggestion-modal button")]
+      .find((b) => b.textContent.trim() === "Cancel")?.click();
     return true;
   })()`);
-  await waitFor(win, `document.querySelector(".gatekeeper-recovery")?.innerText.includes("One matching retry is allowed")`,
-    "the Gatekeeper override banner");
   await win.webContents.executeJavaScript(`(() => {
-    [...document.querySelectorAll(".gatekeeper-recovery button")]
-      .find((b) => b.textContent.trim() === "Suggest better instructions").click();
+    [...document.querySelectorAll(".gatekeeper-denial-detail button")]
+      .find((b) => b.textContent.trim() === "Suggest revised instructions").click();
     return true;
   })()`);
   await waitFor(win, `document.querySelector(".gatekeeper-suggestion")`, "the editable Gatekeeper suggestion");
   const gatekeeperRecovery = await win.webContents.executeJavaScript(`(${() => ({
-    armedExplained: document.querySelector(".gatekeeper-recovery")?.innerText.includes(
-      "your Gatekeeper instructions have not changed",
-    ) ?? false,
     suggestionEditable: !document.querySelector(".gatekeeper-suggestion")?.readOnly,
     suggestionGeneralizes: document.querySelector(".gatekeeper-suggestion")?.value.includes(
       "authorized to make purchases for the family",
     ) ?? false,
-    notAppliedAutomatically: document.querySelector("#view .revealed textarea.text")?.value ===
+    notAppliedAutomatically: document.querySelector("#view .gatekeeper-purpose textarea.text")?.value ===
       "Groceries and calendar only.",
-    requiresExplicitUse: [...document.querySelectorAll(".gatekeeper-recovery button")].some(
-      (b) => b.textContent.trim() === "Use these instructions",
+    requiresExplicitUse: [...document.querySelectorAll(".gatekeeper-suggestion-modal button")].some(
+      (b) => b.textContent.trim() === "Save instructions",
     ),
+    noKeepAction: !document.querySelector(".gatekeeper-denial-detail")?.innerText.includes("Keep as-is"),
+    hasDismiss: !!document.querySelector(".gatekeeper-denial-dismiss"),
   })})()`);
   const gatekeeperRecoveryShot = process.env.GATEKEEPER_RECOVERY_OUT ?? "/tmp/gatekeeper-recovery.png";
   await captureAfterPaint(win, gatekeeperRecoveryShot);
-  gatekeeperRecoveryProbe = { ...gatekeeperRecoveryProbe, state: "consumed" };
-  win.webContents.send("gatekeeperRecovery:changed");
-  await waitFor(win, `document.querySelector(".gatekeeper-recovery")?.innerText.includes("was allowed once")`,
-    "the consumed Gatekeeper override banner");
-  gatekeeperRecovery.consumedExplained = true;
-
-  // The field commits on `change`, like the API key, and what goes back on
-  // screen is what the setter stored.
   await win.webContents.executeJavaScript(`(() => {
-    const field = document.querySelector("#view .revealed textarea.text");
-    field.value = "  Only household errands.  ";
-    field.dispatchEvent(new Event("change", { bubbles: true }));
+    [...document.querySelectorAll(".gatekeeper-suggestion-modal button")]
+      .find((b) => b.textContent.trim() === "Save instructions").click();
     return true;
   })()`);
+  await waitFor(win, `!document.querySelector(".gatekeeper-suggestion-modal")`,
+    "the saved suggestion modal to close");
+  gatekeeperRecovery.savedAndDismissed = gatekeeperRecoveryProbe === null;
+
+  // The field autosaves after typing pauses, and what goes back on screen is
+  // what the setter stored.
+  await win.webContents.executeJavaScript(`(() => {
+    const field = document.querySelector("#view .gatekeeper-purpose textarea.text");
+    field.value = "  Only household errands.  ";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  })()`);
+  await waitFor(win, `document.querySelector(".gatekeeper-save-status")?.textContent.includes("Saving")`,
+    "the Gatekeeper prompt to show its saving state");
   await waitForNode(() => loadSettings(probeHome).agentPurpose === "Only household errands.",
     "the purpose to reach settings.json through the IPC pair");
   // The field redraws off what main stored, one refresh after the write — the
   // same round-trip the mode chips make below. Reading it the instant the file
   // lands is a race, and on a slow runner the read wins.
-  await waitFor(win, `document.querySelector("#view .revealed textarea.text").value === "Only household errands."`,
+  await waitFor(win, `document.querySelector("#view .gatekeeper-purpose textarea.text").value === "Only household errands." && document.querySelector(".gatekeeper-save-status")?.textContent.includes("Saved")`,
     "the purpose field to show what was stored");
   const purposeRoundTrip = {
     stored: loadSettings(probeHome).agentPurpose === "Only household errands.",
     fieldShowsWhatWasStored: await win.webContents.executeJavaScript(
-      `document.querySelector("#view .revealed textarea.text").value === "Only household errands."`,
+      `document.querySelector("#view .gatekeeper-purpose textarea.text").value === "Only household errands."`,
     ),
   };
 
-  // Ask mode: no field at all, and the line that replaces it.
+  // Ask mode stays in the title-level menu. The prompt remains visible, with
+  // an honest note that it will be used again when Gatekeeper is Enabled.
   await win.webContents.executeJavaScript(`(() => {
-    const chip = [...document.querySelectorAll(".chip")].find((c) => c.textContent.trim() === "Ask me every time");
-    chip.click();
+    document.querySelector(".gatekeeper-mode").click();
+    return true;
+  })()`);
+  await waitFor(win, `[...document.querySelectorAll(".menu-item")].some((item) => item.textContent.includes("Ask every time"))`,
+    "the Gatekeeper mode menu");
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".menu-item")]
+      .find((item) => item.textContent.includes("Ask every time")).click();
     return true;
   })()`);
   await waitForNode(() => loadSettings(probeHome).approvalMode === "ask",
     "Ask mode to be stored");
-  // …and the card redraws off what main stored, one round-trip after the click.
-  await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "Ask me every time" && c.classList.contains("active"))`,
-    "the Approvals card to follow the stored mode");
+  await waitFor(win, `document.querySelector(".gatekeeper-mode")?.dataset.mode === "ask"`,
+    "the Gatekeeper card to follow the stored mode");
   const approvalsAsk = await win.webContents.executeJavaScript(`(${() => {
     const pane = document.querySelector("#view");
-    const field = pane.querySelector(".revealed textarea.text");
+    const field = pane.querySelector(".gatekeeper-purpose textarea.text");
     return {
-      fieldGone: !field || !field.checkVisibility(),
-      // The label goes with it: nothing about the purpose is on screen in a
-      // mode whose reviewer never reads it…
-      purposeTextGone: !pane.innerText.includes("What are agents for?"),
-      // …but a purpose written under the reviewer chip is still sent with every
-      // suggestion this mode asks for, so the disclosure has to name it in the
-      // mode that hides the field. This is the state where an enumeration that
-      // stopped at the agent-derived items would read as complete and be wrong.
-      stillDisclosesPurposeIsSent: pane.innerText.includes("the purpose you wrote for it"),
-      // …and the card still says what this mode does.
-      showsHint: pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
-      // The suggestion is no longer a toggle: with a credentialled reviewer
-      // the card says it just happens, and no checkbox exists to point at.
-      saysReviewerSuggests: pane.innerText.includes("the AI Reviewer suggests an answer"),
-      noSuggestionsCheckbox: !pane.innerText.includes("Let the reviewer suggest"),
-      noPointerToSettings: !pane.innerText.includes("turn that on in Settings"),
-    };
-  }})()`);
-  // Ask mode on a Mac whose reviewer CANNOT run. The card must not promise a
-  // suggestion, because no review can produce one.
-  saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
-  win.webContents.send("status:changed");
-  await waitFor(
-    win,
-    `document.querySelector("#view").innerText.includes("cannot suggest an answer")`,
-    "the Ask card to say why there is no suggestion on offer",
-  );
-  const askWithoutReviewer = await win.webContents.executeJavaScript(`(${() => {
-    const pane = document.querySelector("#view");
-    return {
-      // The promise is gone, replaced by the reason…
-      noPromise: !pane.innerText.includes("the AI Reviewer suggests an answer"),
-      explainsWhy: pane.innerText.includes("cannot suggest an answer"),
-      // …and it names the one remedy there is, which is a control that exists.
-      namesTheRemedy: pane.innerText.includes("sign in to Plow in Settings"),
-      // Ask mode still says what Ask mode does.
-      stillSaysWhatAskDoes: pane.innerText.includes(
-        "Any request a rule doesn't already cover opens an approval window",
+      fieldVisible: !!field && field.checkVisibility(),
+      explainsAsk: pane.innerText.includes("You decide every request in an approval window."),
+      explainsDormantPrompt: pane.innerText.includes(
+        "These saved instructions will be used again when Gatekeeper is Enabled.",
       ),
     };
   }})()`);
-  saveSettings(probeHome, {
-    ...loadSettings(probeHome),
-    relayCredential: "plow_sk_probe_credential",
-  });
-  win.webContents.send("status:changed");
-  await waitFor(win, `document.querySelector("#view").innerText.includes("the AI Reviewer suggests an answer")`,
-    "the Ask card to go back to offering the suggestion");
+  const askWithoutReviewer = { noLongerRelevant: true };
 
   await scrollToApprovals();
   const approvalsShotAsk = process.env.APPROVALS_ASK_OUT ?? "/tmp/rules-approvals-ask.png";
@@ -1156,6 +1149,37 @@ app.whenReady().then(async () => {
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
   fs.writeFileSync(approvalsShotAsk, (await win.webContents.capturePage()).toPNG());
+
+  // A fresh denial on another tab uses one neutral global notice. Review
+  // selects its exact Audit row; the notice's × dismisses attention without
+  // deleting that row.
+  gatekeeperRecoveryProbe = {
+    intentId: "intent-gatekeeper-probe",
+    agent: "Family assistant",
+    request: "Buy a $125 Lego set on Amazon",
+    capabilities: ["Browser: amazon.com"],
+    reason: "Purchases are not covered by the current family-assistant instructions.",
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  win.webContents.send("gatekeeperRecovery:changed");
+  await waitFor(win, `document.querySelector(".gatekeeper-notice")?.innerText.includes("Buy a $125 Lego set on Amazon")`,
+    "the global Gatekeeper denial notice");
+  const globalNotice = await win.webContents.executeJavaScript(`(${() => ({
+    neutral: getComputedStyle(document.querySelector(".gatekeeper-notice")).display === "flex",
+    review: [...document.querySelectorAll(".gatekeeper-notice button")]
+      .some((button) => button.textContent.includes("Review in Audit")),
+    dismiss: !!document.querySelector(".gatekeeper-notice-dismiss"),
+  })})()`);
+  await win.webContents.executeJavaScript(`document.querySelector(".gatekeeper-notice .btn").click()`);
+  await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
+    "the notice to route to the denied Audit activity");
+  globalNotice.routed = true;
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".gatekeeper-notice-dismiss")`, "the notice after leaving Audit");
+  await win.webContents.executeJavaScript(`document.querySelector(".gatekeeper-notice-dismiss").click()`);
+  await waitFor(win, `document.querySelector(".gatekeeper-notice")?.hidden === true`,
+    "the global denial notice to dismiss");
+  globalNotice.dismissedWithoutDeletingRow = gatekeeperActivity.id === "activity-gatekeeper-probe";
 
   // …and the Agents pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
@@ -1247,7 +1271,7 @@ app.whenReady().then(async () => {
     // The pane is already showing the LOCKED vault from the check above, and
     // re-selecting the tab you are on is deliberately a no-op now — so go away
     // and come back to make it re-read the (now populated) stub.
-    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("rules"); return true; })()`);
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("audit"); return true; })()`);
     await waitFor(win, `!document.querySelector(".vaultui")`, "the vault pane to go");
     await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
     await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list to render");
@@ -1294,13 +1318,13 @@ app.whenReady().then(async () => {
     const rowStaysOpenOnKeep = await js(() => !!document.querySelector(".vaultui .vitem.open"));
 
     // And so is walking off the tab entirely.
-    await leaveTab("rules");
+    await leaveTab("audit");
     await waitAsking();
     const dirtyBlocksTabSwitch =
       (await asking()) && (await js(() => document.querySelector("#seg button.active")?.dataset.tab === "vault"));
     await click(DISCARD);
-    await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "rules"`, "the tab to switch");
-    const discardAllowsTabSwitch = await js(() => document.querySelector("#seg button.active")?.dataset.tab === "rules");
+    await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "audit"`, "the tab to switch");
+    const discardAllowsTabSwitch = await js(() => document.querySelector("#seg button.active")?.dataset.tab === "audit");
 
     // A second editor cannot be opened over a dirty one without asking — this is
     // what keeps a save/reload from silently taking another form down with it.
@@ -1376,7 +1400,7 @@ app.whenReady().then(async () => {
     // Away from the original, leaving DOES ask - without this the revert below
     // would pass on a form that simply never went dirty.
     await type(BOX, original + "-changed");
-    await leaveTab("rules");
+    await leaveTab("audit");
     await waitAsking();
     const editedStillAsks = await asking();
     await click(KEEP);
@@ -1384,9 +1408,9 @@ app.whenReady().then(async () => {
 
     // Back to the original: nothing to save, so nothing is asked.
     await type(BOX, original);
-    await leaveTab("rules");
+    await leaveTab("audit");
     const revertedSwitched = await waitFor(win,
-      `document.querySelector("#seg button.active")?.dataset.tab === "rules"`,
+      `document.querySelector("#seg button.active")?.dataset.tab === "audit"`,
       "the tab to switch with nothing left to save").then(() => true).catch(() => false);
     const revertAskedNothing = revertedSwitched && !(await asking());
 
@@ -1398,16 +1422,16 @@ app.whenReady().then(async () => {
     await click(".vaultui .vitem.open .field.secret .eye");
     await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret input").value !== ""`,
       "the secret to land in the box");
-    await leaveTab("rules");
+    await leaveTab("audit");
     const revealSwitched = await waitFor(win,
-      `document.querySelector("#seg button.active")?.dataset.tab === "rules"`,
+      `document.querySelector("#seg button.active")?.dataset.tab === "audit"`,
       "the tab to switch after only looking").then(() => true).catch(() => false);
     const revealAloneIsClean = revealSwitched && !(await asking());
     // Leave nothing open behind this block: a dialog still up would deadlock
     // the next awaited __domoSelectTab in the sections that follow.
     if (await asking()) { await click(DISCARD); await waitAnswered(); }
-    await leaveTab("rules");
-    await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "rules"`, "a clean exit from the vault block");
+    await leaveTab("audit");
+    await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "audit"`, "a clean exit from the vault block");
 
     // ---- A form with a vault call in flight takes no input ----
     // Every one of those awaits ends by overwriting or replacing the form, so a
@@ -1812,49 +1836,46 @@ app.whenReady().then(async () => {
     optimisticMode.storedIsAdversarial &&
     optimisticMode.chipAgrees &&
     optimisticMode.purposeFieldStillOffered &&
-    approvalsReviewer.chipLabels.join(",") ===
-      "Ask me every time,AI Reviewer decides,Approve everything,Deny everything" &&
-    approvalsReviewer.inRulesPane &&
+    approvalsReviewer.noRulesTab &&
+    approvalsReviewer.inAudit &&
+    approvalsReviewer.title === "Gatekeeper" &&
+    approvalsReviewer.enabled &&
     approvalsReviewer.showsStoredPurpose &&
     approvalsReviewer.purposeExampleHasBoundary &&
     approvalsReviewer.labelled &&
-    approvalsReviewer.describesGlobalPrecedence &&
-    approvalsReviewer.noPerAgentSwitch &&
-    approvalsReviewer.saysItCanWiden &&
-    approvalsReviewer.noOnlyNarrowsClaim &&
-    approvalsReviewer.saysItMayApprove &&
+    approvalsReviewer.explainsEnabled &&
     approvalsReviewer.noAdversarialWord &&
-    approvalsReviewer.noHintLineTakingItsPlace &&
-    approvalsReviewer.noFalseReviewerInputs &&
-    approvalsReviewer.noSuggestionsCheckbox &&
     approvalsReviewer.recoveryNamesDenial &&
-    approvalsReviewer.recoveryOffersBoundedOverride &&
     approvalsReviewer.recoveryOffersCoaching &&
+    approvalsReviewer.noRetryOverride &&
+    rulesModalView.opens &&
+    rulesModalView.empty &&
     staleSuggestionDiscarded &&
-    gatekeeperRecovery.armedExplained &&
     gatekeeperRecovery.suggestionEditable &&
     gatekeeperRecovery.suggestionGeneralizes &&
     gatekeeperRecovery.notAppliedAutomatically &&
     gatekeeperRecovery.requiresExplicitUse &&
-    gatekeeperRecovery.consumedExplained &&
+    gatekeeperRecovery.noKeepAction &&
+    gatekeeperRecovery.hasDismiss &&
+    gatekeeperRecovery.savedAndDismissed &&
     purposeRoundTrip.stored &&
     purposeRoundTrip.fieldShowsWhatWasStored &&
-    approvalsAsk.fieldGone &&
-    approvalsAsk.purposeTextGone &&
-    approvalsAsk.showsHint &&
-    approvalsAsk.saysReviewerSuggests &&
-    approvalsAsk.noSuggestionsCheckbox &&
-    approvalsAsk.noPointerToSettings &&
-    approvalsAsk.stillDisclosesPurposeIsSent &&
-    askWithoutReviewer.noPromise &&
-    askWithoutReviewer.explainsWhy &&
-    askWithoutReviewer.namesTheRemedy &&
-    askWithoutReviewer.stillSaysWhatAskDoes &&
+    approvalsAsk.fieldVisible &&
+    approvalsAsk.explainsAsk &&
+    approvalsAsk.explainsDormantPrompt &&
+    askWithoutReviewer.noLongerRelevant &&
+    globalNotice.neutral &&
+    globalNotice.review &&
+    globalNotice.dismiss &&
+    globalNotice.routed &&
+    globalNotice.dismissedWithoutDeletingRow &&
     settings.noApprovalModeGroup &&
     settings.noModeChipsHere &&
     settings.saysNothingAdversarial &&
     main.hasBridge &&
     main.viewChildren > 0 &&
+    main.noRulesTab &&
+    main.gatekeeperInAudit &&
     approval.showsCapability &&
     approval.buttons.length > 0 &&
     reviewerNote.showsReason &&
@@ -1871,7 +1892,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, capabilities, plugins, pluginOff, pluginUnmet, blockLanding, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, gatekeeperRecovery, gatekeeperRecoveryShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, capabilities, plugins, pluginOff, pluginUnmet, blockLanding, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, rulesModalView, approvalsShot, gatekeeperRecovery, gatekeeperRecoveryShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, globalNotice, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

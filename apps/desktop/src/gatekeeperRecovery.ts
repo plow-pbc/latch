@@ -41,6 +41,14 @@ export function gatekeeperRecoveryView(denied: DeniedIntent): GatekeeperRecovery
   };
 }
 
+/** A stale detail pane must never dismiss a newer denial that replaced it. */
+export function dismissGatekeeperAttention(
+  current: GatekeeperRecoveryView | null,
+  intentId: string,
+): GatekeeperRecoveryView | null {
+  return current?.intentId === intentId ? null : current;
+}
+
 /** Recent local operation titles are examples of ordinary use, not verdict
  * evidence. Newest-first input stays newest-first; duplicates and the denied
  * operation itself add no signal. */

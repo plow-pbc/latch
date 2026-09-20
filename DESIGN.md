@@ -579,7 +579,7 @@ repo can prove they broke nothing.
 | `domo-broker` | exec | Daemon + `create-agent` subcommand |
 | `domo-device` | exec | Headless device runner (`--policy`) |
 | `domo-mcp` | exec | stdio↔socket MCP shim for Claude Code |
-| `DomoApp` | exec | AppKit shell: status item, NSAlert approvals, Goals/Rules/Audit window, agent spin-up |
+| `DomoApp` | exec | AppKit shell: status item, NSAlert approvals, Agents/Audit window, agent spin-up |
 
 ## 11a. Local browsing (Camoufox + local vault)
 
@@ -1279,7 +1279,7 @@ Monorepo mirroring the current module seams one-to-one:
 | `@domo/device-core` | `DomoDeviceCore` | DeviceAgent, PolicyEngine, FileOps, Executor+SBPL, AuditLog, SkillRegistry |
 | `apps/broker` | `domo-broker` | Linux deploy target; TLS in-process or behind a reverse proxy per the runbook |
 | `apps/mcp` | `domo-mcp` | stdio shim on the official SDK |
-| `apps/desktop` | `DomoApp` | Electron: device-core in the main process; tray, approval windows, Goals/Rules/Audit |
+| `apps/desktop` | `DomoApp` | Electron: device-core in the main process; tray, approval windows, Agents/Audit |
 
 Runtime decisions: **Node LTS everywhere** — Electron's main process is Node,
 so standardizing on it keeps one runtime; Bun may be used as a dev-time runner
@@ -1327,7 +1327,7 @@ that succeeds when approved, symlink/traversal bounds, SBPL byte-parity.
 streams from Swift and TS devices are event-for-event comparable.*
 
 **Phase T5 — Electron app.** `apps/desktop`: device-core in the main process;
-tray, approval flow, onboarding/TOFU, Goals/Rules/Audit windows; signing +
+tray, approval flow, onboarding/TOFU, Agents/Audit windows; signing +
 notarization + hardened runtime (spawning `sandbox-exec` verified under it);
 autoupdate wired so Chromium patches ship on cadence. UI smoke follows the
 existing philosophy — real input events, not synthetic accessibility calls —

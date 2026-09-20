@@ -3,10 +3,9 @@
    textContent (never innerHTML), so nothing on the wire can inject markup. */
 
 import {
-  PURPOSE_CAVEATS,
-  PURPOSE_LABEL,
   PURPOSE_PLACEHOLDER,
 } from "./approvals.js";
+import { attentionMatches, createSerialAutosave, modeView } from "./gatekeeperState.js";
 
 import { el, icon, switchEl } from "./dom.js";
 import { singleFlight } from "./onboardingAction.js";
@@ -99,6 +98,67 @@ async function refreshStatus() {
   statusText.textContent = status.connected ? `Connected · ${status.name}` : "Not connected";
 }
 
+const gatekeeperNotice = document.getElementById("gatekeeperNotice");
+let gatekeeperAttention = null;
+let gatekeeperAttentionGeneration = 0;
+
+async function dismissGatekeeperRecovery(intentId) {
+  gatekeeperAttention = await window.domo.gatekeeperRecoveryDismiss(intentId);
+  drawGatekeeperNotice();
+  if (currentTab === "audit") await refreshAudit({ changed: new Set([selectedId].filter(Boolean)) });
+}
+
+async function showGatekeeperRecovery(attention = gatekeeperAttention) {
+  if (!attention) return;
+  if (currentTab !== "audit" && !(await selectTab("audit"))) return;
+  const page = await window.domo.auditPage({
+    limit: 200,
+    search: "",
+    decision: "any",
+    status: "any",
+    cutoffMs: null,
+    cutoffKey: "ts",
+    keepId: selectedId,
+  });
+  const activity = page.rows.find((row) => row.intentId === attention.intentId);
+  if (activity) selectedId = activity.id;
+  await refreshAudit({ changed: new Set(activity ? [activity.id] : ["*"]) });
+  if (activity) auditMounted?.rows.get(activity.id)?.tr.scrollIntoView({ block: "center" });
+  auditMounted?.detailScroll.focus({ preventScroll: true });
+}
+
+function drawGatekeeperNotice() {
+  gatekeeperNotice.hidden = !gatekeeperAttention || currentTab === "audit";
+  gatekeeperNotice.replaceChildren();
+  if (gatekeeperNotice.hidden) return;
+  const attention = gatekeeperAttention;
+  const review = el("button", { class: "btn", text: "Review in Audit →" });
+  review.addEventListener("click", () => void showGatekeeperRecovery(attention));
+  const dismiss = el("button", {
+    class: "gatekeeper-notice-dismiss",
+    text: "×",
+    attrs: { type: "button", "aria-label": "Dismiss Gatekeeper denial" },
+  });
+  dismiss.addEventListener("click", () => void dismissGatekeeperRecovery(attention.intentId));
+  gatekeeperNotice.append(
+    el("span", { class: "gatekeeper-notice-mark", text: "!" }),
+    el("div", { class: "gatekeeper-notice-copy" }, [
+      el("strong", { text: "Gatekeeper denied a request" }),
+      el("span", { text: attention.request }),
+    ]),
+    review,
+    dismiss,
+  );
+}
+
+async function refreshGatekeeperAttention() {
+  const generation = ++gatekeeperAttentionGeneration;
+  const attention = await window.domo.gatekeeperRecoveryGet();
+  if (generation !== gatekeeperAttentionGeneration) return;
+  gatekeeperAttention = attention;
+  drawGatekeeperNotice();
+}
+
 // ---- Audit (master–detail, mockup Alternative 1) ----
 // Rows are grouped ACTIVITIES (one logical operation), each with a per-event
 // timeline in the detail pane — matching the Swift app's fine-grained view.
@@ -137,6 +197,8 @@ const fmtClock = (iso) => fmtWith(CLOCK_FMT, iso);
 
 // Mount the audit chrome once (search input, chips, list + detail containers).
 async function renderAudit() {
+  await refreshGatekeeperAttention();
+  const gatekeeper = createGatekeeperCard();
   const search = el("div", { class: "search" }, [
     el("input", { attrs: { placeholder: "Search activity, path, agent…" } }),
   ]);
@@ -182,7 +244,7 @@ async function renderAudit() {
   });
   // The detail pane is a column: the activity info scrolls in .detail-scroll;
   // the live browser thumbnail sits pinned below it, outside the scroll.
-  const detailScroll = el("div", { class: "detail-scroll" });
+  const detailScroll = el("div", { class: "detail-scroll", attrs: { tabindex: "-1" } });
   const liveImg = el("img", { attrs: { alt: "Live browser view" } });
   const liveDot = el("span", { class: "dot" });
   const liveCapText = el("span");
@@ -245,7 +307,7 @@ async function renderAudit() {
   detailBox.style.width = detailWidth + "px";
   const splitter = el("div", { class: "splitter", attrs: { title: "Drag to resize" } });
   wireSplitter(splitter, detailBox);
-  view.replaceChildren(toolbar, el("div", { class: "a1" }, [listBox, splitter, detailBox]));
+  view.replaceChildren(gatekeeper.node, toolbar, el("div", { class: "a1" }, [listBox, splitter, detailBox]));
 
   // The table (and its tbody) persist across refreshes so row nodes are reused,
   // not rebuilt — that keeps an in-progress insert animation alive and lets a
@@ -262,7 +324,9 @@ async function renderAudit() {
     listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
     moreBox, total: 0,
     liveBox, liveImg, liveDot, liveCapText, hideHint, syncLabel, liveHasFrame: false,
+    gatekeeper,
   };
+  await gatekeeper.ready;
   await refreshAudit();
   refreshLiveThumb();
   searchInput.focus();
@@ -574,6 +638,7 @@ function statusPill(a) {
 
 // Update a row's content in place, touching only what changed.
 function updateAuditRow(r, a) {
+  r.tr.classList.toggle("gatekeeper-denied-row", a.decisionKind === "denied");
   if (r.time !== a.ts) { r.timeCw.textContent = fmtDayTime(a.ts); r.time = a.ts; }
   if (r.decisionTone !== a.decisionTone || r.decision !== a.decision) {
     r.decisionCw.replaceChildren(decisionMark(a));
@@ -617,6 +682,116 @@ function animateRowEnter(tr) {
   }
 }
 
+let gatekeeperSuggestionModal = null;
+
+function closeGatekeeperSuggestionModal() {
+  if (!gatekeeperSuggestionModal) return;
+  const closing = gatekeeperSuggestionModal;
+  gatekeeperSuggestionModal = null;
+  closeModal(closing.modal);
+}
+
+function openGatekeeperSuggestionModal(trigger, attention) {
+  const body = el("div", { class: "gatekeeper-suggestion-body" }, [
+    el("div", { class: "gatekeeper-suggestion-loading" }, [
+      el("span", { class: "gatekeeper-inline-spinner" }),
+      el("span", { text: "Drafting revised instructions…" }),
+    ]),
+  ]);
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  let modal = null;
+  cancel.addEventListener("click", closeGatekeeperSuggestionModal);
+  modal = openModal(trigger, {
+    className: "gatekeeper-suggestion-modal",
+    children: [
+      el("div", { class: "modal-title-row" }, [
+        el("h2", { text: "Suggest revised instructions" }),
+        el("div", { class: "spacer" }),
+        cancel,
+      ]),
+      el("div", { class: "gatekeeper-suggestion-context" }, [
+        el("strong", { text: "Denied request" }),
+        el("div", { class: "mono", text: attention.request }),
+        attention.reason ? el("p", { class: "faint", text: `Reviewer: ${attention.reason}` }) : null,
+      ]),
+      body,
+    ],
+    onDismiss: closeGatekeeperSuggestionModal,
+  });
+  if (!modal) return;
+  gatekeeperSuggestionModal = { modal, intentId: attention.intentId };
+
+  void Promise.all([
+    window.domo.agentPurposeGet(),
+    window.domo.gatekeeperRecoverySuggest(attention.intentId),
+  ]).then(async ([currentPurpose, result]) => {
+    const latest = await window.domo.gatekeeperRecoveryGet();
+    if (gatekeeperSuggestionModal?.modal !== modal) return;
+    if (latest?.intentId !== attention.intentId) {
+      body.replaceChildren(el("p", { class: "warn", text: "A newer Gatekeeper denial replaced this one." }));
+      return;
+    }
+    if (!result?.ok) {
+      const retry = el("button", { class: "btn", text: "Try again" });
+      retry.addEventListener("click", () => {
+        closeGatekeeperSuggestionModal();
+        openGatekeeperSuggestionModal(trigger, attention);
+      });
+      body.replaceChildren(
+        el("p", { class: "warn", text: result?.reason || "Gatekeeper could not suggest a revision." }),
+        retry,
+      );
+      return;
+    }
+    const suggestion = el("textarea", { class: "text gatekeeper-suggestion" });
+    suggestion.value = result.revision;
+    const save = el("button", { class: "btn primary", text: "Save instructions" });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      const stored = await window.domo.agentPurposeSet(suggestion.value);
+      auditMounted?.gatekeeper.setPurpose(stored);
+      await dismissGatekeeperRecovery(attention.intentId);
+      closeGatekeeperSuggestionModal();
+    });
+    body.replaceChildren(
+      el("div", { class: "field" }, [
+        el("label", { text: "Current instructions" }),
+        el("div", { class: "gatekeeper-current-purpose", text: currentPurpose || "No instructions yet." }),
+      ]),
+      el("div", { class: "field" }, [
+        el("label", { text: "Suggested replacement" }),
+        suggestion,
+      ]),
+      el("p", { class: "faint", text: "Review and edit this full replacement before saving it." }),
+      el("div", { class: "gatekeeper-suggestion-actions" }, [save]),
+    );
+    suggestion.focus();
+  });
+}
+
+function gatekeeperDenialDetail(a) {
+  if (!attentionMatches(gatekeeperAttention, a)) return null;
+  const attention = gatekeeperAttention;
+  const dismiss = el("button", {
+    class: "gatekeeper-denial-dismiss",
+    text: "×",
+    attrs: { type: "button", "aria-label": "Dismiss Gatekeeper denial" },
+  });
+  dismiss.addEventListener("click", () => void dismissGatekeeperRecovery(attention.intentId));
+  const suggest = el("button", { class: "btn gatekeeper-suggest", text: "Suggest revised instructions" });
+  suggest.addEventListener("click", () => openGatekeeperSuggestionModal(suggest, attention));
+  return el("section", { class: "gatekeeper-denial-detail" }, [
+    el("div", { class: "gatekeeper-denial-head" }, [
+      el("h3", { text: "Gatekeeper denied this request" }),
+      el("div", { class: "spacer" }),
+      dismiss,
+    ]),
+    attention.reason ? el("p", { class: "gatekeeper-denial-reason", text: attention.reason }) : null,
+    el("p", { text: "Revise Gatekeeper’s instructions if requests like this should be allowed." }),
+    suggest,
+  ]);
+}
+
 function detailFor(a) {
   if (!a) return el("div", { class: "empty", text: "Select an activity." });
 
@@ -634,6 +809,7 @@ function detailFor(a) {
 
   // The header repeats the row's two cells: the decision, then the outcome.
   const children = [
+    gatekeeperDenialDetail(a),
     el("h3", { class: "act-head" }, [decisionMark(a), statusPill(a)]),
     a.command ? el("div", { class: "cmd", text: a.command }) : null,
     meta,
@@ -654,247 +830,224 @@ function detailFor(a) {
   return el("div", {}, children.filter(Boolean));
 }
 
-// ---- Rules ----
+// ---- Gatekeeper policy (Audit header) ----
 
-let rulesMounted = null;
+const GATEKEEPER_MODES = ["adversarial", "ask", "approve", "deny"];
+let rulesModal = null;
 
-async function renderRules() {
-  // ---- Approvals: what happens when one of those agents asks for something.
-  //
-  // It sits above the stored rules because both controls answer what agents
-  // may do. The stored mode values are untouched — every label below is
-  // display only.
-  let inference = await window.domo.inferenceGet();
-  const modeChips = el("div", { class: "chips" });
-  const modeNote = el("p", { class: "faint chip-note", text: "" });
-  const modeHintLine = el("p", { class: "faint mode-hint", text: "" });
+function closeRulesModal() {
+  if (!rulesModal) return;
+  const closing = rulesModal;
+  rulesModal = null;
+  closeModal(closing.modal);
+}
 
-  // The purpose statement, and the two things that have to be said beside it.
-  // Device-owner text: it is read and written through the settings IPC pair and
-  // nowhere else, and it reaches no rule key, grant, or sandbox profile.
-  const purposeInput = el("textarea", {
-    class: "text",
-    attrs: { placeholder: PURPOSE_PLACEHOLDER },
-  });
-  purposeInput.value = await window.domo.agentPurposeGet();
-  // On commit only — blur or Enter: an `input` handler would persist every
-  // half-written sentence on the way to the real one. The stored value is
-  // what goes back on screen, so the field shows what the reviewer will read.
-  purposeInput.addEventListener("change", async () => {
-    purposeInput.value = await window.domo.agentPurposeSet(purposeInput.value);
-  });
-  const purposeBlock = el("div", { class: "revealed" }, [
-    el("div", { class: "field" }, [el("label", { text: PURPOSE_LABEL }), purposeInput]),
-    ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
-  ]);
+function openRulesModal(trigger) {
+  const list = el("div", { class: "rule-list" });
+  const close = el("button", { class: "btn", text: "Close" });
+  const title = el("h2", { text: "Always-allow rules" });
+  let modal = null;
 
-  const recoveryCard = el("div", { class: "gatekeeper-recovery item" });
-  recoveryCard.hidden = true;
-  let recoveryGeneration = 0;
-  const drawRecovery = (recovery) => {
-    recoveryCard.hidden = !recovery;
-    if (!recovery) {
-      recoveryCard.replaceChildren();
-      return;
-    }
-    const badge = { tone: "red", text: "Denied" };
-    const statusLine = el("p", {
-      class: "gatekeeper-recovery-status denied",
-      text: "Gatekeeper denied this request. Review it or improve your standing instructions.",
-    });
-    const actionError = el("p", { class: "warn", text: "" });
-    actionError.hidden = true;
-    const actions = el("div", { class: "row gatekeeper-recovery-actions" });
-
-    const suggest = el("button", { class: "btn", text: "Suggest better instructions" });
-    suggest.addEventListener("click", async () => {
-      const generation = recoveryGeneration;
-      suggest.disabled = true;
-      suggest.textContent = "Thinking…";
-      actionError.hidden = true;
-      const result = await window.domo.gatekeeperRecoverySuggest(recovery.intentId);
-      if (generation !== recoveryGeneration) return;
-      suggest.disabled = false;
-      suggest.textContent = "Suggest better instructions";
-      if (!result?.ok) {
-        actionError.textContent = result?.reason || "Gatekeeper could not suggest a revision.";
-        actionError.hidden = false;
-        return;
-      }
-      const suggestion = el("textarea", { class: "text gatekeeper-suggestion" });
-      suggestion.value = result.revision;
-      const apply = el("button", { class: "btn primary", text: "Use these instructions" });
-      apply.addEventListener("click", async () => {
-        apply.disabled = true;
-        purposeInput.value = await window.domo.agentPurposeSet(suggestion.value);
-        suggestion.value = purposeInput.value;
-        apply.textContent = "Instructions updated";
-      });
-      recoveryCard.appendChild(el("div", { class: "gatekeeper-suggestion-block" }, [
-        el("label", { text: "Suggested full replacement" }),
-        suggestion,
-        el("p", { class: "faint", text: "Review and edit this suggestion before using it. It has not changed Gatekeeper yet." }),
-        apply,
-      ]));
-    });
-    actions.appendChild(suggest);
-
-    recoveryCard.replaceChildren(...[
-      el("div", { class: "row" }, [
-        el("h4", { text: "Review a Gatekeeper denial" }),
-        el("div", { class: "spacer" }),
-        el("span", { class: `badge b-${badge.tone}`, text: badge.text }),
-      ]),
-      statusLine,
-      el("p", { class: "gatekeeper-request", text: recovery.request }),
-      recovery.reason ? el("p", { class: "faint", text: `Reviewer: ${recovery.reason}` }) : null,
-      el("div", { class: "capchips" }, (recovery.capabilities || []).map((c) => el("span", { class: "cap", text: c }))),
-      actions,
-      actionError,
-    ].filter(Boolean));
-  };
-  const refreshRecovery = async () => {
-    const generation = ++recoveryGeneration;
-    const recovery = await window.domo.gatekeeperRecoveryGet();
-    if (generation === recoveryGeneration && rulesMounted?.refreshRecovery === refreshRecovery) {
-      drawRecovery(recovery);
-    }
-  };
-
-  // The reads above can outlive a quick tab switch. Do not let the
-  // completed Rules render replace the pane the user switched to meanwhile.
-  if (currentTab !== "rules") return;
-
-  // What a reviewer with no credential costs, said rather than enforced — the
-  // mode is still the owner's to choose, and choosing it is not an error to
-  // prevent.
-
-  const renderApprovals = () => {
-    const mode = inference.approvalMode;
-    const hasKey = inference.available;
-    // How to get a reviewer. One reviewer, one answer — and the two sentences
-    // below both end in it, so they cannot come to disagree about the remedy.
-    const remedy = ": sign in to Plow in Settings.";
-    // Only worth saying when the owner has actually asked the reviewer to
-    // decide. The second half is the part people get wrong: a denial here is
-    // not a freeze, because a rule already approved is a decision they made.
-    modeNote.textContent =
-      mode === "adversarial" && !hasKey
-        ? `The AI Reviewer has no credential${remedy} ` +
-          "Until then it denies every request."
-        : "";
-    const chip = (value, label) => {
-      const chip = el("span", {
-        class: "chip" + (mode === value ? " active" : ""),
-      }, [el("span", { text: label })]);
-      chip.addEventListener("click", async () => {
-        // What MAIN stored, not what was asked for. Main takes any known mode
-        // now, but it is still the one that decides what is on disk, and the
-        // pane must show that rather than what it optimistically asked for.
-        await window.domo.approvalModeSet(value);
-        inference = await window.domo.inferenceGet();
-        renderApprovals();
-      });
-      return chip;
-    };
-    modeChips.replaceChildren(
-      chip("ask", "Ask me every time"),
-      chip("adversarial", "AI Reviewer decides"),
-      chip("approve", "Approve everything"),
-      chip("deny", "Deny everything"),
-    );
-    purposeBlock.hidden = mode !== "adversarial";
-    // Ask mode always gets the reviewer's suggestion — when the reviewer can
-    // run. With no credential it can't, so say what is actually true instead.
-    if (mode === "ask" && !hasKey) {
-      modeHintLine.textContent =
-        "Any request a rule doesn't already cover opens an approval window. " +
-        `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`;
-    } else if (mode === "approve") {
-      modeHintLine.textContent =
-        "Every request is allowed without asking you and without review — including AppleScript, " +
-        "which runs outside the sandbox. Agents get full access to this Mac.";
-    } else if (mode === "deny") {
-      modeHintLine.textContent =
-        "Every request is refused without asking you.";
-    } else {
-      // Unknown stored values keep the card useful by falling back to Ask.
-      modeHintLine.textContent = mode === "adversarial" ? "" :
-        "Any request a rule doesn't already cover opens an approval window, " +
-        "and the AI Reviewer suggests an answer.";
-    }
-    modeHintLine.hidden = mode === "adversarial";
-  };
-  renderApprovals();
-
-  // Signing in or out changes what the reviewer can do, not what the owner
-  // chose — the stored mode stays put — so this only re-reads and redraws.
-  const refreshApprovals = async () => {
-    inference = await window.domo.inferenceGet();
-    renderApprovals();
-  };
-
-  // The stored rules, redrawn in place — always from `rules:changed`, which
-  // main fires for every change to the list: an approval window answered
-  // "always allow" while this pane is open, or the Revoke button here. Never
-  // renderRules() for that — a full rebuild would throw away a purpose
-  // statement mid-edit and reset the pane's scroll.
-  const ruleList = el("div", { class: "rule-list" });
-  const drawRules = (rules) => {
-    ruleList.replaceChildren(...(rules.length
-      ? rules.map((r) => {
-          const remove = el("button", { class: "btn danger", text: "Revoke Rule" });
-          // A revoke that could not be written or recorded is refused by main
-          // and the rule stays in force. The row stays too — `rules:changed`
-          // never fires for a change that did not stand — so say why the
-          // button did nothing. A fixed sentence: nothing from the error.
-          const failed = el("p", { class: "warn", text: "Couldn't revoke this rule, so it is still in effect. Try again." });
+  const draw = (rules) => {
+    list.replaceChildren(...(rules.length
+      ? rules.map((rule) => {
+          const revoke = el("button", { class: "btn danger", text: "Revoke Rule" });
+          const failed = el("p", {
+            class: "warn",
+            text: "Couldn't revoke this rule, so it is still in effect. Try again.",
+          });
           failed.hidden = true;
-          remove.addEventListener("click", async () => {
-            remove.disabled = true;
+          revoke.addEventListener("click", async () => {
+            revoke.disabled = true;
             try {
-              await window.domo.rulesRemove(r.ruleKey);
+              await window.domo.rulesRemove(rule.ruleKey);
             } catch {
               failed.hidden = false;
-              remove.disabled = false;
+              revoke.disabled = false;
             }
           });
-          const caps = (r.capabilities || []).map((c) => el("span", { class: "cap", text: capText(c) }));
-          return el("div", { class: "item" }, [
-            el("div", { class: "row" }, [el("h4", { text: r.agentDisplay || r.agentId }), el("div", { class: "spacer" }), remove]),
-            el("div", { class: "capchips" }, caps),
+          return el("div", { class: "item rule-item" }, [
+            el("div", { class: "row" }, [
+              el("h4", { text: rule.agentDisplay || rule.agentId }),
+              el("div", { class: "spacer" }),
+              revoke,
+            ]),
+            el("div", { class: "capchips" },
+              (rule.capabilities || []).map((capability) =>
+                el("span", { class: "cap", text: capText(capability) }))),
             failed,
           ]);
         })
       : [el("div", { class: "empty", text: "No always-allow rules." })]));
+    title.textContent = rules.length === 1 ? "1 always-allow rule" : `${rules.length} always-allow rules`;
+  };
+
+  const refresh = async () => {
+    const rules = await window.domo.rulesList();
+    if (rulesModal?.modal === modal) draw(rules);
+  };
+  close.addEventListener("click", closeRulesModal);
+  modal = openModal(trigger, {
+    className: "rules-modal",
+    children: [
+      el("div", { class: "modal-title-row" }, [title, el("div", { class: "spacer" }), close]),
+      el("p", {
+        class: "faint",
+        text: "These exact agent and capability combinations can run without asking you again.",
+      }),
+      list,
+    ],
+    onDismiss: closeRulesModal,
+  });
+  if (!modal) return;
+  rulesModal = { modal, refresh };
+  void refresh();
+}
+
+function createGatekeeperCard() {
+  const modeButton = el("button", {
+    class: "gatekeeper-mode",
+    text: "Loading…",
+    attrs: { type: "button", "aria-haspopup": "menu" },
+  });
+  const modeDescription = el("p", { class: "faint gatekeeper-mode-description" });
+  const rulesButton = el("button", { class: "btn", text: "View rules" });
+  rulesButton.addEventListener("click", () => openRulesModal(rulesButton));
+
+  const purposeInput = el("textarea", {
+    class: "text",
+    attrs: { placeholder: PURPOSE_PLACEHOLDER, "aria-label": "Gatekeeper instructions" },
+  });
+  purposeInput.disabled = true;
+  const saveText = el("span", { text: "" });
+  const saveStatus = el("div", { class: "gatekeeper-save-status" }, [saveText]);
+  const retrySave = el("button", { class: "cap-more", text: "Try again" });
+  retrySave.hidden = true;
+  saveStatus.appendChild(retrySave);
+  const inactiveNote = el("p", {
+    class: "faint gatekeeper-inactive-note",
+    text: "These saved instructions will be used again when Gatekeeper is Enabled.",
+  });
+  inactiveNote.hidden = true;
+
+  const node = el("section", { class: "audit-gatekeeper" }, [
+    el("div", { class: "gatekeeper-head" }, [
+      el("h2", { class: "gatekeeper-title", text: "Gatekeeper" }),
+      modeButton,
+      el("div", { class: "spacer" }),
+      rulesButton,
+    ]),
+    modeDescription,
+    el("div", { class: "gatekeeper-purpose" }, [
+      el("div", { class: "gatekeeper-field-head" }, [
+        el("label", { text: "Instructions" }),
+        el("div", { class: "spacer" }),
+        saveStatus,
+      ]),
+      purposeInput,
+      inactiveNote,
+    ]),
+  ]);
+
+  let inference = null;
+  let autosave = null;
+  let unsubscribe = null;
+  let purposeListener = null;
+
+  const drawMode = () => {
+    const current = modeView(inference?.approvalMode);
+    modeButton.replaceChildren(
+      el("span", { text: current.label }),
+      el("span", { class: "filter-caret", text: "▾" }),
+    );
+    modeButton.dataset.mode = current.mode;
+    modeDescription.textContent = current.description;
+    inactiveNote.hidden = current.mode === "adversarial";
+  };
+
+  const chooseMode = async (mode) => {
+    modeButton.disabled = true;
+    await window.domo.approvalModeSet(mode);
+    inference = await window.domo.inferenceGet();
+    modeButton.disabled = false;
+    drawMode();
+  };
+  modeButton.addEventListener("click", () => {
+    const current = modeView(inference?.approvalMode);
+    openMenu(modeButton, GATEKEEPER_MODES.map((mode) => {
+      const item = modeView(mode);
+      return {
+        label: item.label,
+        description: item.description,
+        checked: item.mode === current.mode,
+        danger: item.mode === "approve",
+        run: () => void chooseMode(item.mode),
+      };
+    }), { align: "left" });
+  });
+
+  const setSaveState = (state) => {
+    saveStatus.className = `gatekeeper-save-status save-${state.phase}`;
+    retrySave.hidden = state.phase !== "error";
+    saveText.textContent = state.phase === "saving"
+      ? "Saving…"
+      : state.phase === "saved"
+        ? "✓ Saved"
+        : state.phase === "error"
+          ? "Couldn't save."
+          : "";
+    if (state.phase === "saved" && purposeInput.value !== state.draft) {
+      purposeInput.value = state.draft;
+    }
+  };
+
+  const refreshMode = async () => {
+    inference = await window.domo.inferenceGet();
+    if (node.isConnected) drawMode();
   };
   const refreshRules = async () => {
-    const latest = await window.domo.rulesList();
-    // The read can outlive a tab switch; the pane it belongs to is gone then.
-    if (rulesMounted?.refreshRules === refreshRules) drawRules(latest);
+    const rules = await window.domo.rulesList();
+    if (node.isConnected) rulesButton.textContent = `View ${rules.length} ${rules.length === 1 ? "rule" : "rules"}`;
   };
-  // Mounted BEFORE the first read, and the first read goes through the same
-  // path as every later one: a `rules:changed` that arrives while that read
-  // is in flight refreshes this list rather than finding nothing mounted,
-  // so there is no moment the list can show a snapshot from before a change.
-  rulesMounted = { refreshApprovals, refreshRules, refreshRecovery };
-  await Promise.all([refreshRules(), refreshRecovery()]);
-  if (rulesMounted?.refreshRules !== refreshRules) return; // the tab moved on
 
-  view.replaceChildren(el("div", { class: "panel rules settings" }, [
-    group(
-      "Approvals",
-      "What happens when an agent asks to do something on this Mac. Requests already covered " +
-        "by an always-allow rule skip Ask and Approve; AI Reviewer and Deny still apply to every " +
-        "request. Manage those rules below. The reviewer sees which " +
-        "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
-        "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
-        "agent hasn't asked for.",
-      [recoveryCard, modeChips, modeNote, purposeBlock, modeHintLine],
-    ),
-    el("div", { class: "section-label", text: "Always-allow rules" }),
-    ruleList,
-  ]));
+  const ready = Promise.all([
+    window.domo.inferenceGet(),
+    window.domo.agentPurposeGet(),
+    window.domo.rulesList(),
+  ]).then(([nextInference, purpose, rules]) => {
+    inference = nextInference;
+    drawMode();
+    rulesButton.textContent = `View ${rules.length} ${rules.length === 1 ? "rule" : "rules"}`;
+    purposeInput.value = purpose;
+    purposeInput.disabled = false;
+    autosave = createSerialAutosave((value) => window.domo.agentPurposeSet(value), 500);
+    unsubscribe = autosave.subscribe(setSaveState);
+    purposeListener = () => autosave.edit(purposeInput.value);
+    purposeInput.addEventListener("input", purposeListener);
+    retrySave.addEventListener("click", () => autosave.retry());
+  });
+
+  return {
+    node,
+    ready,
+    refreshMode,
+    refreshRules,
+    async flushPrompt() {
+      await ready;
+      const state = await autosave.flush();
+      if (state.phase === "error") purposeInput.focus();
+      return state.phase !== "error";
+    },
+    setPurpose(value) {
+      purposeInput.value = value;
+      setSaveState({ phase: "saved", draft: value });
+    },
+    dispose() {
+      unsubscribe?.();
+      if (purposeListener) purposeInput.removeEventListener("input", purposeListener);
+      autosave?.dispose();
+    },
+  };
 }
 
 // ---- Connect a client ----
@@ -976,10 +1129,13 @@ function openMenu(anchor, items, { align = "right" } = {}) {
   const checkable = items.some((item) => item.checked !== undefined);
   const menu = el("div", { class: "menu", attrs: { role: "menu" } }, items.map((item) => {
     const b = el("button", {
-      class: "menu-item" + (checkable ? " checkable" : "") + (item.checked ? " checked" : ""),
-      text: item.label,
+      class: "menu-item" + (checkable ? " checkable" : "") +
+        (item.checked ? " checked" : "") + (item.danger ? " danger" : ""),
       attrs: { type: "button", role: checkable ? "menuitemradio" : "menuitem", ...(checkable ? { "aria-checked": String(item.checked === true) } : {}) },
-    });
+    }, [
+      el("span", { class: "menu-label", text: item.label }),
+      item.description ? el("span", { class: "menu-description", text: item.description }) : null,
+    ]);
     b.disabled = item.disabled === true;
     b.addEventListener("click", () => { closeMenu(); item.run(); });
     return b;
@@ -1021,7 +1177,7 @@ function closeModal(modal) {
   if (!modal || modal !== activeModal) return;
   document.removeEventListener("keydown", modal.onKeydown, true);
   modal.backdrop.remove();
-  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner, .gatekeeper-notice")) {
     node.removeAttribute("inert");
   }
   activeModal = null;
@@ -1049,7 +1205,7 @@ function openModal(trigger, { children = [], className = "", focus, canDismiss, 
     if (e.target === backdrop) dismiss();
   });
   document.addEventListener("keydown", onKeydown, true);
-  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner, .gatekeeper-notice")) {
     node.setAttribute("inert", "");
   }
   document.body.appendChild(backdrop);
@@ -2742,7 +2898,6 @@ async function renderSettings() {
 function render() {
   if (currentTab === "agents") renderAgents();
   else if (currentTab === "audit") renderAudit();
-  else if (currentTab === "rules") renderRules();
   else if (currentTab === "vault") renderVault(view, () => currentTab === "vault");
   else if (currentTab === "plugins") renderPlugins();
   else if (currentTab === "settings") renderSettings();
@@ -2752,11 +2907,15 @@ function render() {
 // whole pane, so an open form with unsaved edits gets a say first — and a caller
 // must not persist a tab the owner backed out of.
 async function selectTab(tab) {
+  if (tab === "rules") tab = "audit";
   // Already there: a rebuild would throw away an open form for no navigation at
   // all, which is the loss this guard exists to prevent.
   if (tab === currentTab) return true;
   if (currentTab === "vault" && !(await vaultConfirmLeave())) return false;
+  if (currentTab === "audit" && auditMounted && !(await auditMounted.gatekeeper.flushPrompt())) return false;
+  if (currentTab === "audit") auditMounted?.gatekeeper.dispose();
   currentTab = tab;
+  drawGatekeeperNotice();
   // Leaving Agents closes the fallback: it is a disclosure, and coming back to
   // a form you did not open is a surprise.
   if (tab !== "agents") {
@@ -2769,7 +2928,6 @@ async function selectTab(tab) {
   if (tab !== "settings") settingsMounted = permissionsMounted = null;
   if (tab !== "plugins") pluginsMounted = null;
   if (tab !== "agents") agentsMounted = null;
-  if (tab !== "rules") rulesMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
   return true;
@@ -2802,17 +2960,20 @@ window.domo.onStatusChanged(() => {
   // changed", and until now only the header did.
   if (currentTab === "settings") settingsMounted?.refresh();
   // Signing in or out changes the roster, whether MCP setup has a URL, and
-  // whether the reviewer shown in Rules can run.
+  // whether the reviewer shown in Audit can run.
   if (currentTab === "agents") agentsMounted?.refreshConnect();
-  if (currentTab === "rules") rulesMounted?.refreshApprovals();
+  if (currentTab === "audit") auditMounted?.gatekeeper.refreshMode();
 });
 // An approval answered "always allow" stored a rule (or a revoke removed one):
-// a Rules pane on screen shows it now, not after the next tab switch.
+// Audit's Gatekeeper card and open rules modal show it without a tab switch.
 window.domo.onRulesChanged(() => {
-  if (currentTab === "rules") rulesMounted?.refreshRules();
+  if (currentTab === "audit") auditMounted?.gatekeeper.refreshRules();
+  rulesModal?.refresh();
 });
 window.domo.onGatekeeperRecoveryChanged(() => {
-  if (currentTab === "rules") rulesMounted?.refreshRecovery();
+  void refreshGatekeeperAttention().then(() => {
+    if (currentTab === "audit") void refreshAudit({ changed: new Set([selectedId].filter(Boolean)) });
+  });
 });
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
@@ -2850,8 +3011,8 @@ window.domo.onShowCapabilities(async () => {
 });
 window.domo.onShowAuditBlocked(() => showAuditBlocked());
 window.domo.onShowGatekeeperRecovery(async () => {
-  if (currentTab !== "rules") await selectTab("rules");
-  else rulesMounted?.refreshRecovery();
+  if (currentTab !== "audit") await selectTab("audit");
+  else await refreshAudit({ changed: new Set([selectedId].filter(Boolean)) });
 });
 // Another app handed main a credential exchange (Apple Passwords' export):
 // land on the Vault tab, whose render finds the staged preview and opens the
@@ -2878,8 +3039,9 @@ window.addEventListener("focus", () => {
 async function boot() {
   refreshStatus();
   refreshUpdateBanner();
+  void refreshGatekeeperAttention();
   const saved = await window.domo.uiGetTab();
-  const known = ["agents", "audit", "rules", "vault", "plugins", "settings"];
+  const known = ["agents", "audit", "vault", "plugins", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
   // A credential exchange can arrive before this window exists (the system
   // launches the app for it); the push above then had no listener, so ask.

@@ -529,8 +529,8 @@ function classifyActivity(
     return outcome("Completed", "green", "completed");
   }
   if (has("agent_spawned")) return outcome("Spawned", "blue", "completed");
-  // A revoke is its own row: the owner did it, from the Rules pane, with no
-  // request behind it.
+  // A revoke is its own row: the owner did it from Audit's rules modal, with
+  // no request behind it.
   if (has("rule_revoked")) return outcome("Revoked", "green", "completed");
   // The decision outranks any browser events riding in the intent's group: a
   // browser_open/browser_request row says how it was decided, and the live

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  dismissGatekeeperAttention,
   gatekeeperRecoveryView,
   representativeCommands,
   suggestGatekeeperRevision,
@@ -16,6 +17,22 @@ beforeEach(() => {
     }), { status: 200, headers: { "content-type": "application/json" } }),
   );
   vi.stubGlobal("fetch", fetchMock);
+});
+
+describe("dismissGatekeeperAttention", () => {
+  const newer = {
+    intentId: "newer",
+    agent: "Family assistant",
+    request: "Send the itinerary",
+    capabilities: ["Network: allowed"],
+    reason: "Not covered",
+  };
+
+  it("clears only the denial the owner actually dismissed", () => {
+    expect(dismissGatekeeperAttention(newer, "newer")).toBeNull();
+    expect(dismissGatekeeperAttention(newer, "older")).toBe(newer);
+    expect(dismissGatekeeperAttention(null, "newer")).toBeNull();
+  });
 });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -47,7 +64,7 @@ describe("representativeCommands", () => {
 });
 
 describe("gatekeeperRecoveryView", () => {
-  it("projects only the owner-facing request, capabilities, reason, and override state", () => {
+  it("projects only the owner-facing request, capabilities, and reason", () => {
     const intent = makeIntent({
       agentId: "agent-1",
       agentDisplay: "Family assistant",
@@ -56,13 +73,12 @@ describe("gatekeeperRecoveryView", () => {
       capabilities: [{ kind: "network", allowed: true }],
       sessionId: "s1",
     });
-    expect(gatekeeperRecoveryView({ intent, reason: "Purchase is outside the purpose.", state: "armed" })).toEqual({
+    expect(gatekeeperRecoveryView({ intent, reason: "Purchase is outside the purpose." })).toEqual({
       intentId: intent.intentId,
       agent: "Family assistant",
       request: "Buy the Lego set",
       capabilities: ["Network: allowed"],
       reason: "Purchase is outside the purpose.",
-      state: "armed",
     });
   });
 });

@@ -172,7 +172,7 @@ describe("PolicyEngine", () => {
     await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "allow_once" }));
     expect(changes).toBe(0);
 
-    // Storing a rule — the Rules pane learns of it from this, not a tab switch.
+    // Storing a rule — Audit's Gatekeeper UI learns of it from this, not a tab switch.
     await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }));
     expect(changes).toBe(1);
 
