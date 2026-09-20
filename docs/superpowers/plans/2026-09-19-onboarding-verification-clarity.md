@@ -102,7 +102,7 @@ Expected: PASS, including selector order and existing Gatekeeper result rows. In
 
 **Interfaces:**
 - Consumes: the complete `pluginsState.rows` collection used for examples, persistence, and grant calculation.
-- Produces: onboarding choice rows filtered to entries that are not the built-in ready wiki, without mutating plugin state.
+- Produces: onboarding choice rows that omit default-on, permission-free plugins without mutating plugin state.
 
 - [ ] **Step 1: Write the failing visibility/state test**
 
@@ -116,7 +116,7 @@ Expected: the model-state assertion passes and the real-window screenshot fails 
 
 - [ ] **Step 3: Filter only the onboarding choice rows**
 
-Render `pluginsState.rows.filter((row) => row.name !== "wiki")` in the choice list. Do not filter the source state, examples, grant calculation, settings, or persisted plugin enablement.
+Render only rows that are off or have requirements: `pluginsState.rows.filter((row) => row.status === "off" || row.requirements.length > 0)`. Do not filter the source state, examples, grant calculation, settings, or persisted plugin enablement.
 
 - [ ] **Step 4: Verify GREEN**
 
