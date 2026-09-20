@@ -719,8 +719,9 @@ The browser server deliberately refuses to type a whole code into box one
 the mark is on); this is the "one fill per box" that trade was designed around.
 
 **Banking-credential payment gate (v1 domain registry).**
-The agent calls `plow_request_payment` with the exact hostname from the current
-browser URL (including any subdomain), intended recipient, and exact amount.
+The agent calls `plow_request_payment` with the exact hostname of the frame
+containing the bank field (`frame_url` from `forms`, including any subdomain),
+intended recipient, and exact amount.
 Plow immediately mints a single-use banking-credential release at or below the
 owner's configured threshold; above it, Plow sends a single-use approval link
 to the owner thread, and only that page can approve it. Ordinary chat replies

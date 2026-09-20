@@ -519,7 +519,7 @@ describe("what the agent-facing copy must and must not say", () => {
       expect(copy).toMatch(/plow_request_payment/);
       expect(copy).toMatch(/threshold/i);
       expect(copy).toContain(PAYMENT_AUTHORIZATION);
-      expect(copy).toMatch(/exact hostname from the current browser URL/i);
+      expect(copy).toMatch(/frame_url reported by forms/i);
       expect(copy).toMatch(/not the eventual transaction/i);
       expect(copy).toMatch(/fresh authorization/i);
       expect(copy).not.toContain("👍");

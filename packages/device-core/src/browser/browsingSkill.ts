@@ -42,8 +42,9 @@ export const INTERACTIVE_VERIFICATION =
 
 export const PAYMENT_AUTHORIZATION =
   "Before filling at a destination in the bundled v1 bank registry, call " +
-  "plow_request_payment with the exact hostname from the current browser URL, including any " +
-  "subdomain, plus the intended recipient and exact amount. Plow grants one single-use banking-" +
+  "plow_request_payment with the exact hostname of the frame containing the bank field — the " +
+  "frame_url reported by forms — including any subdomain, plus the intended recipient and exact " +
+  "amount. Plow grants one single-use banking-" +
   "credential release immediately when the declared amount is at or below the owner's threshold; " +
   "above it, Plow sends the owner a single-use approval link, and ordinary chat replies or reactions " +
   "do not approve it. This authorizes only the credential release on that hostname, not the eventual " +
