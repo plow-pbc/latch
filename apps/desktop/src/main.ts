@@ -2093,6 +2093,7 @@ async function startRelay(): Promise<void> {
   const previousRelay = relay;
   relay = null;
   await previousRelay?.stop();
+  if (relay) return;
   connected = false;
   notifyRenderer("status:changed");
 
