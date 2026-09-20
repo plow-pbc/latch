@@ -59,8 +59,17 @@ let gatekeeperActivity = {
   capabilities: ["Browser: amazon.com"],
   timeline: [{ text: "Denied by Gatekeeper", state: "bad", at: "2026-09-20T19:00:01.000Z" }],
 };
-ipcMain.handle("audit:page", async () => ({ rows: [gatekeeperActivity], total: 1, size: 1 }));
-ipcMain.handle("audit:activity", async (_event, id) => id === gatekeeperActivity.id ? gatekeeperActivity : null);
+let auditCleared = false;
+ipcMain.handle("audit:page", async () => {
+  const rows = auditCleared ? [] : [gatekeeperActivity];
+  return { rows, total: rows.length, size: rows.length };
+});
+ipcMain.handle("audit:activity", async (_event, id) =>
+  !auditCleared && id === gatekeeperActivity.id ? gatekeeperActivity : null);
+ipcMain.handle("audit:clear", async () => {
+  auditCleared = true;
+  return true;
+});
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
 ipcMain.handle("rules:list", async () => []);
 let gatekeeperRecoveryProbe = {
@@ -987,7 +996,7 @@ app.whenReady().then(async () => {
         "Keep it out of everything else on this computer — no files, no other sites.",
       ) ?? false,
       labelled: pane.querySelector(".gatekeeper-field-head label")?.textContent.trim() === "Instructions",
-      explainsEnabled: pane.innerText.includes("AI Reviewer decides each request using your instructions."),
+      explainsEnabled: pane.innerText.includes("Requests not already allowed by a rule or the Plow workspace go to the AI Reviewer."),
       noAdversarialWord: !/adversarial/i.test(pane.innerText),
       recoveryNamesDenial: pane.innerText.includes("Gatekeeper denied this request"),
       recoveryOffersCoaching: pane.innerText.includes("Suggest revised instructions"),
@@ -1126,6 +1135,23 @@ app.whenReady().then(async () => {
     ),
   };
 
+  // Cmd-W and Quit ask the renderer before closing. A draft that has not
+  // reached its debounce yet must be durably saved before that answer is yes.
+  let gatekeeperCloseAnswer = null;
+  ipcMain.once("ui:confirmLeaveReply", (_event, ok) => { gatekeeperCloseAnswer = ok; });
+  await win.webContents.executeJavaScript(`(() => {
+    const field = document.querySelector("#view .gatekeeper-purpose textarea.text");
+    field.value = "Close only after this restrictive draft is saved.";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  })()`);
+  win.webContents.send("ui:confirmLeave", false);
+  await waitForNode(() => gatekeeperCloseAnswer !== null, "the Gatekeeper close answer");
+  const gatekeeperCloseFlush = {
+    allowed: gatekeeperCloseAnswer === true,
+    stored: loadSettings(probeHome).agentPurpose === "Close only after this restrictive draft is saved.",
+  };
+
   // Ask mode stays in the title-level menu. The prompt remains visible, with
   // an honest note that it will be used again when Gatekeeper is Enabled.
   await win.webContents.executeJavaScript(`(() => {
@@ -1148,7 +1174,7 @@ app.whenReady().then(async () => {
     const field = pane.querySelector(".gatekeeper-purpose textarea.text");
     return {
       fieldVisible: !!field && field.checkVisibility(),
-      explainsAsk: pane.innerText.includes("You decide every request in an approval window."),
+      explainsAsk: pane.innerText.includes("Requests not already allowed by a rule or the Plow workspace open an approval window."),
       explainsDormantPrompt: pane.innerText.includes(
         "These saved instructions will be used again when Gatekeeper is Enabled.",
       ),
@@ -1183,7 +1209,7 @@ app.whenReady().then(async () => {
       .some((button) => button.textContent.includes("Review in Audit")),
     dismiss: !!document.querySelector(".gatekeeper-notice-dismiss"),
   })})()`);
-  await win.webContents.executeJavaScript(`document.querySelector(".gatekeeper-notice .btn").click()`);
+  win.webContents.send("ui:showGatekeeperRecovery");
   await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
     "the notice to route to the denied Audit activity");
   globalNotice.routed = true;
@@ -1193,6 +1219,29 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".gatekeeper-notice")?.hidden === true`,
     "the global denial notice to dismiss");
   globalNotice.dismissedWithoutDeletingRow = gatekeeperActivity.id === "activity-gatekeeper-probe";
+
+  // Clearing the log also clears attention: there is no longer an activity to
+  // attach recovery to, so Audit must not silently retain a hidden denial.
+  gatekeeperRecoveryProbe = {
+    intentId: "intent-gatekeeper-probe",
+    agent: "Family assistant",
+    request: "Buy a $125 Lego set on Amazon",
+    capabilities: ["Browser: amazon.com"],
+    reason: "Purchases are not covered by the current family-assistant instructions.",
+  };
+  win.webContents.send("gatekeeperRecovery:changed");
+  await waitFor(win, `document.querySelector(".gatekeeper-notice")?.hidden === false`,
+    "the denial notice before clearing Audit");
+  win.webContents.send("ui:showGatekeeperRecovery");
+  await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
+    "the denial detail before clearing Audit");
+  await win.webContents.executeJavaScript(`
+    [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Clear Log")
+      .click()
+  `);
+  await waitForNode(() => gatekeeperRecoveryProbe === null, "clearing Audit to dismiss denial attention");
+  globalNotice.clearDismissesAttention = auditCleared;
 
   // …and the Agents pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
@@ -1873,6 +1922,8 @@ app.whenReady().then(async () => {
     gatekeeperRecovery.savedAndDismissed &&
     purposeRoundTrip.stored &&
     purposeRoundTrip.fieldShowsWhatWasStored &&
+    gatekeeperCloseFlush.allowed &&
+    gatekeeperCloseFlush.stored &&
     approvalsAsk.fieldVisible &&
     approvalsAsk.explainsAsk &&
     approvalsAsk.explainsDormantPrompt &&
@@ -1882,6 +1933,7 @@ app.whenReady().then(async () => {
     globalNotice.dismiss &&
     globalNotice.routed &&
     globalNotice.dismissedWithoutDeletingRow &&
+    globalNotice.clearDismissesAttention &&
     settings.noApprovalModeGroup &&
     settings.noModeChipsHere &&
     settings.saysNothingAdversarial &&
@@ -1905,7 +1957,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, capabilities, plugins, pluginOff, pluginUnmet, blockLanding, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, rulesModalView, approvalsShot, gatekeeperRecovery, gatekeeperRecoveryShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, globalNotice, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, capabilities, plugins, pluginOff, pluginUnmet, blockLanding, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, rulesModalView, approvalsShot, gatekeeperRecovery, gatekeeperRecoveryShot, purposeRoundTrip, gatekeeperCloseFlush, approvalsAsk, askWithoutReviewer, globalNotice, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

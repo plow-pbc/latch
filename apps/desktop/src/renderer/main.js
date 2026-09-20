@@ -217,6 +217,7 @@ async function renderAudit() {
   clearBtn.addEventListener("click", async () => {
     const cleared = await window.domo.auditClear();
     if (cleared) {
+      if (gatekeeperAttention) await dismissGatekeeperRecovery(gatekeeperAttention.intentId);
       selectedId = null;
       auditDetail = { id: null, activity: null };
       refreshAudit({ changed: new Set(["*"]) });
@@ -1023,7 +1024,7 @@ function createGatekeeperCard() {
     rulesButton.textContent = `View ${rules.length} ${rules.length === 1 ? "rule" : "rules"}`;
     purposeInput.value = purpose;
     purposeInput.disabled = false;
-    autosave = createSerialAutosave((value) => window.domo.agentPurposeSet(value), 500);
+    autosave = createSerialAutosave((value) => window.domo.agentPurposeSet(value), 500, purpose);
     unsubscribe = autosave.subscribe(setSaveState);
     purposeListener = () => autosave.edit(purposeInput.value);
     purposeInput.addEventListener("input", purposeListener);
@@ -3000,7 +3001,15 @@ window.domo.onConfirmLeave(async (hasPendingAgentSetup) => {
     window.domo.confirmLeaveReply(false);
     return;
   }
-  window.domo.confirmLeaveReply(currentTab === "vault" ? await vaultConfirmLeave() : true);
+  if (currentTab === "vault") {
+    window.domo.confirmLeaveReply(await vaultConfirmLeave());
+    return;
+  }
+  if (currentTab === "audit" && auditMounted) {
+    window.domo.confirmLeaveReply(await auditMounted.gatekeeper.flushPrompt());
+    return;
+  }
+  window.domo.confirmLeaveReply(true);
 });
 
 // Only check once Settings is actually on screen — see checkForUpdatesFromMenu.
@@ -3013,10 +3022,7 @@ window.domo.onShowCapabilities(async () => {
   if (await selectTab("settings")) window.domo.uiSetTab("settings");
 });
 window.domo.onShowAuditBlocked(() => showAuditBlocked());
-window.domo.onShowGatekeeperRecovery(async () => {
-  if (currentTab !== "audit") await selectTab("audit");
-  else await refreshAudit({ changed: new Set([selectedId].filter(Boolean)) });
-});
+window.domo.onShowGatekeeperRecovery(() => void showGatekeeperRecovery());
 // Another app handed main a credential exchange (Apple Passwords' export):
 // land on the Vault tab, whose render finds the staged preview and opens the
 // Import sheet on it. Already there means re-render — selectTab dedupes and

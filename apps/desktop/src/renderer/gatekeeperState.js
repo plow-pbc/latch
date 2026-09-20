@@ -2,12 +2,12 @@ const MODES = {
   adversarial: {
     mode: "adversarial",
     label: "Enabled",
-    description: "AI Reviewer decides each request using your instructions.",
+    description: "Requests not already allowed by a rule or the Plow workspace go to the AI Reviewer.",
   },
   ask: {
     mode: "ask",
     label: "Ask every time",
-    description: "You decide every request in an approval window.",
+    description: "Requests not already allowed by a rule or the Plow workspace open an approval window.",
   },
   approve: {
     mode: "approve",
@@ -30,8 +30,8 @@ export function attentionMatches(attention, activity) {
     attention.intentId === activity.intentId && activity.decisionKind === "denied";
 }
 
-export function createSerialAutosave(save, delayMs = 500) {
-  let current = { phase: "idle", draft: "", stored: "", error: null };
+export function createSerialAutosave(save, delayMs = 500, initialValue = "") {
+  let current = { phase: "idle", draft: initialValue, stored: initialValue, error: null };
   let timer = null;
   let running = null;
   let disposed = false;

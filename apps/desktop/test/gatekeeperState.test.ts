@@ -9,8 +9,8 @@ afterEach(() => vi.useRealTimers());
 
 describe("Gatekeeper mode presentation", () => {
   it.each([
-    ["adversarial", "Enabled", "AI Reviewer decides each request using your instructions."],
-    ["ask", "Ask every time", "You decide every request in an approval window."],
+    ["adversarial", "Enabled", "Requests not already allowed by a rule or the Plow workspace go to the AI Reviewer."],
+    ["ask", "Ask every time", "Requests not already allowed by a rule or the Plow workspace open an approval window."],
     ["approve", "Approve everything", "Every request runs without review."],
     ["deny", "Deny everything", "Every request is refused."],
   ])("explains %s mode", (mode, label, description) => {
@@ -21,7 +21,7 @@ describe("Gatekeeper mode presentation", () => {
     expect(modeView("future-mode")).toEqual({
       mode: "ask",
       label: "Ask every time",
-      description: "You decide every request in an approval window.",
+      description: "Requests not already allowed by a rule or the Plow workspace open an approval window.",
     });
   });
 });
@@ -36,6 +36,22 @@ describe("Gatekeeper attention", () => {
 });
 
 describe("serial Gatekeeper autosave", () => {
+  it("persists clearing instructions loaded from disk", async () => {
+    vi.useFakeTimers();
+    const writes: string[] = [];
+    const autosave = createSerialAutosave(async (value: string) => {
+      writes.push(value);
+      return value;
+    }, 50, "loaded instructions");
+
+    autosave.edit("");
+    await vi.advanceTimersByTimeAsync(50);
+    await autosave.flush();
+
+    expect(writes).toEqual([""]);
+    expect(autosave.state()).toMatchObject({ phase: "saved", draft: "", stored: "" });
+  });
+
   it("saves a newer draft after the in-flight write without claiming the old draft is saved", async () => {
     vi.useFakeTimers();
     const writes: string[] = [];
