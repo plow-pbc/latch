@@ -719,13 +719,16 @@ The browser server deliberately refuses to type a whole code into box one
 the mark is on); this is the "one fill per box" that trade was designed around.
 
 **Banking-credential payment gate (v1 domain registry).**
-The owner grants the separate payment approval out of band — a link in the
-owner thread, or a 👍 — and plow mints a single-use token that
-`consume` spends at fill time. What flags a fill as "banking" today is a bundled
+The agent calls `plow_request_payment` with the bank domain, recipient, and
+exact amount. Plow immediately mints a single-use authorization at or below
+the owner's configured threshold; above it, Plow sends a single-use approval
+link to the owner thread, and only that page can approve it. Ordinary chat
+replies and reactions do not. `consume` spends the authorization at fill time.
+What flags a fill as "banking" today is a bundled
 **bank-domain list** (`bankDomains.ts`), matched on the unspoofable
 device-observed destination host. This 55-domain list is the accepted v1
-detector. Listed exact domains and subdomains require a per-payment owner
-approval and fail closed if approval cannot be consumed. An unlisted institution
+detector. Listed exact domains and subdomains require a per-payment
+authorization and fail closed if it cannot be consumed. An unlisted institution
 or a credit card typed on an arbitrary merchant site does not trigger the gate;
 that fail-open gap is an accepted v1 residual. Maintain the single domain list
 as real usage exposes gaps. Gating **every** credential release was rejected: it
