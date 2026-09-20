@@ -178,6 +178,7 @@ let auditQueryKey = null;
 // The selected row with its timeline, as last fetched — refetched when the
 // selection moves or a live change touched that row.
 let auditDetail = { id: null, activity: null };
+let auditRenderGeneration = 0;
 
 // Times are formatted here, at draw time, from the ISO stamps the rows carry.
 // One formatter per shape, built once: the locale lookup behind each call is
@@ -197,7 +198,9 @@ const fmtClock = (iso) => fmtWith(CLOCK_FMT, iso);
 
 // Mount the audit chrome once (search input, chips, list + detail containers).
 async function renderAudit() {
+  const generation = ++auditRenderGeneration;
   await refreshGatekeeperAttention();
+  if (currentTab !== "audit" || generation !== auditRenderGeneration) return;
   const gatekeeper = createGatekeeperCard();
   const search = el("div", { class: "search" }, [
     el("input", { attrs: { placeholder: "Search activity, path, agent…" } }),

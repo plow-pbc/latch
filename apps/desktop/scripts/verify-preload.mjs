@@ -70,7 +70,12 @@ let gatekeeperRecoveryProbe = {
   capabilities: ["Browser: amazon.com"],
   reason: "Purchases are not covered by the current family-assistant instructions.",
 };
-ipcMain.handle("gatekeeperRecovery:get", async () => gatekeeperRecoveryProbe);
+let holdGatekeeperRecoveryGet = false;
+let resolveGatekeeperRecoveryGet = null;
+ipcMain.handle("gatekeeperRecovery:get", async () => {
+  if (!holdGatekeeperRecoveryGet) return gatekeeperRecoveryProbe;
+  return new Promise((resolve) => { resolveGatekeeperRecoveryGet = resolve; });
+});
 ipcMain.handle("gatekeeperRecovery:dismiss", async (_event, intentId) => {
   if (gatekeeperRecoveryProbe?.intentId === intentId) gatekeeperRecoveryProbe = null;
   return gatekeeperRecoveryProbe;
@@ -864,8 +869,16 @@ app.whenReady().then(async () => {
     cloudChatsError: null,
     cloudChatsLoaded: false,
   };
+  // Audit waits on denial state before mounting. Hold that read so this switch
+  // proves a stale Audit continuation cannot replace the Agents pane after the
+  // owner has already moved on.
+  holdGatekeeperRecoveryGet = true;
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await waitForNode(() => resolveGatekeeperRecoveryGet !== null, "the held Gatekeeper attention read");
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  holdGatekeeperRecoveryGet = false;
+  resolveGatekeeperRecoveryGet(gatekeeperRecoveryProbe);
+  resolveGatekeeperRecoveryGet = null;
   await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
     "the cloud agent whose threads are still loading");
   await win.webContents.executeJavaScript(
