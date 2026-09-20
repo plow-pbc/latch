@@ -1085,3 +1085,25 @@ pre.script {
 .item .revealed p { margin: 6px 0 0; }
 /* What the selected mode does, where the purpose field would otherwise be. */
 .item p.mode-hint { margin: 10px 0 0; }
+
+.gatekeeper-recovery {
+  margin-bottom: 14px;
+  border-color: var(--red-bd);
+  background: color-mix(in srgb, var(--red-bg) 55%, var(--card));
+}
+.gatekeeper-recovery[hidden] { display: none; }
+.gatekeeper-recovery-status { margin: 10px 0 0; }
+.gatekeeper-recovery-status.armed,
+.gatekeeper-recovery-status.consumed { color: var(--blue-fg); }
+.gatekeeper-request {
+  margin-top: 10px;
+  font-weight: 600;
+}
+.gatekeeper-recovery-actions { margin-top: 12px; gap: 8px; }
+.gatekeeper-suggestion-block {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.gatekeeper-suggestion { margin-top: 7px; min-height: 96px; }
+.gatekeeper-suggestion-block .btn { margin-top: 9px; }

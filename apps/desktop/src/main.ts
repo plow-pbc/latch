@@ -22,7 +22,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { PostHog } from "posthog-node";
-import { Intent, JSONValue } from "@domo/protocol";
+import { capabilityDisplay, Intent, JSONValue } from "@domo/protocol";
 import {
   ApprovalStore,
   LEGACY_VAULT_SERVER_FRAGMENTS,
@@ -89,11 +89,18 @@ import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates
 import { adversarialReview } from "./adversarialAgent.js";
 import { gatekeeperPresets, previewRow } from "./gatekeeperPreview.js";
 import {
+  gatekeeperRecoveryView,
+  type GatekeeperRecoveryView,
+  representativeCommands,
+  suggestGatekeeperRevision,
+} from "./gatekeeperRecovery.js";
+import {
   ApprovalDecision,
   ApprovalQueue,
   Decided,
   decideIntent,
   ReviewHint,
+  ownerOverrideMayGrant,
   storedRuleMayGrant,
 } from "./reviewPolicy.js";
 import {
@@ -253,6 +260,10 @@ let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 let telemetry: Telemetry | null = null;
+/** Latest AI Reviewer denial still useful to the owner. Raw intents remain in
+ * PolicyEngine; the renderer gets only this capability-display view. */
+let gatekeeperAttention: GatekeeperRecoveryView | null = null;
+const gatekeeperNotified = new Set<string>();
 
 // MARK: The audit log's live index (auditIndex.ts)
 
@@ -344,6 +355,10 @@ class ElectronPolicy implements PolicyDelegate {
    */
   mayGrantFromStoredRule(): boolean {
     return storedRuleMayGrant(loadSettings(home));
+  }
+
+  mayGrantFromOwnerOverride(): boolean {
+    return ownerOverrideMayGrant(loadSettings(home));
   }
 
   // The branching itself lives in reviewPolicy.ts so it is testable without a
@@ -609,6 +624,33 @@ ipcMain.handle("rules:list", async () => device?.policy.allRules() ?? []);
 // — one path for every change to the list, whoever made it.
 ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);
+});
+ipcMain.handle("gatekeeperRecovery:get", async () => gatekeeperAttention);
+ipcMain.handle("gatekeeperRecovery:allowOnce", async (_e, intentId: unknown) => {
+  if (typeof intentId !== "string" || gatekeeperAttention?.intentId !== intentId || !device) {
+    return gatekeeperAttention;
+  }
+  device.policy.armDeniedIntentOnce(intentId);
+  const denied = device.policy.deniedIntent(intentId);
+  gatekeeperAttention = denied ? gatekeeperRecoveryView(denied) : null;
+  notifyRenderer("gatekeeperRecovery:changed");
+  return gatekeeperAttention;
+});
+ipcMain.handle("gatekeeperRecovery:suggest", async (_e, intentId: unknown) => {
+  if (typeof intentId !== "string" || gatekeeperAttention?.intentId !== intentId || !device) {
+    return { ok: false, reason: "That denied request is no longer available" };
+  }
+  const denied = device.policy.deniedIntent(intentId);
+  if (!denied) return { ok: false, reason: "That denied request is no longer available" };
+  const settings = loadSettings(home);
+  return suggestGatekeeperRevision({
+    currentPurpose: settings.agentPurpose ?? "",
+    deniedRequest: denied.intent.request,
+    capabilities: denied.intent.capabilities.map((capability) => capabilityDisplay(capability)),
+    typicalCommands: representativeCommands(ensureAuditIndex().activities(), intentId),
+    plowCredential: settings.relayCredential ?? "",
+    apiBaseUrl,
+  });
 });
 ipcMain.handle("ui:getTab", async () => {
   const tab = loadSettings(home).selectedTab;
@@ -2387,6 +2429,18 @@ app.whenReady().then(async () => {
   // An always-allow answer in the approval window stores a rule; a Rules pane
   // already on screen used to show it only after a tab switch.
   device.policy.events.on("changed", () => notifyRenderer("rules:changed"));
+  device.policy.events.on(
+    "reviewer_denied",
+    ({ intentId }: { intentId: string }) => noteGatekeeperDenial(intentId),
+  );
+  device.policy.events.on(
+    "override_armed",
+    ({ intentId }: { intentId: string }) => updateGatekeeperOverride(intentId),
+  );
+  device.policy.events.on(
+    "override_consumed",
+    ({ intentId }: { intentId: string }) => updateGatekeeperOverride(intentId),
+  );
   // Live-refresh the audit view whenever a new event is recorded: fold the
   // line into the index (once it exists — before first use the initial load
   // reads it off disk) and tell the renderer which rows moved. A rotation or
@@ -2765,6 +2819,42 @@ let hostGateAttention: { permission: string | null; ownerAction: string | null; 
  *  be a notification per retry. */
 const hostGateNotified = new Set<string>();
 
+function noteGatekeeperDenial(intentId: string): void {
+  const denied = device?.policy.deniedIntent(intentId);
+  if (!denied) return;
+  gatekeeperAttention = gatekeeperRecoveryView(denied);
+  refreshTray();
+  notifyRenderer("gatekeeperRecovery:changed");
+  const key = JSON.stringify({
+    agent: denied.intent.agentId,
+    request: denied.intent.request,
+    capabilities: denied.intent.capabilities,
+  });
+  if (gatekeeperNotified.has(key) || !Notification.isSupported()) return;
+  gatekeeperNotified.add(key);
+  const notification = new Notification({
+    title: "Gatekeeper denied an agent request",
+    body: "Open Plow Latch to review it, allow one matching retry, or improve your Gatekeeper instructions.",
+  });
+  notification.on("click", showGatekeeperRecovery);
+  notification.show();
+}
+
+function updateGatekeeperOverride(intentId: string): void {
+  if (gatekeeperAttention?.intentId !== intentId) return;
+  const denied = device?.policy.deniedIntent(intentId);
+  gatekeeperAttention = denied ? gatekeeperRecoveryView(denied) : null;
+  refreshTray();
+  notifyRenderer("gatekeeperRecovery:changed");
+}
+
+function showGatekeeperRecovery(): void {
+  gate.sync();
+  const send = () => mainWindow?.webContents.send("ui:showGatekeeperRecovery");
+  if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
+  else send();
+}
+
 function noteHostGateBlock(fields: { [k: string]: unknown }): void {
   const cause = typeof fields.cause === "string" ? fields.cause : "unknown";
   const permission = typeof fields.permission === "string" ? fields.permission : null;
@@ -2865,6 +2955,14 @@ function refreshTray(): void {
               ? `Needs ${PERMISSION_LABELS[hostGateAttention.permission as keyof typeof PERMISSION_LABELS] ?? hostGateAttention.permission}…`
               : "An agent was blocked by this Mac…",
             click: () => showCapabilitiesForHostGate(),
+          },
+        ]
+      : []),
+    ...(gatekeeperAttention
+      ? [
+          {
+            label: "Review Gatekeeper denial…",
+            click: showGatekeeperRecovery,
           },
         ]
       : []),

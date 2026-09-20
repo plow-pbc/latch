@@ -259,6 +259,10 @@ export class ApprovalStore implements PolicyDelegate {
     return this.inner.mayGrantFromStoredRule?.(intent) ?? true;
   }
 
+  mayGrantFromOwnerOverride(intent: Intent): boolean | Promise<boolean> {
+    return this.inner.mayGrantFromOwnerOverride?.(intent) ?? true;
+  }
+
   async decideIntent(intent: Intent): Promise<IntentDecision> {
     const started = this.now();
     const record: ApprovalRecord = {

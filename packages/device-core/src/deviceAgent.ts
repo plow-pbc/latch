@@ -113,6 +113,9 @@ export const DENIAL_SOURCE_REVIEWER_UNAVAILABLE = "reviewer_unavailable";
  * misbehaviour can put any of those in front of a caller.
  */
 const EXPLAINED_DENIALS: Record<string, string> = {
+  adversarial:
+    "Gatekeeper's AI Reviewer denied this request. The Mac owner can review it in " +
+    "Plow Latch and allow one matching retry. Do not retry unchanged until the owner acts",
   [DENIAL_SOURCE_NO_CREDITS]:
     "inference unavailable: this Plow account is out of credits, so the " +
     "adversarial reviewer could not run and the operation was denied",

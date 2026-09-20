@@ -20,6 +20,7 @@ import {
   FileOpsError,
   HeadlessPolicy,
   MAX_FILE_BYTES,
+  PolicyDelegate,
   PolicyEngine,
 } from "@domo/device-core";
 
@@ -108,6 +109,93 @@ describe("PolicyEngine", () => {
       sessionId: "s1",
     });
   }
+
+  it("allows exactly one retry of a reviewer-denied request", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"], cwd: "/tmp" }];
+    const first = intentWith(caps);
+    first.request = "Buy the Lego set for the family";
+    const reviewerDenies: PolicyDelegate = {
+      async decideIntent() {
+        return { decision: "deny" as const, source: "adversarial" };
+      },
+    };
+
+    expect((await engine.decide(first, reviewerDenies)).decision).toBe("deny");
+    expect(engine.armDeniedIntentOnce(first.intentId)).toBe(true);
+
+    const retry = intentWith(caps);
+    retry.request = first.request;
+    expect(await engine.decide(retry, reviewerDenies)).toMatchObject({
+      decision: "allow_once",
+      source: "owner_override",
+    });
+    expect((await engine.decide(intentWith(caps), reviewerDenies)).decision).toBe("deny");
+  });
+
+  it("does not widen a one-time override across request, capability, or agent", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"], cwd: "/tmp" }];
+    const denied = intentWith(caps);
+    denied.request = "Buy the Lego set for the family";
+    const reviewerDenies: PolicyDelegate = {
+      async decideIntent() {
+        return { decision: "deny" as const, source: "adversarial" };
+      },
+    };
+    await engine.decide(denied, reviewerDenies);
+    expect(engine.armDeniedIntentOnce(denied.intentId)).toBe(true);
+
+    const changedRequest = intentWith(caps);
+    changedRequest.request = "Buy a bicycle for the family";
+    expect((await engine.decide(changedRequest, reviewerDenies)).decision).toBe("deny");
+
+    const changedCapability = intentWith([{ kind: "process.exec", argv: ["open", "https://amazon.com/bicycle"], cwd: "/tmp" }]);
+    changedCapability.request = denied.request;
+    expect((await engine.decide(changedCapability, reviewerDenies)).decision).toBe("deny");
+
+    const changedAgent = makeIntent({
+      agentId: new KeyPair().fingerprint,
+      agentDisplay: "Another agent",
+      deviceId: denied.deviceId,
+      request: denied.request,
+      capabilities: caps,
+      sessionId: "s2",
+    });
+    expect((await engine.decide(changedAgent, reviewerDenies)).decision).toBe("deny");
+
+    const exactRetry = intentWith(caps);
+    exactRetry.request = denied.request;
+    expect((await engine.decide(exactRetry, reviewerDenies)).source).toBe("owner_override");
+    expect(engine.armDeniedIntentOnce("missing-intent")).toBe(false);
+  });
+
+  it("does not let an armed override bypass a later global deny", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"] }];
+    const denied = intentWith(caps);
+    const reviewerDenies: PolicyDelegate = {
+      async decideIntent() {
+        return { decision: "deny" as const, source: "adversarial" };
+      },
+    };
+    await engine.decide(denied, reviewerDenies);
+    engine.armDeniedIntentOnce(denied.intentId);
+
+    const denyMode: PolicyDelegate = {
+      mayGrantFromOwnerOverride: () => false,
+      async decideIntent() {
+        return { decision: "deny" as const, source: "policy" };
+      },
+    };
+    expect(await engine.decide(intentWith(caps), denyMode)).toMatchObject({
+      decision: "deny",
+      source: "policy",
+    });
+
+    // The kill switch did not silently consume the owner's earlier choice.
+    expect((await engine.decide(intentWith(caps), reviewerDenies)).source).toBe("owner_override");
+  });
 
   it("always_allow stores a rule reused on the next matching intent", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
@@ -367,6 +455,33 @@ describe("PolicyEngine", () => {
     };
     const g2 = await engine.decide(intentWith([{ kind: "network", allowed: false }]), bare);
     expect(g2.source).toBe("prompt");
+  });
+});
+
+describe("reviewer denial recovery", () => {
+  it("tells the agent Gatekeeper denied and to wait for an owner override", async () => {
+    const home = tempDir();
+    const reviewerDenies: PolicyDelegate = {
+      async decideIntent() {
+        return { decision: "deny" as const, source: "adversarial" };
+      },
+    };
+    const device = new DeviceAgent(home, "Test Mac", reviewerDenies);
+    const request = makeIntent({
+      agentId: new KeyPair().fingerprint,
+      agentDisplay: "Family assistant",
+      deviceId: device.identity.deviceId,
+      request: "Buy the Lego set for the family",
+      capabilities: [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"] }],
+      sessionId: "s1",
+    });
+
+    expect(await device.handleIntent(request)).toEqual({
+      status: "denied",
+      reason:
+        "Gatekeeper's AI Reviewer denied this request. The Mac owner can review it in " +
+        "Plow Latch and allow one matching retry. Do not retry unchanged until the owner acts",
+    });
   });
 });
 

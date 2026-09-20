@@ -211,6 +211,7 @@ export function decidedByLabel(source: string | null): string | null {
   switch (source) {
     case "approve": return "Auto-approved";
     case "adversarial": return "AI Reviewer";
+    case "owner_override": return "Owner override (once)";
     case "rule": return "Always-allow rule";
     case "plow_folder": return "Plow folder (auto-approved)";
     case "policy": return "Policy (deny mode)";

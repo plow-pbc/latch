@@ -25,9 +25,16 @@ contextBridge.exposeInMainWorld("domo", {
   approvalsPending: () => ipcRenderer.invoke("approvals:pending"),
   rulesList: () => ipcRenderer.invoke("rules:list"),
   rulesRemove: (key: string) => ipcRenderer.invoke("rules:remove", key),
+  gatekeeperRecoveryGet: () => ipcRenderer.invoke("gatekeeperRecovery:get"),
+  gatekeeperRecoveryAllowOnce: (intentId: string) =>
+    ipcRenderer.invoke("gatekeeperRecovery:allowOnce", intentId),
+  gatekeeperRecoverySuggest: (intentId: string) =>
+    ipcRenderer.invoke("gatekeeperRecovery:suggest", intentId),
   // The rule set changed under the pane: an approval answered "always allow"
   // stored one, or one was revoked.
   onRulesChanged: (cb: () => void) => ipcRenderer.on("rules:changed", cb),
+  onGatekeeperRecoveryChanged: (cb: () => void) =>
+    ipcRenderer.on("gatekeeperRecovery:changed", cb),
   uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
   uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
   relayGet: () => ipcRenderer.invoke("settings:getRelay"),
@@ -106,6 +113,8 @@ contextBridge.exposeInMainWorld("domo", {
   // switch (Settings), or on the Audit tab's Blocked view when it named none.
   onShowCapabilities: (cb: () => void) => ipcRenderer.on("ui:showCapabilities", cb),
   onShowAuditBlocked: (cb: () => void) => ipcRenderer.on("ui:showAuditBlocked", cb),
+  onShowGatekeeperRecovery: (cb: () => void) =>
+    ipcRenderer.on("ui:showGatekeeperRecovery", cb),
   // The floating panel's own poll: which switch it points at, and whether
   // that grant has landed.
   grantState: () => ipcRenderer.invoke("grant:state"),

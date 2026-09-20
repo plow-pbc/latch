@@ -41,6 +41,23 @@ ipcMain.handle("audit:page", async () => ({ rows: [], total: 0, size: 0 }));
 ipcMain.handle("audit:activity", async () => null);
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
 ipcMain.handle("rules:list", async () => []);
+let gatekeeperRecoveryProbe = {
+  intentId: "intent-gatekeeper-probe",
+  agent: "Family assistant",
+  request: "Buy a $125 Lego set on Amazon",
+  capabilities: ["Browser: amazon.com"],
+  reason: "Purchases are not covered by the current family-assistant instructions.",
+  state: "denied",
+};
+ipcMain.handle("gatekeeperRecovery:get", async () => gatekeeperRecoveryProbe);
+ipcMain.handle("gatekeeperRecovery:allowOnce", async () => {
+  gatekeeperRecoveryProbe = { ...gatekeeperRecoveryProbe, state: "armed" };
+  return gatekeeperRecoveryProbe;
+});
+ipcMain.handle("gatekeeperRecovery:suggest", async () => ({
+  ok: true,
+  revision: "You are a tool a family assistant uses; you are authorized to make purchases for the family.",
+}));
 ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
 // A signed-in Mac: the credential itself is deliberately absent from this
@@ -630,7 +647,7 @@ app.whenReady().then(async () => {
     // will read stays on offer — there is nothing to write it into yet, which
     // the note beside it says.
     purposeFieldStillOffered: await win.webContents.executeJavaScript(
-      `!!document.querySelector("#view textarea.text")?.checkVisibility()`,
+      `!!document.querySelector("#view .revealed textarea.text")?.checkVisibility()`,
     ),
   };
 
@@ -912,7 +929,7 @@ app.whenReady().then(async () => {
     "the Approvals card in its reviewer state");
   const approvalsReviewer = await win.webContents.executeJavaScript(`(${() => {
     const pane = document.querySelector("#view");
-    const field = pane.querySelector("textarea.text");
+    const field = pane.querySelector(".revealed textarea.text");
     const description = [...pane.querySelectorAll(".group-title")]
       .find((title) => title.textContent.trim() === "Approvals")
       ?.parentElement?.querySelector(".group-desc")?.textContent ?? "";
@@ -950,6 +967,11 @@ app.whenReady().then(async () => {
       // The suggestions checkbox is gone: in Ask mode the reviewer always
       // suggests, so there is no toggle to show in any mode.
       noSuggestionsCheckbox: !pane.innerText.includes("Let the reviewer suggest"),
+      recoveryNamesDenial: pane.innerText.includes("Review a Gatekeeper denial") &&
+        pane.innerText.includes("Buy a $125 Lego set on Amazon"),
+      recoveryOffersBoundedOverride: pane.innerText.includes("Allow one retry") &&
+        pane.innerText.includes("without changing your standing instructions"),
+      recoveryOffersCoaching: pane.innerText.includes("Suggest better instructions"),
     };
   }})()`);
   const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
@@ -965,10 +987,48 @@ app.whenReady().then(async () => {
   );
   fs.writeFileSync(approvalsShot, (await win.webContents.capturePage()).toPNG());
 
+  // Override and coaching are separate owner actions. Arming one redraws the
+  // card with explicit one-shot language; asking for a suggestion displays an
+  // editable full replacement but does not save it.
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".gatekeeper-recovery button")]
+      .find((b) => b.textContent.trim() === "Allow one retry").click();
+    return true;
+  })()`);
+  await waitFor(win, `document.querySelector(".gatekeeper-recovery")?.innerText.includes("One matching retry is allowed")`,
+    "the Gatekeeper override banner");
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".gatekeeper-recovery button")]
+      .find((b) => b.textContent.trim() === "Suggest better instructions").click();
+    return true;
+  })()`);
+  await waitFor(win, `document.querySelector(".gatekeeper-suggestion")`, "the editable Gatekeeper suggestion");
+  const gatekeeperRecovery = await win.webContents.executeJavaScript(`(${() => ({
+    armedExplained: document.querySelector(".gatekeeper-recovery")?.innerText.includes(
+      "your Gatekeeper instructions have not changed",
+    ) ?? false,
+    suggestionEditable: !document.querySelector(".gatekeeper-suggestion")?.readOnly,
+    suggestionGeneralizes: document.querySelector(".gatekeeper-suggestion")?.value.includes(
+      "authorized to make purchases for the family",
+    ) ?? false,
+    notAppliedAutomatically: document.querySelector("#view .revealed textarea.text")?.value ===
+      "Groceries and calendar only.",
+    requiresExplicitUse: [...document.querySelectorAll(".gatekeeper-recovery button")].some(
+      (b) => b.textContent.trim() === "Use these instructions",
+    ),
+  })})()`);
+  const gatekeeperRecoveryShot = process.env.GATEKEEPER_RECOVERY_OUT ?? "/tmp/gatekeeper-recovery.png";
+  await captureAfterPaint(win, gatekeeperRecoveryShot);
+  gatekeeperRecoveryProbe = { ...gatekeeperRecoveryProbe, state: "consumed" };
+  win.webContents.send("gatekeeperRecovery:changed");
+  await waitFor(win, `document.querySelector(".gatekeeper-recovery")?.innerText.includes("was allowed once")`,
+    "the consumed Gatekeeper override banner");
+  gatekeeperRecovery.consumedExplained = true;
+
   // The field commits on `change`, like the API key, and what goes back on
   // screen is what the setter stored.
   await win.webContents.executeJavaScript(`(() => {
-    const field = document.querySelector("#view textarea.text");
+    const field = document.querySelector("#view .revealed textarea.text");
     field.value = "  Only household errands.  ";
     field.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
@@ -978,12 +1038,12 @@ app.whenReady().then(async () => {
   // The field redraws off what main stored, one refresh after the write — the
   // same round-trip the mode chips make below. Reading it the instant the file
   // lands is a race, and on a slow runner the read wins.
-  await waitFor(win, `document.querySelector("#view textarea.text").value === "Only household errands."`,
+  await waitFor(win, `document.querySelector("#view .revealed textarea.text").value === "Only household errands."`,
     "the purpose field to show what was stored");
   const purposeRoundTrip = {
     stored: loadSettings(probeHome).agentPurpose === "Only household errands.",
     fieldShowsWhatWasStored: await win.webContents.executeJavaScript(
-      `document.querySelector("#view textarea.text").value === "Only household errands."`,
+      `document.querySelector("#view .revealed textarea.text").value === "Only household errands."`,
     ),
   };
 
@@ -1000,7 +1060,7 @@ app.whenReady().then(async () => {
     "the Approvals card to follow the stored mode");
   const approvalsAsk = await win.webContents.executeJavaScript(`(${() => {
     const pane = document.querySelector("#view");
-    const field = pane.querySelector("textarea.text");
+    const field = pane.querySelector(".revealed textarea.text");
     return {
       fieldGone: !field || !field.checkVisibility(),
       // The label goes with it: nothing about the purpose is on screen in a
@@ -1728,6 +1788,15 @@ app.whenReady().then(async () => {
     approvalsReviewer.noHintLineTakingItsPlace &&
     approvalsReviewer.noFalseReviewerInputs &&
     approvalsReviewer.noSuggestionsCheckbox &&
+    approvalsReviewer.recoveryNamesDenial &&
+    approvalsReviewer.recoveryOffersBoundedOverride &&
+    approvalsReviewer.recoveryOffersCoaching &&
+    gatekeeperRecovery.armedExplained &&
+    gatekeeperRecovery.suggestionEditable &&
+    gatekeeperRecovery.suggestionGeneralizes &&
+    gatekeeperRecovery.notAppliedAutomatically &&
+    gatekeeperRecovery.requiresExplicitUse &&
+    gatekeeperRecovery.consumedExplained &&
     purposeRoundTrip.stored &&
     purposeRoundTrip.fieldShowsWhatWasStored &&
     approvalsAsk.fieldGone &&
@@ -1762,7 +1831,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, capabilities, plugins, pluginOff, pluginUnmet, blockLanding, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, capabilities, plugins, pluginOff, pluginUnmet, blockLanding, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudDetail, failedCloudDetailButtons, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, gatekeeperRecovery, gatekeeperRecoveryShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

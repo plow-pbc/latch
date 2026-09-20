@@ -87,13 +87,19 @@ export function storedRuleMayGrant(settings: Settings): boolean {
   return mode !== "adversarial" && mode !== "deny";
 }
 
+/** A one-time override is a fresh owner decision, so AI Reviewer mode must not
+ * re-review it. Deny remains the global kill switch and outranks everything. */
+export function ownerOverrideMayGrant(settings: Settings): boolean {
+  return (settings.approvalMode ?? DEFAULT_APPROVAL_MODE) !== "deny";
+}
+
 /**
  * A decision and HOW it was reached, for the audit log — and, on an
  * `always_allow`, whether its rule is already in place (stored by the dialog
  * path, or the rule that answered), so the engine does not store it again
  * (PolicyEngine's `IntentDecision`).
  */
-export type Decided = { decision: ApprovalDecision; source: string; ruleStored?: true };
+export type Decided = { decision: ApprovalDecision; source: string; ruleStored?: true; reason?: string };
 
 /** A request waiting its turn for the human. */
 export interface QueuedApproval {
@@ -295,7 +301,7 @@ export async function decideIntent(intent: Intent, deps: DecideDeps): Promise<De
     const { verdict, reason, cause } = await review();
     if (verdict === "allow")
       return { decision: "allow_once", source: "adversarial" };
-    if (verdict === "deny") return { decision: "deny", source: "adversarial" };
+    if (verdict === "deny") return { decision: "deny", source: "adversarial", reason };
     // The account cannot pay for inference, so the reviewer can never run.
     // Deny — and say why, in a form the calling agent can read.
     // Quietly reverting to prompting a human would change the mode the user

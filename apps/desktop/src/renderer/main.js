@@ -688,6 +688,93 @@ async function renderRules() {
     ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
   ]);
 
+  const recoveryCard = el("div", { class: "gatekeeper-recovery item" });
+  recoveryCard.hidden = true;
+  let recoveryGeneration = 0;
+  const drawRecovery = (recovery) => {
+    recoveryCard.hidden = !recovery;
+    if (!recovery) {
+      recoveryCard.replaceChildren();
+      return;
+    }
+    const status = recovery.state === "armed"
+      ? "You overrode Gatekeeper for this request. One matching retry is allowed; your Gatekeeper instructions have not changed."
+      : recovery.state === "consumed"
+        ? "You overrode Gatekeeper for this request. The matching request was allowed once; your Gatekeeper instructions have not changed."
+        : "Gatekeeper denied this request. You can allow one matching retry without changing your standing instructions.";
+    const badge = recovery.state === "armed"
+      ? { tone: "blue", text: "Override ready" }
+      : recovery.state === "consumed"
+        ? { tone: "green", text: "Allowed once" }
+        : { tone: "red", text: "Denied" };
+    const statusLine = el("p", { class: `gatekeeper-recovery-status ${recovery.state}`, text: status });
+    const actionError = el("p", { class: "warn", text: "" });
+    actionError.hidden = true;
+    const actions = el("div", { class: "row gatekeeper-recovery-actions" });
+
+    if (recovery.state === "denied") {
+      const allow = el("button", { class: "btn", text: "Allow one retry" });
+      allow.addEventListener("click", async () => {
+        allow.disabled = true;
+        const latest = await window.domo.gatekeeperRecoveryAllowOnce(recovery.intentId);
+        drawRecovery(latest);
+      });
+      actions.appendChild(allow);
+    }
+
+    const suggest = el("button", { class: "btn", text: "Suggest better instructions" });
+    suggest.addEventListener("click", async () => {
+      suggest.disabled = true;
+      suggest.textContent = "Thinking…";
+      actionError.hidden = true;
+      const result = await window.domo.gatekeeperRecoverySuggest(recovery.intentId);
+      suggest.disabled = false;
+      suggest.textContent = "Suggest better instructions";
+      if (!result?.ok) {
+        actionError.textContent = result?.reason || "Gatekeeper could not suggest a revision.";
+        actionError.hidden = false;
+        return;
+      }
+      const suggestion = el("textarea", { class: "text gatekeeper-suggestion" });
+      suggestion.value = result.revision;
+      const apply = el("button", { class: "btn primary", text: "Use these instructions" });
+      apply.addEventListener("click", async () => {
+        apply.disabled = true;
+        purposeInput.value = await window.domo.agentPurposeSet(suggestion.value);
+        suggestion.value = purposeInput.value;
+        apply.textContent = "Instructions updated";
+      });
+      recoveryCard.appendChild(el("div", { class: "gatekeeper-suggestion-block" }, [
+        el("label", { text: "Suggested full replacement" }),
+        suggestion,
+        el("p", { class: "faint", text: "Review and edit this suggestion before using it. It has not changed Gatekeeper yet." }),
+        apply,
+      ]));
+    });
+    actions.appendChild(suggest);
+
+    recoveryCard.replaceChildren(...[
+      el("div", { class: "row" }, [
+        el("h4", { text: "Review a Gatekeeper denial" }),
+        el("div", { class: "spacer" }),
+        el("span", { class: `badge b-${badge.tone}`, text: badge.text }),
+      ]),
+      statusLine,
+      el("p", { class: "gatekeeper-request", text: recovery.request }),
+      recovery.reason ? el("p", { class: "faint", text: `Reviewer: ${recovery.reason}` }) : null,
+      el("div", { class: "capchips" }, (recovery.capabilities || []).map((c) => el("span", { class: "cap", text: c }))),
+      actions,
+      actionError,
+    ].filter(Boolean));
+  };
+  const refreshRecovery = async () => {
+    const generation = ++recoveryGeneration;
+    const recovery = await window.domo.gatekeeperRecoveryGet();
+    if (generation === recoveryGeneration && rulesMounted?.refreshRecovery === refreshRecovery) {
+      drawRecovery(recovery);
+    }
+  };
+
   // The reads above can outlive a quick tab switch. Do not let the
   // completed Rules render replace the pane the user switched to meanwhile.
   if (currentTab !== "rules") return;
@@ -804,8 +891,8 @@ async function renderRules() {
   // path as every later one: a `rules:changed` that arrives while that read
   // is in flight refreshes this list rather than finding nothing mounted,
   // so there is no moment the list can show a snapshot from before a change.
-  rulesMounted = { refreshApprovals, refreshRules };
-  await refreshRules();
+  rulesMounted = { refreshApprovals, refreshRules, refreshRecovery };
+  await Promise.all([refreshRules(), refreshRecovery()]);
   if (rulesMounted?.refreshRules !== refreshRules) return; // the tab moved on
 
   view.replaceChildren(el("div", { class: "panel rules settings" }, [
@@ -817,7 +904,7 @@ async function renderRules() {
         "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
         "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
         "agent hasn't asked for.",
-      [modeChips, modeNote, purposeBlock, modeHintLine],
+      [recoveryCard, modeChips, modeNote, purposeBlock, modeHintLine],
     ),
     el("div", { class: "section-label", text: "Always-allow rules" }),
     ruleList,
@@ -2738,6 +2825,9 @@ window.domo.onStatusChanged(() => {
 window.domo.onRulesChanged(() => {
   if (currentTab === "rules") rulesMounted?.refreshRules();
 });
+window.domo.onGatekeeperRecoveryChanged(() => {
+  if (currentTab === "rules") rulesMounted?.refreshRecovery();
+});
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onConnectorsChanged((state) => {
@@ -2773,6 +2863,10 @@ window.domo.onShowCapabilities(async () => {
   if (await selectTab("settings")) window.domo.uiSetTab("settings");
 });
 window.domo.onShowAuditBlocked(() => showAuditBlocked());
+window.domo.onShowGatekeeperRecovery(async () => {
+  if (currentTab !== "rules") await selectTab("rules");
+  else rulesMounted?.refreshRecovery();
+});
 // Another app handed main a credential exchange (Apple Passwords' export):
 // land on the Vault tab, whose render finds the staged preview and opens the
 // Import sheet on it. Already there means re-render — selectTab dedupes and

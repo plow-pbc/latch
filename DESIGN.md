@@ -151,6 +151,17 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   preview verdicts; their example paths use a fixed placeholder home, so no
   local account name leaves the Mac. A preview is not an operation and records
   nothing — no audit line, no telemetry, no rule.
+  A separate, owner-invoked **Gatekeeper revision coach** may run after an AI
+  Reviewer denial. It sees the current owner-authored purpose, the denied
+  request and capability displays, and at most ten distinct recent local audit
+  activity titles. Those titles are representative operation requests, not raw
+  Plow conversations. The coach is asked for a complete replacement that
+  allows commands *similar to* the denied command by generalizing purpose and
+  effect while preserving unrelated restrictions; it is explicitly forbidden
+  from encoding the exact merchant, product, amount, path, recipient, URL, or
+  command. The result is editable display text until the owner explicitly
+  saves it. This history never reaches the live allow/deny reviewer, which
+  remains on `history: []` to avoid the denial ratchet described above.
   WHETHER the reviewer runs is decided in precedence order by
   `packages/device-core/src/policyEngine.ts`: a stored always-allow rule
   short-circuits Ask and Approve, while global AI Reviewer and Deny modes decide
@@ -189,6 +200,13 @@ Decisions: **Always allow / Allow once / Deny.**
   call approved for one set of paths does not cover a call for a different
   one; a write is keyed on the full argv.
 - Rules are listed and revocable in the app. Goal text is never part of a rule.
+- An AI Reviewer denial may be **overridden once** by the owner in Latch. This
+  is not a rule: `PolicyEngine` holds it only in memory, matches the same agent,
+  request text, and full unnormalized capability set, consumes it atomically on
+  the next matching retry, and labels the grant `owner_override`. A restart or
+  a non-matching retry cannot use it. Latch reports separately whether the
+  override is armed or consumed and states that the standing Gatekeeper
+  instructions did not change.
 - A third *observed* layer — processes spawned, files actually touched by the
   in-process file tools, sandbox denials, exit codes — lands in the audit log,
   not the approval flow. It is the raw material for the future iOS

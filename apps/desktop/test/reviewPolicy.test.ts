@@ -28,6 +28,7 @@ import {
   ReviewHint,
   decideIntent,
   inferenceStatus,
+  ownerOverrideMayGrant,
   reviewerAvailable,
   storedRuleMayGrant,
 } from "../src/reviewPolicy.js";
@@ -644,6 +645,17 @@ describe("storedRuleMayGrant", () => {
   });
 });
 
+describe("ownerOverrideMayGrant", () => {
+  it.each([
+    ["adversarial", true],
+    ["approve", true],
+    ["ask", true],
+    ["deny", false],
+  ])("under %s mode: %s", (mode, expected) => {
+    expect(ownerOverrideMayGrant(settings({ approvalMode: mode as Settings["approvalMode"] }))).toBe(expected);
+  });
+});
+
 describe("decideIntent — adversarial mode", () => {
   const adversarial = (over: Partial<Settings> = {}) =>
     settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL, ...over });
@@ -664,7 +676,11 @@ describe("decideIntent — adversarial mode", () => {
         reason: "genuinely ambiguous",
         decision: "allow_once",
       });
-      expect(await h.run()).toEqual({ decision: c.decision, source: c.source });
+      expect(await h.run()).toEqual({
+        decision: c.decision,
+        source: c.source,
+        ...(c.verdict === "deny" ? { reason: "genuinely ambiguous" } : {}),
+      });
       expect(h.openApproval).not.toHaveBeenCalled();
     });
   }
