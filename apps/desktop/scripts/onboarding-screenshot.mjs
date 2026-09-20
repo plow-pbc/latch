@@ -131,6 +131,21 @@ verifyRearmFixture.prepare = async (win) => {
   }
   if (neutralNote !== REARM_NOTE) throw new Error("The re-arm note was not rendered neutrally");
 };
+
+const verifyExpiredFixture = SCREENS.find((fixture) => fixture.name === "verify-expired");
+verifyExpiredFixture.prepare = async (win) => {
+  const retainedFocus = await win.webContents.executeJavaScript(`(async () => {
+    const retry = [...document.querySelectorAll("button")]
+      .find((button) => button.textContent.trim() === "Try again");
+    if (!retry) return false;
+    retry.focus();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const retained = document.activeElement === retry;
+    document.querySelector(".verify-activate")?.focus();
+    return retained;
+  })()`);
+  if (!retainedFocus) throw new Error("The expired retry was replaced after it received focus");
+};
 // A fixture's `click` opens that row's reason, the way the owner would.
 for (const fixture of SCREENS.filter((f) => f.click)) {
   fixture.prepare = async (win) => {

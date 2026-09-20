@@ -14,6 +14,7 @@
 
 - Phone verification uses direction C: a familiar Messages conversation preview instead of explanatory instructions.
 - The destination phone number and activation message each have an icon-only copy control with an accessible label.
+- A compact warning says the activation code is private and that sending it links the account.
 - The live countdown remains visible and becomes a single `Try again` action when it reaches zero.
 - The primary action reads `Send in Messages` and continues to call the existing `onboardingOpenMessages` IPC action.
 - Gatekeeper supporting copy is exactly `Protect your data from malicious queries, while allowing your agents to get useful work done.`
@@ -35,7 +36,7 @@
 
 **Interfaces:**
 - Consumes: existing activation fields `sendTo`, `smsBody`, `pollUntil`, and existing `window.domo.onboardingOpenMessages()` / `window.domo.onboardingNewCode()` actions.
-- Produces: `copyButton(value, ariaLabel, compact)`, a Messages-style `.message-preview`, and a `.waiting-status` whose expired state contains `Try again`.
+- Produces: `copyButton(value, ariaLabel)`, a Messages-style `.message-preview`, and a `.waiting-status` whose expired state contains `Try again`.
 
 - [ ] **Step 1: Write failing real-window expectations**
 

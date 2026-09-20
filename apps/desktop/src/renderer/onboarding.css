@@ -499,14 +499,17 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
 }
 
 .copy-button {
+  position: relative;
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 13px;
-  border: 1px solid var(--border-2);
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--surface-2);
+  background: transparent;
   color: var(--muted-2);
   font-size: 12px;
   font-weight: 600;
@@ -534,17 +537,7 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   color: var(--volt);
 }
 
-.copy-button.compact {
-  position: relative;
-  width: 28px;
-  height: 28px;
-  justify-content: center;
-  padding: 0;
-  border-color: transparent;
-  background: transparent;
-}
-
-.copy-button.compact span {
+.copy-button span {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -553,15 +546,37 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   white-space: nowrap;
 }
 
-.message-bubble .copy-button.compact {
+.message-bubble .copy-button {
   color: rgba(255, 255, 255, 0.76);
   background: rgba(255, 255, 255, 0.11);
 }
 
-.message-bubble .copy-button.compact:hover,
-.message-bubble .copy-button.compact.copied {
+.message-bubble .copy-button:hover,
+.message-bubble .copy-button.copied {
   color: #fff;
   background: rgba(255, 255, 255, 0.2);
+}
+
+.activation-warning {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  max-width: 370px;
+  margin: 10px auto 0;
+  color: var(--clay-soft);
+  font-size: 10.5px;
+  font-weight: 300;
+}
+
+.activation-warning svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+
+.activation-warning strong {
+  font-weight: 500;
 }
 
 .waiting-status {
@@ -667,10 +682,6 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   pointer-events: none;
 }
 
-.verify-actions .alternate {
-  margin-top: 12px;
-}
-
 .countdown {
   margin: 10px 0 0;
   color: var(--muted);
@@ -691,14 +702,6 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
 .waiting-status .countdown::before {
   content: "·";
   margin-right: 9px;
-}
-
-.alternate {
-  margin: 20px 0 0;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 300;
-  text-align: center;
 }
 
 .link-button {

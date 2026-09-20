@@ -135,9 +135,6 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
       ...(screen.expectTitle && title !== screen.expectTitle
         ? [`title "${screen.expectTitle}" (found: "${title}")`]
         : []),
-      ...(screen.expectAriaLabel && !ariaLabels.includes(screen.expectAriaLabel)
-        ? [`aria-label "${screen.expectAriaLabel}"`]
-        : []),
       ...(screen.expectAriaLabels ?? [])
         .filter((label) => !ariaLabels.includes(label))
         .map((label) => `aria-label "${label}"`),

@@ -410,10 +410,10 @@ function continueFromGatekeeper() {
   return update(() => window.domo.onboardingAdvance(gatekeeper?.text ?? state.purpose));
 }
 
-function copyButton(value, ariaLabel, compact = false) {
+function copyButton(value, ariaLabel) {
   const label = el("span", { text: "Copy" });
   const node = el("button", {
-    class: `copy-button${compact ? " compact" : ""}`,
+    class: "copy-button",
     attrs: { type: "button", "aria-label": ariaLabel },
   }, [
     icon("copy", { strokeWidth: "1.7" }),
@@ -486,8 +486,8 @@ function startActivationCountdown(node, until) {
       el("span", { class: "countdown", text: `${minutes}:${String(seconds).padStart(2, "0")}` }),
     );
   };
-  tick();
   expiryTimer = setInterval(tick, 1000);
+  tick();
 }
 
 function verifyScreen() {
@@ -504,11 +504,18 @@ function verifyScreen() {
         el("div", { class: "message-contact" }, [
           el("span", { class: "message-avatar", text: "P", attrs: { "aria-hidden": "true" } }),
           el("span", { class: "send-to", text: activation.sendTo }),
-          copyButton(activation.sendTo, "Copy phone number", true),
+          copyButton(activation.sendTo, "Copy phone number"),
         ]),
         el("div", { class: "message-bubble" }, [
           activationMessage(activation),
-          copyButton(activation.smsBody, "Copy activation message", true),
+          copyButton(activation.smsBody, "Copy activation message"),
+        ]),
+      ]),
+      el("p", { class: "activation-warning" }, [
+        icon("lock", { strokeWidth: "1.7" }),
+        el("span", {}, [
+          el("strong", { text: "Private activation code. " }),
+          document.createTextNode("Anyone who sends it can link this account."),
         ]),
       ]),
     );
