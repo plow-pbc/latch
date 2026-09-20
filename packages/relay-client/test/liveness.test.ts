@@ -22,7 +22,7 @@ import { HEARTBEAT_INTERVAL_MS } from "../src/wire.js";
  * inbound frames only when the test says so. */
 class FakeConn implements Connection {
   onLine: ((line: Buffer) => void) | null = null;
-  onClose: (() => void) | null = null;
+  onClose: ((code?: number) => void) | null = null;
   readonly sent: Record<string, unknown>[] = [];
   closed = false;
   /** Stops answering, the way a dead network does — nothing is delivered and
