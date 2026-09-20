@@ -125,6 +125,8 @@ describe("the server tells the agent what it is for", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/status 'denied'/);
     expect(SERVER_INSTRUCTIONS).toMatch(/Gatekeeper's AI Reviewer/);
     expect(SERVER_INSTRUCTIONS).toMatch(/open Plow Latch on their Mac/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/review the denial or improve their Gatekeeper instructions/i);
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/allow one matching retry/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/other 'denied'.*follow its reason/is);
   });
 

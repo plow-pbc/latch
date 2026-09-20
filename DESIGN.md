@@ -200,13 +200,10 @@ Decisions: **Always allow / Allow once / Deny.**
   call approved for one set of paths does not cover a call for a different
   one; a write is keyed on the full argv.
 - Rules are listed and revocable in the app. Goal text is never part of a rule.
-- An AI Reviewer denial may be **overridden once** by the owner in Latch. This
-  is not a rule: `PolicyEngine` holds it only in memory, matches the same agent,
-  request text, and full unnormalized capability set, consumes it atomically on
-  the next matching retry, and labels the grant `owner_override`. A restart or
-  a non-matching retry cannot use it. Latch reports separately whether the
-  override is armed or consumed and states that the standing Gatekeeper
-  instructions did not change.
+- An AI Reviewer denial grants nothing and cannot be overridden. Latch keeps
+  the latest denial in memory so the owner can review it and ask the revision
+  coach for an editable replacement Gatekeeper prompt; the operation remains
+  denied until a later request is decided under the owner's saved policy.
 - A third *observed* layer — processes spawned, files actually touched by the
   in-process file tools, sandbox denials, exit codes — lands in the audit log,
   not the approval flow. It is the raw material for the future iOS

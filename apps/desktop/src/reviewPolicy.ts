@@ -87,12 +87,6 @@ export function storedRuleMayGrant(settings: Settings): boolean {
   return mode !== "adversarial" && mode !== "deny";
 }
 
-/** A one-time override is a fresh owner decision, so AI Reviewer mode must not
- * re-review it. Deny remains the global kill switch and outranks everything. */
-export function ownerOverrideMayGrant(settings: Settings): boolean {
-  return (settings.approvalMode ?? DEFAULT_APPROVAL_MODE) !== "deny";
-}
-
 /**
  * A decision and HOW it was reached, for the audit log — and, on an
  * `always_allow`, whether its rule is already in place (stored by the dialog

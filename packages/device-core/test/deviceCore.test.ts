@@ -110,7 +110,7 @@ describe("PolicyEngine", () => {
     });
   }
 
-  it("allows exactly one retry of a reviewer-denied request", async () => {
+  it("does not authorize a retry after a reviewer denial", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const caps: Capability[] = [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"], cwd: "/tmp" }];
     const first = intentWith(caps);
@@ -122,52 +122,9 @@ describe("PolicyEngine", () => {
     };
 
     expect((await engine.decide(first, reviewerDenies)).decision).toBe("deny");
-    expect(engine.armDeniedIntentOnce(first.intentId)).toBe(true);
-
     const retry = intentWith(caps);
     retry.request = first.request;
-    expect(await engine.decide(retry, reviewerDenies)).toMatchObject({
-      decision: "allow_once",
-      source: "owner_override",
-    });
-    expect((await engine.decide(intentWith(caps), reviewerDenies)).decision).toBe("deny");
-  });
-
-  it("does not widen a one-time override across request, capability, or agent", async () => {
-    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
-    const caps: Capability[] = [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"], cwd: "/tmp" }];
-    const denied = intentWith(caps);
-    denied.request = "Buy the Lego set for the family";
-    const reviewerDenies: PolicyDelegate = {
-      async decideIntent() {
-        return { decision: "deny" as const, source: "adversarial" };
-      },
-    };
-    await engine.decide(denied, reviewerDenies);
-    expect(engine.armDeniedIntentOnce(denied.intentId)).toBe(true);
-
-    const changedRequest = intentWith(caps);
-    changedRequest.request = "Buy a bicycle for the family";
-    expect((await engine.decide(changedRequest, reviewerDenies)).decision).toBe("deny");
-
-    const changedCapability = intentWith([{ kind: "process.exec", argv: ["open", "https://amazon.com/bicycle"], cwd: "/tmp" }]);
-    changedCapability.request = denied.request;
-    expect((await engine.decide(changedCapability, reviewerDenies)).decision).toBe("deny");
-
-    const changedAgent = makeIntent({
-      agentId: new KeyPair().fingerprint,
-      agentDisplay: "Another agent",
-      deviceId: denied.deviceId,
-      request: denied.request,
-      capabilities: caps,
-      sessionId: "s2",
-    });
-    expect((await engine.decide(changedAgent, reviewerDenies)).decision).toBe("deny");
-
-    const exactRetry = intentWith(caps);
-    exactRetry.request = denied.request;
-    expect((await engine.decide(exactRetry, reviewerDenies)).source).toBe("owner_override");
-    expect(engine.armDeniedIntentOnce("missing-intent")).toBe(false);
+    expect(await engine.decide(retry, reviewerDenies)).toMatchObject({ decision: "deny", source: "adversarial" });
   });
 
   it("retains only the latest reviewer denial for recovery", async () => {
@@ -184,58 +141,7 @@ describe("PolicyEngine", () => {
     await engine.decide(second, reviewerDenies);
 
     expect(engine.deniedIntent(first.intentId)).toBeNull();
-    expect(engine.deniedIntent(second.intentId)?.state).toBe("denied");
-  });
-
-  it("does not let an armed override bypass a later global deny", async () => {
-    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
-    const caps: Capability[] = [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"] }];
-    const denied = intentWith(caps);
-    const reviewerDenies: PolicyDelegate = {
-      async decideIntent() {
-        return { decision: "deny" as const, source: "adversarial" };
-      },
-    };
-    await engine.decide(denied, reviewerDenies);
-    engine.armDeniedIntentOnce(denied.intentId);
-
-    const denyMode: PolicyDelegate = {
-      mayGrantFromOwnerOverride: () => false,
-      async decideIntent() {
-        return { decision: "deny" as const, source: "policy" };
-      },
-    };
-    expect(await engine.decide(intentWith(caps), denyMode)).toMatchObject({
-      decision: "deny",
-      source: "policy",
-    });
-
-    // The kill switch did not silently consume the owner's earlier choice.
-    expect((await engine.decide(intentWith(caps), reviewerDenies)).source).toBe("owner_override");
-  });
-
-  it("allows only one of two concurrent exact retries", async () => {
-    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
-    const caps: Capability[] = [{ kind: "process.exec", argv: ["open", "https://amazon.com/lego"] }];
-    const denied = intentWith(caps);
-    const release: (() => void)[] = [];
-    const reviewerDenies: PolicyDelegate = {
-      mayGrantFromOwnerOverride: () => new Promise<boolean>((resolve) => release.push(() => resolve(true))),
-      async decideIntent() {
-        return { decision: "deny" as const, source: "adversarial" };
-      },
-    };
-    await engine.decide(denied, { decideIntent: reviewerDenies.decideIntent });
-    engine.armDeniedIntentOnce(denied.intentId);
-
-    const first = engine.decide(intentWith(caps), reviewerDenies);
-    const second = engine.decide(intentWith(caps), reviewerDenies);
-    await vi.waitFor(() => expect(release).toHaveLength(2));
-    release.forEach((resolve) => resolve());
-
-    const grants = await Promise.all([first, second]);
-    expect(grants.filter((grant) => grant.source === "owner_override")).toHaveLength(1);
-    expect(grants.filter((grant) => grant.decision === "deny")).toHaveLength(1);
+    expect(engine.deniedIntent(second.intentId)).toMatchObject({ intent: second, reason: null });
   });
 
   it("always_allow stores a rule reused on the next matching intent", async () => {
@@ -500,7 +406,7 @@ describe("PolicyEngine", () => {
 });
 
 describe("reviewer denial recovery", () => {
-  it("tells the agent Gatekeeper denied and to wait for an owner override", async () => {
+  it("tells the agent Gatekeeper denied and to wait for revised instructions", async () => {
     const home = tempDir();
     const reviewerDenies: PolicyDelegate = {
       async decideIntent() {
@@ -521,8 +427,8 @@ describe("reviewer denial recovery", () => {
       status: "denied",
       reason:
         "Gatekeeper's AI Reviewer denied this request. Ask the user to open Plow Latch on their Mac, " +
-        "where they can review it, allow one matching retry, or improve their Gatekeeper instructions. " +
-        "Do not retry unchanged until the owner acts",
+        "where they can review the denial or improve their Gatekeeper instructions. " +
+        "Do not retry unchanged until the owner updates those instructions",
     });
   });
 });

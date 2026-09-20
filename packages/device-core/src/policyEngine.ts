@@ -9,11 +9,9 @@ import path from "node:path";
 import { writeFileDurable } from "./durableFile.js";
 import {
   AlwaysAllowRule,
-  canonicalJSON,
   Decision,
   Grant,
   Intent,
-  JSONValue,
   intentRuleKey,
   makeAlwaysAllowRule,
   makeGrant,
@@ -45,12 +43,9 @@ export type IntentDecision =
       reason?: string;
     };
 
-export type DeniedIntentState = "denied" | "armed" | "consumed";
-
 export interface DeniedIntent {
   intent: Intent;
   reason: string | null;
-  state: DeniedIntentState;
 }
 
 /** Whoever answers approval questions: app UI, headless script… */
@@ -68,9 +63,6 @@ export interface PolicyDelegate {
    * where the delegate decides as it would have the first time.
    */
   mayGrantFromStoredRule?(intent: Intent): boolean | Promise<boolean>;
-  /** May an explicit, still-armed one-time owner override answer now? A global
-   * kill switch may veto it without consuming it. */
-  mayGrantFromOwnerOverride?(intent: Intent): boolean | Promise<boolean>;
   /**
    * The decision for this intent is now in the audit log. A delegate that
    * kept its own record of the question while it was open may let go of it
@@ -85,10 +77,8 @@ export interface PolicyDelegate {
 
 export class PolicyEngine {
   private rules = new Map<string, AlwaysAllowRule>();
-  /** Reviewer denials are recovery UI state, not durable policy. A restart
-   * clears both these records and any armed override, which fails closed. */
+  /** Reviewer denials are recovery UI state, not durable policy. */
   private readonly deniedIntents = new Map<string, DeniedIntent>();
-  private readonly oneTimeOverrides = new Map<string, string>();
   /**
    * Emits `changed` once per write to the rule set — a rule stored by an
    * always-allow answer, or one removed. The main window's Rules pane draws
@@ -139,18 +129,6 @@ export class PolicyEngine {
 
   deniedIntent(intentId: string): DeniedIntent | null {
     return this.deniedIntents.get(intentId) ?? null;
-  }
-
-  /** Arm one retry of the exact agent + request + unnormalized capability
-   * set that the reviewer denied. This never writes an always-allow rule. */
-  armDeniedIntentOnce(intentId: string): boolean {
-    const denied = this.deniedIntents.get(intentId);
-    if (!denied || denied.state === "consumed") return false;
-    const fingerprint = oneTimeFingerprint(denied.intent);
-    this.oneTimeOverrides.set(fingerprint, intentId);
-    denied.state = "armed";
-    this.events.emit("override_armed", { intentId, intent: denied.intent });
-    return true;
   }
 
   removeRule(key: string): void {
@@ -285,23 +263,6 @@ export class PolicyEngine {
   }
 
   async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {
-    const overrideKey = oneTimeFingerprint(intent);
-    const overriddenIntentId = this.oneTimeOverrides.get(overrideKey);
-    if (
-      overriddenIntentId !== undefined &&
-      (await mayGrantFromOwnerOverride(intent, delegate)) &&
-      this.oneTimeOverrides.get(overrideKey) === overriddenIntentId
-    ) {
-      this.oneTimeOverrides.delete(overrideKey);
-      const denied = this.deniedIntents.get(overriddenIntentId);
-      if (denied) denied.state = "consumed";
-      this.events.emit("override_consumed", {
-        intentId: overriddenIntentId,
-        retryIntentId: intent.intentId,
-        intent,
-      });
-      return makeGrant(intent, "allow_once", "owner_override");
-    }
     if (await this.ruleAnswers(intent, delegate)) {
       return makeGrant(intent, "always_allow", "rule");
     }
@@ -313,23 +274,11 @@ export class PolicyEngine {
     if (decision === "always_allow" && !ruleStored) this.storeRule(intent);
     if (decision === "deny" && source === "adversarial") {
       this.deniedIntents.clear();
-      this.deniedIntents.set(intent.intentId, { intent, reason, state: "denied" });
+      this.deniedIntents.set(intent.intentId, { intent, reason });
       this.events.emit("reviewer_denied", { intentId: intent.intentId, intent, reason });
     }
     return makeGrant(intent, decision, source);
   }
-}
-
-/** Unlike a standing rule, a one-time override includes the human-readable
- * request and the FULL capability set. A plugin rule view may intentionally
- * generalize argv; an override must not. */
-function oneTimeFingerprint(intent: Intent): string {
-  return canonicalJSON({
-    agentId: intent.agentId,
-    deviceId: intent.deviceId,
-    request: intent.request,
-    capabilities: intent.capabilities,
-  } as unknown as JSONValue);
 }
 
 /**
@@ -361,15 +310,6 @@ async function mayGrantFromStoredRule(intent: Intent, delegate: PolicyDelegate):
   if (!delegate.mayGrantFromStoredRule) return true;
   try {
     return await delegate.mayGrantFromStoredRule(intent);
-  } catch {
-    return false;
-  }
-}
-
-async function mayGrantFromOwnerOverride(intent: Intent, delegate: PolicyDelegate): Promise<boolean> {
-  if (!delegate.mayGrantFromOwnerOverride) return true;
-  try {
-    return await delegate.mayGrantFromOwnerOverride(intent);
   } catch {
     return false;
   }
