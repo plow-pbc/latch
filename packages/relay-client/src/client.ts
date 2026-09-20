@@ -193,7 +193,7 @@ export class RelayClient {
     this.startHeartbeat(conn);
 
     conn.onLine = (line) => this.onFrame(conn, line);
-    conn.onClose = () => this.onClose();
+    conn.onClose = (code) => this.onClose(code);
     conn.startReading();
   }
 
@@ -361,26 +361,34 @@ export class RelayClient {
     this.heartbeat.unref?.();
   }
 
-  private onClose(): void {
+  private onClose(code?: number): void {
     this.conn = null;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     this.setConnected(false);
     if (!this.running) return;
-    this.scheduleReconnect();
+    // 4010 "moved" is the relay stepping aside during a rolling deploy: another
+    // instance is already accepting sockets, so this is a redirection, not a
+    // failure. Redial at once and leave the backoff counter where it is.
+    this.scheduleReconnect(code === 4010);
   }
 
   /**
    * Exponential backoff with full jitter. The jitter is the point: without it
    * every Mac that dropped when the relay restarted comes back at the same
-   * instant and knocks it over again.
+   * instant and knocks it over again. `immediate` is the exception: a relay
+   * that handed the socket over has a successor waiting, so there is nothing
+   * to spread out.
    */
-  private scheduleReconnect(): void {
+  private scheduleReconnect(immediate = false): void {
     if (this.credentialRejected || !this.running || this.reconnectTimer) return;
-    const ceiling = Math.min(BASE_BACKOFF_MS * 2 ** this.attempt, MAX_BACKOFF_MS);
-    const random = this.options.random ?? Math.random;
-    const delay = Math.round(random() * ceiling);
-    this.attempt += 1;
+    let delay = 0;
+    if (!immediate) {
+      const ceiling = Math.min(BASE_BACKOFF_MS * 2 ** this.attempt, MAX_BACKOFF_MS);
+      const random = this.options.random ?? Math.random;
+      delay = Math.round(random() * ceiling);
+      this.attempt += 1;
+    }
     this.say(`reconnecting in ${delay}ms (attempt ${this.attempt})`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

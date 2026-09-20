@@ -9,7 +9,9 @@
 
 export interface Connection {
   onLine: ((line: Buffer) => void) | null;
-  onClose: (() => void) | null;
+  /** Closed. The peer's close code when it sent one — callers that care what
+   * kind of close this was switch on it. */
+  onClose: ((code?: number) => void) | null;
   /** Begin delivering inbound frames via onLine. Called once by the owner. */
   startReading(): void;
   /** Send one framed message (framing added by the transport). */
