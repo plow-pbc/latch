@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { gatekeeperPresets } from "../src/gatekeeperPreview.js";
+import { pluginExamples } from "../src/onboardingExampleCatalog.js";
 import { grantList } from "../src/pluginsModel.js";
 import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
 
 describe("onboarding visual fixtures", () => {
-  const fixtures = onboardingFixtures(1_700_000_000_000);
+  const fixtures = onboardingFixtures(1_700_000_000_000, pluginExamples);
   const fixture = (name: string) => fixtures.find((item) => item.name === name)!;
 
   it("keeps clean verification separate from the interactive re-arm capture", () => {

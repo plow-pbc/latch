@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
+import { pluginExamples } from "../dist/onboardingExampleCatalog.js";
 import { ONBOARDING_FAILURE_MESSAGE } from "../src/renderer/onboardingFallback.js";
 import { FONT_WAIT_CEILING_MS } from "../src/renderer/welcomeEntrance.js";
 import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
@@ -19,7 +20,7 @@ const outDir = process.env.OUT_DIR ?? "/tmp";
 const REARM_NOTE =
   "That code still works — send it exactly as shown and this screen will move on by itself.";
 
-const fixtureScreens = onboardingFixtures(Date.now()).map((fixture) => ({
+const fixtureScreens = onboardingFixtures(Date.now(), pluginExamples).map((fixture) => ({
   ...fixture,
   expectFooter: fixture.state?.step !== "done",
   expectBack: fixture.state?.canGoBack === true,

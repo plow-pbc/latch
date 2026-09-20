@@ -1,9 +1,7 @@
-import { queriesForPlugins } from "./onboardingExampleCatalog.js";
-
 /** Shared states for the browser picker and the offscreen screenshot harness. */
 const BACK_STEPS = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
 
-export function onboardingFixtures(now) {
+export function onboardingFixtures(now, pluginExamples) {
   const displayCode = "Z1SWY";
   const sendTo = "+1 555 987 6543";
   const activation = {
@@ -94,14 +92,10 @@ export function onboardingFixtures(now) {
     row("browser", "Browser use", "Browse and fill in forms in a private browser, with Safari as a fallback.", "Browser", browserStatus, [fda, safari]),
   ];
   const pluginState = (pluginRows, grants) => {
-    const titles = new Map(pluginRows.map((plugin) => [plugin.name, plugin.title]));
     return {
       rows: pluginRows,
       grants,
-      examples: queriesForPlugins([...titles.keys()]).slice(0, 4).map(({ label, plugins }) => ({
-        query: label,
-        plugins: plugins.map((plugin) => titles.get(plugin)),
-      })),
+      examples: pluginExamples(pluginRows),
     };
   };
   const onlyWiki = pluginState(rows("off", "off", fullDisk, "off"), []);

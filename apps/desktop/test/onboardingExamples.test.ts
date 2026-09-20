@@ -1,50 +1,38 @@
 import { describe, expect, it } from "vitest";
-import { examplesForPlugins, GATEKEEPER_DECKS, ONBOARDING_EXAMPLES } from "../src/onboardingExamples.js";
+import { BROWSER_PLUGIN } from "@domo/device-core";
+import { pluginExamples } from "../src/onboardingExampleCatalog.js";
+import { GATEKEEPER_DECKS, ONBOARDING_EXAMPLES } from "../src/onboardingExamples.js";
 
 describe("onboarding example catalog", () => {
-  it("tags the unchanged Gatekeeper examples with the plugins that enable them", () => {
-    expect(GATEKEEPER_DECKS.home.map(({ label, plugins }) => [label, plugins])).toEqual([
-      ["Check the family calendar", ["gog"]],
-      ["Text Mary “Running late”", ["messages"]],
-      ["Sign in to Instacart with your password", ["browser"]],
-      ["Post your tax return publicly", []],
-      ["Copy all your saved passwords", []],
+  it("tags the unchanged ten-query Gatekeeper catalog for plugin filtering", () => {
+    expect(ONBOARDING_EXAMPLES.map(({ plugins }) => plugins)).toEqual([
+      ["gog"],
+      ["messages"],
+      ["browser"],
+      [],
+      [],
+      ["gog"],
+      ["gog"],
+      ["gog"],
+      [],
+      [],
     ]);
-    expect(GATEKEEPER_DECKS.work.map(({ label, plugins }) => [label, plugins])).toEqual([
-      ["Find unread email from your team", ["gog"]],
-      ["Draft a reply to a customer", ["gog"]],
-      ["Find a free hour next week", ["gog"]],
-      ["Review a pull request on GitHub", []],
-      ["Read your personal WhatsApp", []],
-    ]);
+    expect(GATEKEEPER_DECKS.home).toEqual(ONBOARDING_EXAMPLES.slice(0, 5));
+    expect(GATEKEEPER_DECKS.work).toEqual(ONBOARDING_EXAMPLES.slice(5));
   });
 
-  it("keeps the ten reusable queries in one ordered catalog", () => {
-    expect(ONBOARDING_EXAMPLES.map(({ label }) => label)).toEqual([
-      "Check the family calendar",
-      "Text Mary “Running late”",
-      "Sign in to Instacart with your password",
-      "Post your tax return publicly",
-      "Copy all your saved passwords",
-      "Find unread email from your team",
-      "Draft a reply to a customer",
-      "Find a free hour next week",
-      "Review a pull request on GitHub",
-      "Read your personal WhatsApp",
+  it("labels the first four queries whose plugins are present", () => {
+    expect(pluginExamples([
+      { name: "gog", title: "Gmail and Google Calendar" },
+      { name: "messages", title: "iMessage history" },
+      { name: "wiki", title: "Obsidian-style wiki" },
+      { name: BROWSER_PLUGIN, title: "Browser use" },
+    ])).toEqual([
+      { query: "Check the family calendar", plugins: ["Gmail and Google Calendar"] },
+      { query: "Text Mary “Running late”", plugins: ["iMessage history"] },
+      { query: "Sign in to Instacart with your password", plugins: ["Browser use"] },
+      { query: "Find unread email from your team", plugins: ["Gmail and Google Calendar"] },
     ]);
-  });
-
-  it("offers only queries whose required plugins are available", () => {
-    expect(examplesForPlugins(["gog", "browser"]).map(({ label }) => label)).toEqual([
-      "Check the family calendar",
-      "Sign in to Instacart with your password",
-      "Find unread email from your team",
-      "Draft a reply to a customer",
-      "Find a free hour next week",
-    ]);
-    expect(examplesForPlugins(["messages"]).map(({ label }) => label)).toEqual([
-      "Text Mary “Running late”",
-    ]);
-    expect(examplesForPlugins(["wiki"])).toEqual([]);
+    expect(pluginExamples([{ name: "wiki", title: "Obsidian-style wiki" }])).toEqual([]);
   });
 });

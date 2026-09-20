@@ -2,8 +2,9 @@
    selection is the preview's navigation; production transitions stay in main. */
 
 import { onboardingFixtures } from "./onboarding-fixtures.js";
+import { pluginExamples } from "../onboardingExampleCatalog.js";
 
-const fixtures = onboardingFixtures(Date.now());
+const fixtures = onboardingFixtures(Date.now(), pluginExamples);
 const fixturesByName = new Map(fixtures.map((fixture) => [fixture.name, fixture]));
 const params = new URLSearchParams(window.location.search);
 let initialGetDelayMs = Number(params.get("onboardingGetDelayMs")) || 0;

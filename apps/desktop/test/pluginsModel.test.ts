@@ -12,7 +12,6 @@ import {
   browserPluginRow,
   BROWSER_RUNTIME,
   grantList,
-  pluginExamples,
   pluginRows,
   SAFARI_JAVASCRIPT,
   type PluginRow,
@@ -180,31 +179,6 @@ describe("browserPluginRow", () => {
   ])("every manifest plugin row is a CLI titled by %s", (_what, title, expected) => {
     const [row] = pluginRows({ plugins: [{ manifest: manifest(none, "gog", title), enabled: true }], connectedAccounts: [], grantedPermissions: [], relaunchPending: [] });
     expect(row).toMatchObject({ kind: "CLI", title: expected });
-  });
-});
-
-describe("plugin examples", () => {
-  const row = (name: string, title: string): PluginRow => ({
-    name, title, summary: null, kind: name === BROWSER_PLUGIN ? "Browser" : "CLI",
-    description: null, status: "off", requirements: [],
-  });
-
-  it("labels the first four catalog queries whose plugins are present", () => {
-    expect(pluginExamples([
-      row("gog", "Gmail and Google Calendar"),
-      row("messages", "iMessage history"),
-      row("wiki", "Obsidian-style wiki"),
-      row(BROWSER_PLUGIN, "Browser use"),
-    ], 4)).toEqual([
-      { query: "Check the family calendar", plugins: ["Gmail and Google Calendar"] },
-      { query: "Text Mary “Running late”", plugins: ["iMessage history"] },
-      { query: "Sign in to Instacart with your password", plugins: ["Browser use"] },
-      { query: "Find unread email from your team", plugins: ["Gmail and Google Calendar"] },
-    ]);
-  });
-
-  it("does not advertise queries for plugins absent from the inventory", () => {
-    expect(pluginExamples([row("wiki", "Obsidian-style wiki")])).toEqual([]);
   });
 });
 

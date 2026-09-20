@@ -5,10 +5,9 @@
 import type { Capability } from "@domo/protocol";
 import {
   ONBOARDING_QUERIES,
-  queriesForPlugins,
   type OnboardingQuery,
   type OnboardingQueryId,
-} from "./renderer/onboardingExampleCatalog.js";
+} from "./onboardingExampleCatalog.js";
 
 export type PresetKey = "home" | "work";
 
@@ -83,9 +82,3 @@ export const GATEKEEPER_DECKS: Record<PresetKey, readonly OnboardingExample[]> =
   home: ONBOARDING_EXAMPLES.slice(0, 5),
   work: ONBOARDING_EXAMPLES.slice(5),
 };
-
-/** Queries setup may promise when every plugin they need exists on this Mac. */
-export function examplesForPlugins(pluginNames: readonly string[]): OnboardingExample[] {
-  const ids = new Set(queriesForPlugins(pluginNames).map(({ id }) => id));
-  return ONBOARDING_EXAMPLES.filter(({ id }) => ids.has(id));
-}

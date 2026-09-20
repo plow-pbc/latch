@@ -6,7 +6,8 @@
  */
 import { BROWSER_PLUGIN, type PluginManifest } from "@domo/device-core";
 import { paneFor, permissionTitle } from "./capabilitiesModel.js";
-import { examplesForPlugins } from "./onboardingExamples.js";
+
+export { pluginExamples, type PluginExample } from "./onboardingExampleCatalog.js";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
@@ -66,21 +67,6 @@ export interface PluginRow {
   /** Every requirement the manifest declares, met or not — status decides
    *  whether the plugin can run; hiding a met one is the tab's business. */
   requirements: Requirement[];
-}
-
-export interface PluginExample {
-  query: string;
-  /** Owner-facing plugin titles, in the catalog's dependency order. */
-  plugins: string[];
-}
-
-/** The setup carousel is a projection of the shared query catalog. */
-export function pluginExamples(rows: readonly PluginRow[], limit = 4): PluginExample[] {
-  const titleByName = new Map(rows.map((row) => [row.name, row.title]));
-  return examplesForPlugins([...titleByName.keys()]).slice(0, limit).map((example) => ({
-    query: example.label,
-    plugins: example.plugins.map((name) => titleByName.get(name)!),
-  }));
 }
 
 export interface PluginsInput {
