@@ -83,12 +83,11 @@ import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
 import { fetchAgentIndex } from "./agentIndex.js";
-import { cloudAgentsIpcResult } from "./cloudAgentsIpc.js";
 import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
-import { gatekeeperPresets, previewRow } from "./gatekeeperPreview.js";
+import { gatekeeperPresets, previewRow, selectAllowedFinishExample } from "./gatekeeperPreview.js";
 import {
   ApprovalDecision,
   ApprovalQueue,
@@ -811,11 +810,6 @@ ipcMain.handle("cloud:refresh", async () => {
   await cloudAgents?.refresh();
   return agentsTabState();
 });
-// Setup needs only the cloud-agent projection. Keep connect-client state — in
-// particular its roster and one-time credential — off this narrower bridge.
-ipcMain.handle("cloud:agents", async () => {
-  return cloudAgentsIpcResult(cloudAgents);
-});
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
   // The ROSTER, not the cloud agents: what was just minted is a credential,
@@ -917,6 +911,14 @@ ipcMain.handle(
       apiBaseUrl,
     }),
 );
+ipcMain.handle("onboarding:browserExample", async () => {
+  const settings = loadSettings(home);
+  return selectAllowedFinishExample(settings.agentPurpose ?? "", {
+    review: adversarialReview,
+    settings,
+    apiBaseUrl,
+  });
+});
 /**
  * Open Messages with the activation text drafted.
  *
@@ -2471,16 +2473,6 @@ app.whenReady().then(async () => {
     applyAvailabilityDefault: () => {
       keepAwake?.setEnabled(true);
       setLaunchAtLogin(app.isPackaged, loginItems, true);
-    },
-    // The Plugins screen opens with on only what already works: every staged
-    // plugin still needing setup joins the owner's off switches. A re-setup
-    // can get here before main has read the connected accounts, so read them
-    // first — or a connected Google account still turns Gmail off.
-    applyPluginDefault: async () => {
-      await connectors?.refresh();
-      const { rows } = await pluginsNow();
-      const off = rows.filter((r) => r.status === "needs-setup").map((r) => r.name);
-      if (off.length) await updateDisabledPlugins((disabled) => off.forEach((name) => disabled.add(name)));
     },
     accessNeeded,
     // A checkpointed relaunch skips Plugins, so give the same bounded account

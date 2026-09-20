@@ -4,7 +4,6 @@
  * renderer has no direct access to Node, ipcRenderer, or the filesystem.
  */
 import { contextBridge, ipcRenderer } from "electron";
-import type { CloudAgentsPreloadState } from "./cloudAgentsIpc.js";
 
 type ConnectorsState = {
   busy: boolean;
@@ -183,6 +182,7 @@ contextBridge.exposeInMainWorld("domo", {
   gatekeeperPresets: () => ipcRenderer.invoke("onboarding:gatekeeperPresets"),
   gatekeeperPreview: (preset: string, index: number, draft: string) =>
     ipcRenderer.invoke("onboarding:gatekeeperPreview", preset, index, draft),
+  onboardingBrowserExample: () => ipcRenderer.invoke("onboarding:browserExample"),
   // The renderer is sandboxed and cannot open a URL; main owns the `sms:` one,
   // so the renderer never has to build it or be trusted with it.
   onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
@@ -214,7 +214,6 @@ contextBridge.exposeInMainWorld("domo", {
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
-  cloudAgents: (): Promise<CloudAgentsPreloadState | null> => ipcRenderer.invoke("cloud:agents"),
   cloudNewAgentMessages: (providerId: string) => ipcRenderer.invoke("cloud:newAgentMessages", providerId),
   cloudAwaitNewAgent: (providerId: string): Promise<string | null> => ipcRenderer.invoke("cloud:awaitNewAgent", providerId),
   cloudChangeLine: (input: { agentId: string; lineUid: string }) =>

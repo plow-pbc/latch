@@ -4,7 +4,6 @@
 
 import { el, icon, switchEl } from "./dom.js";
 import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
-import { loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
 import { accessPrimary, clearMissed, runGrants } from "./onboardingGrants.js";
@@ -37,7 +36,7 @@ let running = null;
 let missed = null;
 /** The id of the switch a redraw hands focus back to, so a click keeps it. */
 let restoreFocus = null;
-let doneAgent = null;
+let doneExample = null;
 let doneBrowserEnabled = null;
 /** The Gatekeeper screen's live pieces. Built on entering the step and updated
  * in place, so typing never loses its focus to a redraw. */
@@ -62,6 +61,25 @@ function button(text, className, onClick) {
   const node = el("button", { class: className, text, attrs: { type: "button" } });
   if (onClick) node.addEventListener("click", onClick);
   return node;
+}
+
+const AGENT_MARKS = [
+  ["Claude", "m4.714 15.956 4.718-2.648.079-.23-.079-.128h-.231l-6.779-.34-.571-.122-.534-.704.055-.352.48-.322.686.061 7.892.558.055-.158-6.514-4.31-.723-.492-.364-.461-.158-1.008.656-.723.88.061.225.061 5.288 4.006.364.304.146-.104.018-.073-3.608-6.587-.17-.619c-.061-.255-.103-.467-.103-.729L6.287.134 6.7 0l.996.134.419.364 3.417 7.67.243.832.091.255h.158v-.146l.674-6.455.079-.759.376-.91.747-.492.583.279.48.686-.067.443-1.208 6.697h.213l3.606-4.189.85-.905.546-.431h1.032l.759 1.129-.34 1.166-4.868 6.494.073.109.188-.018 7.067-1.203.832.389.091.394-.328.808-7.71 1.76-.043.03.049.061 6.848.407.789.522.474.638-.079.485-1.214.619-5.465-1.3-1.311-.328h-.182v.109l6.734 6.278.128.577-.322.455-.34-.049-6.29-5.093h-.128v.17l3.038 4.171.121 1.081-.17.352-.607.213-.668-.122-4.596-6.686-.14.079-.674 7.255-.315.371-.729.279-.607-.461-.322-.747 1.622-7.53-.012-.043-.14.018-6.266 7.758-.413.164-.716-.37.067-.662.4-.589 4.754-6.005-.006-.158h-.054l-6.339 4.117-1.129.145-.486-.455.061-.747.231-.243Z", false],
+  ["OpenAI", "M22.282 9.821a5.985 5.985 0 0 0-.516-4.911 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.182a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .511 4.91 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.989 5.989 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073Zm-9.022 12.608a4.476 4.476 0 0 1-2.877-1.041l5.32-3.073v-7.183l2.013 1.168.038.052v5.583a4.504 4.504 0 0 1-4.494 4.494Zm-9.661-4.125a4.471 4.471 0 0 1-.535-3.014l5.726 3.29 5.823-3.368v2.385L9.74 19.95a4.499 4.499 0 0 1-6.141-1.646ZM2.341 7.896a4.485 4.485 0 0 1 2.365-1.973V11.6c0 .283.148.54.388.677l5.814 3.354-2.02 1.169h-.071l-4.83-2.787a4.504 4.504 0 0 1-1.646-6.117Zm16.596 3.855-5.833-3.387L15.119 7.2h.071l4.831 2.791a4.494 4.494 0 0 1-.677 8.105v-5.678a.79.79 0 0 0-.407-.667Zm2.011-3.023-5.915-3.367-5.624 3.247V6.897l.028-.061 4.831-2.787a4.499 4.499 0 0 1 6.68 4.66ZM8.307 12.863l-2.02-1.164-.038-.057V6.074a4.499 4.499 0 0 1 7.376-3.454L8.704 5.459a.795.795 0 0 0-.393.681Zm1.098-2.365 2.601-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5Z", false],
+  ["Cursor", "M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23", true],
+];
+
+function agentMarks() {
+  return el("span", {
+    class: "agent-mark-stack",
+    attrs: { "aria-label": "Agents including Claude, OpenAI, and Cursor" },
+  }, AGENT_MARKS.map(([name, path, cube]) => {
+    const mark = el("span", { class: `agent-mark${cube ? " agent-mark-cube" : ""}`, attrs: { title: name } });
+    const svg = svgElement("svg", { viewBox: "0 0 24 24", fill: "currentColor", "aria-hidden": "true" });
+    svg.append(svgElement("path", { d: path }));
+    mark.append(svg);
+    return mark;
+  }));
 }
 
 function arrowIcon(direction) {
@@ -843,35 +861,41 @@ function doneScreen() {
   );
   importPasswords.setAttribute("autofocus", "");
   importPasswords.disabled = loadingBrowser;
-  const actions = [importPasswords];
-  if (doneAgent) {
-    actions.push(button(`Text ${doneAgent.name}`, "done-tertiary", async () => {
-      await window.domo.cloudOpenMessages(doneAgent.agentId);
-    }));
-  }
-  actions.push(button(
+  const actions = [importPasswords, button(
     "Not now",
     "done-tertiary",
     () => update(() => window.domo.onboardingFinish()),
-  ));
-  const outcomes = [
-    ["banking", "Reconcile bank deposits and catch payment problems."],
-    ["shopping", "Negotiate and verify an Amazon credit."],
-    ["healthcare", "Arrange follow-up care through Kaiser."],
-    ["travel", "Cancel Hipcamp bookings before their refund deadlines."],
-  ];
+  )];
+  const example = doneExample ?? {
+    prompt: "Ask your agent to take care of something that needs a sign-in.",
+    site: "Website",
+  };
   return el("div", { class: "done-wrap password-finish" }, [
-    el("span", { class: "done-key" }, [icon("key", { strokeWidth: "1.8" })]),
-    el("h1", { text: "Put your passwords to work" }),
+    el("h1", { text: "Your agent asks. Plow signs in." }),
     el("p", {
       class: "subhead",
-      text: "Import passwords so your agents can securely sign in and get things done in your browser.",
+      text: "Latch takes care of logging in, so your agent never sees your passwords.",
     }),
-    el("div", { class: "browser-outcomes" }, outcomes.map(([label, text]) =>
-      el("div", { class: "browser-outcome" }, [
-        el("span", { class: "outcome-dot", attrs: { "aria-hidden": "true" } }),
-        el("span", {}, [el("small", { text: label }), el("span", { text })]),
-      ]))),
+    el("div", { class: "finish-diagram" }, [
+      el("div", { class: "finish-request" }, [agentMarks(), el("span", { text: example.prompt })]),
+      el("span", { class: "finish-request-line", attrs: { "aria-hidden": "true" } }),
+      el("div", { class: "finish-gate" }, [el("span", { text: "Gatekeeper" })]),
+      el("div", { class: "finish-vault" }, [
+        el("span", { class: "finish-node-icon" }, [icon("key", { strokeWidth: "1.7" })]),
+        el("span", { text: "Browser Vault" }),
+      ]),
+      el("span", { class: "finish-secret-line", attrs: { "aria-hidden": "true" } }),
+      el("div", { class: "finish-browser" }, [
+        el("div", { class: "finish-browser-bar", attrs: { "aria-hidden": "true" } }, [
+          el("i"), el("i"), el("i"), el("span", { text: example.site }),
+        ]),
+        el("div", { class: "finish-browser-body" }, [
+          el("strong", { text: example.site }),
+          el("span", { class: "finish-password", text: "••••••••••••" }),
+          el("span", { class: "finish-signed-in", text: "✓ Signed in" }),
+        ]),
+      ]),
+    ]),
     el("div", { class: "done-actions" }, actions),
   ]);
 }
@@ -1036,7 +1060,7 @@ async function apply(next) {
     gatekeeper = null;
   }
   if (state?.step !== "done") {
-    doneAgent = null;
+    doneExample = null;
     doneBrowserEnabled = null;
   }
   if (!onPluginStep()) pluginsState = null;
@@ -1050,18 +1074,20 @@ async function apply(next) {
     void refreshAvailability();
   }
   if (state?.step === "done" && previousStep !== "done") {
-    const [loaded, plugins] = await Promise.all([
-      loadDoneAgent(() => window.domo.cloudAgents()),
-      window.domo.pluginsGet().catch(() => null),
-    ]);
-    if (state?.step !== "done") return;
-    doneAgent = loaded;
-    const browser = plugins?.rows?.find((row) => row.kind === "Browser");
-    // A failed status read must never leave an action that can import while
-    // Browser remains off. Enabling is idempotent, so unknown takes the
-    // explicit enable-and-import path once the read settles.
-    doneBrowserEnabled = browser ? browser.status !== "off" : false;
-    render();
+    void window.domo.pluginsGet().catch(() => null).then((plugins) => {
+      if (state?.step !== "done") return;
+      const browser = plugins?.rows?.find((row) => row.kind === "Browser");
+      // A failed status read must never leave an action that can import while
+      // Browser remains off. Enabling is idempotent, so unknown takes the
+      // explicit enable-and-import path once the read settles.
+      doneBrowserEnabled = browser ? browser.status !== "off" : false;
+      render();
+    });
+    void window.domo.onboardingBrowserExample().catch(() => null).then((example) => {
+      if (state?.step !== "done") return;
+      doneExample = example;
+      render();
+    });
   }
 }
 

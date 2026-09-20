@@ -46,6 +46,30 @@ describe("onboarding visual fixtures", () => {
     for (const f of withGatekeeper) expect(f.gatekeeper.presets, f.name).toEqual(presets);
   });
 
+  it("gives every Done fixture the same display-safe browser example", () => {
+    const done = fixtures.filter((f) => f.state?.step === "done");
+    expect(done).toHaveLength(4);
+    for (const f of done) {
+      if (!f.browserExamplePending) {
+        expect(f.browserExample).toEqual({
+          prompt: "Amazon overcharged me for a solar panel—can you get a refund?",
+          site: "Amazon",
+        });
+      }
+      expect(f.expectAriaLabel).toBe("Agents including Claude, OpenAI, and Cursor");
+    }
+  });
+
+  it("starts every fresh plugin row on, including Browser", () => {
+    const fresh = fixture("plugins-fresh");
+    expect(fresh.plugins.rows.map((row) => [row.name, row.status])).toEqual([
+      ["gog", "needs-setup"],
+      ["messages", "needs-setup"],
+      ["wiki", "ready"],
+      ["browser", "needs-setup"],
+    ]);
+  });
+
   it("carries the shared Back contract into browser previews", () => {
     const reversible = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
 

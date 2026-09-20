@@ -235,10 +235,13 @@ the stable `device_id` and has no `ready` frame. The two request/response frame
 
 Download the app and walk through eight stages: Welcome → Verify phone → Privacy
 → Gatekeeper → Give your agents superpowers → Grant access → Keep this Mac reachable →
-Put your passwords to work. Verification is an
+Your agent asks. Plow signs in. Verification is an
 SMS activation: the app shows the exact message to send from the phone, then
 notices the verified text and links the Mac. Nothing is pasted out of a browser
 and the user never visits the portal.
+
+Plugins starts every staged plugin, including Browser, on; Access then walks
+the unmet grants one at a time. Existing stored off choices remain off.
 
 `src/onboarding.ts` is the whole flow as a state machine — testable without
 Electron, renderable offscreen for screenshots — `src/connectors.ts` is the

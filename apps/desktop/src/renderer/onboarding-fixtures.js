@@ -21,10 +21,9 @@ export function onboardingFixtures(now) {
     telemetryEnabled: true,
     purpose: "",
   };
-  const noAgents = { cloudAgents: [], cloudAgentsError: null };
-  const elm = {
-    cloudAgentsError: null,
-    cloudAgents: [{ agentId: "agent_elm", name: "Elm", canMessage: true }],
+  const amazonBrowserExample = {
+    prompt: "Amazon overcharged me for a solar panel—can you get a refund?",
+    site: "Amazon",
   };
   // The Plugins tab's state as main answers it (pluginsModel.ts): the shipped
   // plugins as staged, then the browser, and the ordered grants setup walks.
@@ -73,28 +72,31 @@ export function onboardingFixtures(now) {
     ({ name, title, summary, kind, description: null, example: examples[name] ?? null, status, requirements });
   const gmail = "Gmail and Google Calendar";
   const iMessage = "iMessage history";
-  /** The four rows, with Gmail's and iMessage's switch states and how this
-   * Mac reads Full Disk Access. The browser stays off: Safari still needs it. */
-  const rows = (gmailStatus, iMessageStatus, fda) => [
+  /** The four rows, with each switch state and how this Mac reads Full Disk Access. */
+  const rows = (gmailStatus, iMessageStatus, fda, browserStatus = "needs-setup") => [
     row("gog", gmail, "Read and draft email; check and book your calendar.", "CLI", gmailStatus, [google]),
     row("messages", iMessage, "Find and read your texts, right on this Mac.", "CLI", iMessageStatus, [fda]),
     row("wiki", "Obsidian-style wiki", "A notebook your agents keep about the people and projects in your life.", "CLI", "ready", []),
-    row("browser", "Browser use", "Browse and fill in forms in a private browser, with Safari as a fallback.", "Browser", "off", [fda, safari]),
+    row("browser", "Browser use", "Browse and fill in forms in a private browser, with Safari as a fallback.", "Browser", browserStatus, [fda, safari]),
   ];
-  const onlyWiki = { rows: rows("off", "off", fullDisk), grants: [] };
+  const onlyWiki = { rows: rows("off", "off", fullDisk, "off"), grants: [] };
   const picked = {
     rows: rows("needs-setup", "needs-setup", fullDisk),
-    grants: [{ ...fullDisk, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
+    grants: [
+      { ...fullDisk, plugins: [iMessage, "Browser use"] },
+      { ...safari, plugins: ["Browser use"] },
+      { ...google, plugins: [gmail] },
+    ],
   };
   const browserReady = {
-    rows: rows("off", "off", fullDisk).map((plugin) =>
+    rows: rows("off", "off", fullDisk, "off").map((plugin) =>
       plugin.name === "browser"
         ? { ...plugin, status: "ready", requirements: [{ ...safari, status: "met" }] }
         : plugin),
     grants: [{ ...safari, status: "met", plugins: ["Browser use"] }],
   };
   const fullDiskDone = {
-    rows: rows("needs-setup", "ready", fullDiskMet),
+    rows: rows("needs-setup", "ready", fullDiskMet, "off"),
     grants: [{ ...fullDiskMet, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
   };
   // The Gatekeeper step's presets as main serves them (gatekeeperPreview.ts) on
@@ -205,7 +207,7 @@ export function onboardingFixtures(now) {
   const noCredits = homeResults.map(() =>
     ({ verdict: "ask", reason: "insufficient Plow balance", cause: "no_credits" }));
   const relaunchLeft = {
-    rows: rows("off", "needs-setup", fullDiskRelaunch),
+    rows: rows("off", "needs-setup", fullDiskRelaunch, "off"),
     grants: [{ ...fullDiskRelaunch, plugins: [iMessage] }],
   };
 
@@ -213,7 +215,6 @@ export function onboardingFixtures(now) {
     {
       name: "welcome",
       state: { ...base, step: "welcome" },
-      cloud: noAgents,
       expect: [
         "Keep your passwords.",
         "Lose the busywork.",
@@ -226,7 +227,6 @@ export function onboardingFixtures(now) {
     {
       name: "verify",
       state: { ...base, step: "activate", activation },
-      cloud: noAgents,
       expect: [
         "Connect with a text",
         displayCode,
@@ -246,7 +246,6 @@ export function onboardingFixtures(now) {
     {
       name: "verify-rearm",
       state: { ...base, step: "activate", activation: expiredActivation },
-      cloud: noAgents,
       expect: [
         "Connect with a text",
         displayCode,
@@ -270,7 +269,6 @@ export function onboardingFixtures(now) {
         step: "activate",
         message: "Plow isn’t responding right now.",
       },
-      cloud: noAgents,
       expect: ["Plow isn’t responding right now.", "Try again"],
       reject: ["Getting a code from Plow", "Talking to Plow"],
       expectFocus: "Try again",
@@ -278,7 +276,6 @@ export function onboardingFixtures(now) {
     {
       name: "waiting",
       state: { ...base, step: "waiting", activation },
-      cloud: noAgents,
       expect: [
         "Connect with a text",
         displayCode,
@@ -297,7 +294,6 @@ export function onboardingFixtures(now) {
     {
       name: "verify-expired",
       state: { ...base, step: "waiting", activation: expiredActivation },
-      cloud: noAgents,
       expect: [
         "Connect with a text",
         `Plow Activate: ${displayCode}`,
@@ -320,7 +316,6 @@ export function onboardingFixtures(now) {
         message:
           "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or try again.",
       },
-      cloud: noAgents,
       expect: [
         "Private activation code",
         "Anyone who sends it can link this account",
@@ -335,7 +330,6 @@ export function onboardingFixtures(now) {
     {
       name: "privacy",
       state: { ...base, step: "privacy" },
-      cloud: noAgents,
       expect: [
         "Verified. This Mac is linked.",
         "Stay in control of how your AI agents use your data",
@@ -356,7 +350,6 @@ export function onboardingFixtures(now) {
     {
       name: "gatekeeper-home",
       state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
-      cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: homeResults },
       expect: [
         "Meet the Plow Gatekeeper",
@@ -377,7 +370,6 @@ export function onboardingFixtures(now) {
     {
       name: "gatekeeper-work",
       state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.work.text },
-      cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: workResults },
       expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.work.rows.map((r) => r.label), "Back", "Continue"],
       expectValues: [gatekeeperPresets.work.text],
@@ -387,7 +379,6 @@ export function onboardingFixtures(now) {
       // A re-setup opens on the owner's saved draft, which can outgrow the presets' two lines.
       name: "gatekeeper-custom",
       state: { ...base, step: "gatekeeper", purpose: customPurpose },
-      cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: homeResults },
       expectValues: [customPurpose],
       expectDotCount: 6,
@@ -395,7 +386,6 @@ export function onboardingFixtures(now) {
     {
       name: "gatekeeper-checking",
       state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
-      cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: "pending" },
       expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.home.rows.map((r) => r.label), "Analyzing…"],
       expectDotCount: 6,
@@ -403,7 +393,6 @@ export function onboardingFixtures(now) {
     {
       name: "gatekeeper-stopped",
       state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
-      cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: homeResults },
       click: "Post your tax return publicly",
       expect: [
@@ -416,7 +405,6 @@ export function onboardingFixtures(now) {
     {
       name: "gatekeeper-couldnt-check",
       state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
-      cloud: noAgents,
       gatekeeper: { presets: gatekeeperPresets, results: noCredits },
       click: "Check the family calendar",
       expect: [
@@ -429,8 +417,7 @@ export function onboardingFixtures(now) {
     {
       name: "plugins-fresh",
       state: { ...base, step: "plugins" },
-      cloud: noAgents,
-      plugins: onlyWiki,
+      plugins: picked,
       expect: [
         "Give your agents superpowers",
         "Plugins teach your agent how to reliably use your Mac",
@@ -438,19 +425,19 @@ export function onboardingFixtures(now) {
         gmail,
         iMessage,
         "Browser use",
+        "Required: Safari",
         "Share usage data so we can improve Plow",
         "Never your messages or your data",
         "Back",
         "Continue",
       ],
-      reject: ["Obsidian-style wiki", "You'll grant next", "Nothing to grant", "Required:", `for ${iMessage}`],
+      reject: ["Obsidian-style wiki", "You'll grant next", "Nothing to grant", `for ${iMessage}`],
       expectFocus: "Continue",
       expectDotCount: 6,
     },
     {
       name: "plugins-picked",
       state: { ...base, step: "plugins" },
-      cloud: noAgents,
       plugins: picked,
       expect: [
         "Give your agents superpowers",
@@ -467,7 +454,6 @@ export function onboardingFixtures(now) {
     {
       name: "plugins-error",
       state: { ...base, step: "plugins", message: "Something went wrong. Try again.", noteKind: "error" },
-      cloud: noAgents,
       plugins: onlyWiki,
       expect: ["Give your agents superpowers", "Something went wrong. Try again."],
       reject: ["Talking to Plow"],
@@ -477,7 +463,6 @@ export function onboardingFixtures(now) {
     {
       name: "access-ready",
       state: { ...base, step: "access" },
-      cloud: noAgents,
       plugins: picked,
       expect: [
         "Grant access",
@@ -488,17 +473,18 @@ export function onboardingFixtures(now) {
         "Google account",
         `For ${gmail}`,
         "Sign in with Google in your browser.",
+        "Safari",
+        "For Browser use",
         "Back",
-        "Set up all 2",
+        "Set up all 3",
       ],
       reject: ["Granted"],
-      expectFocus: "Set up all 2",
+      expectFocus: "Set up all 3",
       expectDotCount: 6,
     },
     {
       name: "access-partly",
       state: { ...base, step: "access" },
-      cloud: noAgents,
       plugins: fullDiskDone,
       expect: ["Grant access", "Full Disk Access", "Granted", "Google account", "Set up all 1"],
       reject: ["Set up all 2"],
@@ -508,7 +494,6 @@ export function onboardingFixtures(now) {
     {
       name: "access-relaunch",
       state: { ...base, step: "access" },
-      cloud: noAgents,
       plugins: relaunchLeft,
       expect: [
         "Grant access",
@@ -525,7 +510,6 @@ export function onboardingFixtures(now) {
     {
       name: "availability",
       state: { ...base, step: "availability" },
-      cloud: noAgents,
       expect: [
         "Keep this Mac reachable",
         "Your agents work through this Mac",
@@ -544,7 +528,6 @@ export function onboardingFixtures(now) {
     {
       name: "availability-from-source",
       state: { ...base, step: "availability" },
-      cloud: noAgents,
       launch: { supported: false, openAtLogin: false },
       expect: [
         "Keep this Mac reachable",
@@ -559,43 +542,54 @@ export function onboardingFixtures(now) {
     {
       name: "done-agent",
       state: { ...base, step: "done" },
-      cloud: elm,
       plugins: browserReady,
+      browserExample: amazonBrowserExample,
       expect: [
-        "Put your passwords to work",
-        "Import passwords so your agents can securely sign in and get things done in your browser.",
-        "Reconcile bank deposits and catch payment problems.",
-        "Negotiate and verify an Amazon credit.",
-        "Arrange follow-up care through Kaiser.",
-        "Cancel Hipcamp bookings before their refund deadlines.",
+        "Your agent asks. Plow signs in.",
+        "Latch takes care of logging in, so your agent never sees your passwords.",
+        "Amazon overcharged me for a solar panel—can you get a refund?",
+        "Gatekeeper",
+        "Browser Vault",
+        "Amazon",
+        "Signed in",
         "Import passwords",
-        "Text Elm",
         "Not now",
       ],
-    },
-    {
-      name: "done-noagent",
-      state: { ...base, step: "done" },
-      cloud: noAgents,
-      plugins: browserReady,
-      expect: ["Put your passwords to work", "Import passwords", "Not now"],
-      reject: ["Text Elm"],
+      reject: [
+        "Reconcile bank deposits",
+        "Negotiate and verify an Amazon credit",
+        "Arrange follow-up care",
+        "Cancel Hipcamp bookings",
+        "Text Elm",
+      ],
+      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
     },
     {
       name: "done-browser-off",
       state: { ...base, step: "done" },
-      cloud: noAgents,
       plugins: onlyWiki,
-      expect: ["Put your passwords to work", "Enable Browser & import passwords", "Not now"],
+      browserExample: amazonBrowserExample,
+      expect: ["Your agent asks. Plow signs in.", "Enable Browser & import passwords", "Not now"],
       reject: ["Text Elm"],
+      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
     },
     {
       name: "done-browser-loading",
       state: { ...base, step: "done" },
-      cloud: noAgents,
       pluginsPending: true,
-      expect: ["Put your passwords to work", "Import passwords", "Not now"],
+      browserExample: amazonBrowserExample,
+      expect: ["Your agent asks. Plow signs in.", "Import passwords", "Not now"],
       reject: ["Text Elm", "Enable Browser & import passwords"],
+      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
+    },
+    {
+      name: "done-example-loading",
+      state: { ...base, step: "done" },
+      plugins: browserReady,
+      browserExamplePending: true,
+      expect: ["Your agent asks. Plow signs in.", "Ask your agent to take care of something that needs a sign-in.", "Import passwords", "Not now"],
+      reject: ["Enable Browser & import passwords"],
+      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
     },
   ];
   return fixtures.map((fixture) => ({

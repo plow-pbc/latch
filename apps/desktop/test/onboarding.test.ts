@@ -130,7 +130,6 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
       ).start();
     },
     deviceName: "Plow Latch (test)",
-    applyPluginDefault: async () => {},
     accessNeeded: async () => false,
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
@@ -312,65 +311,18 @@ describe("wizard steps around the existing verification flow", () => {
     expect(notifications).toBe(0);
   });
 
-  it("defaults the plugins once — a switch flipped back on survives Back and a relaunch", async () => {
+  it("moves from Privacy to Gatekeeper without rewriting plugin choices", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    let defaultsApplied = 0;
-    const applyPluginDefault = async () => {
-      defaultsApplied += 1;
-      const live = loadSettings(home);
-      live.disabledPlugins = ["cant-work-yet"];
-      saveSettings(home, live);
-    };
-    const onboarding = build({ applyPluginDefault });
+    const before = loadSettings(home);
+    before.disabledPlugins = ["messages"];
+    saveSettings(home, before);
+    const onboarding = build();
 
     await onboarding.advance();
     await settle();
     expect(onboarding.state().step).toBe("privacy");
-
     expect((await onboarding.advance()).step).toBe("gatekeeper");
-    expect(loadSettings(home).disabledPlugins).toEqual(["cant-work-yet"]);
-
-    // The owner turns the defaulted-off plugin back on.
-    const live = loadSettings(home);
-    live.disabledPlugins = [];
-    saveSettings(home, live);
-
-    // Gatekeeper → Privacy → Continue stays in this setup session, so the
-    // first-entry default must not override the owner's newer choice.
-    expect((await onboarding.back()).step).toBe("privacy");
-    expect((await onboarding.advance()).step).toBe("gatekeeper");
-    expect(defaultsApplied).toBe(1);
-    expect(loadSettings(home).disabledPlugins).toEqual([]);
-
-    // A relaunch resumes directly on Plugins — Privacy is never re-entered —
-    // so the default must not run again and flip it back off.
-    const relaunched = build({ applyPluginDefault });
-    expect(relaunched.state().step).toBe("plugins");
-    expect(loadSettings(home).disabledPlugins).toEqual([]);
-  });
-
-  it("keeps the owner on Privacy when the plugin default throws, and retries it on the next advance", async () => {
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    let applied = 0;
-    const applyPluginDefault = async () => {
-      applied += 1;
-      if (applied === 1) throw new Error("boom");
-    };
-    const onboarding = build({ applyPluginDefault });
-
-    await onboarding.advance();
-    await settle();
-    expect(onboarding.state().step).toBe("privacy");
-
-    const failed = await onboarding.advance();
-    expect(failed.step).toBe("privacy");
-    expect(failed.busy).toBe(false);
-    expect(failed.message).toBe("Something went wrong. Try again.");
-    expect(applied).toBe(1);
-
-    const retried = await onboarding.advance();
-    expect(retried.step).toBe("gatekeeper");
-    expect(applied).toBe(2);
+    expect(loadSettings(home).disabledPlugins).toEqual(["messages"]);
   });
 
   it.each<{
@@ -398,16 +350,6 @@ describe("wizard steps around the existing verification flow", () => {
       after: () => {
         // The pending telemetry choice from the signed-out session was never written.
         expect(loadSettings(home).telemetryEnabled).toBe(true);
-      },
-    },
-    {
-      name: "applyPluginDefault",
-      deps: (pending) => ({ applyPluginDefault: () => pending }),
-      enter: async (onboarding) => {
-        plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-        await onboarding.advance();
-        await settle();
-        expect(onboarding.state().step).toBe("privacy");
       },
     },
   ])("does not resume past reset() lands during $name", async ({ before, deps, enter, after }) => {

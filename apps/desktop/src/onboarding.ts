@@ -162,8 +162,6 @@ export interface OnboardingDeps {
   wakePendingRevokes: () => void;
   /** Names this Mac in the activation request. */
   deviceName: string;
-  /** Once per entry from Privacy: turn off every plugin that can't work yet, so the switches start on only what works. */
-  applyPluginDefault: () => Promise<void>;
   /** Whether any switched-on plugin still has something to grant; false skips Access. */
   accessNeeded: () => Promise<boolean>;
   /** Load account-backed grants before a checkpointed launch exposes Access. */
@@ -204,8 +202,6 @@ export class Onboarding {
   private pendingMint: Promise<OnboardingState> | null = null;
   private pendingMintId = 0;
   private mints = 0;
-  /** Privacy applies plugin defaults only on its first exit in this setup session. */
-  private pluginDefaultsApplied = false;
   private telemetryEnabled: boolean;
   private purpose: string;
 
@@ -256,19 +252,8 @@ export class Onboarding {
       return this.newActivationCode();
     }
     if (this.step === "privacy") {
-      if (this.pluginDefaultsApplied) {
-        this.step = "gatekeeper";
-        return this.publish();
-      }
-      // run() keeps a throw readable on Privacy and retries the default
-      // rather than skipping it; the step moves only once it has applied.
-      return this.run(async () => {
-        await this.deps.applyPluginDefault();
-        // A reset() (sign-out) can land during this await; don't overwrite it.
-        if (this.step !== "privacy") return;
-        this.pluginDefaultsApplied = true;
-        this.step = "gatekeeper";
-      });
+      this.step = "gatekeeper";
+      return this.publish();
     }
     if (this.step === "gatekeeper") {
       const settings = this.settings();
@@ -610,7 +595,6 @@ export class Onboarding {
     this.busy = false;
     const settings = this.settings();
     this.clearResumeStep(settings);
-    this.pluginDefaultsApplied = false;
     this.telemetryEnabled = settings.telemetryEnabled;
     this.purpose = this.storedPurpose(settings);
     this.step = this.initialStep(settings);
