@@ -19,6 +19,7 @@ import {
   HeadlessPolicy,
   INTERACTIVE_VERIFICATION,
   LIVE_WEB_ROUTING,
+  PAYMENT_AUTHORIZATION,
   SAFARI_HARD_BLOCK_ROUTING,
 } from "@domo/device-core";
 import {
@@ -517,6 +518,10 @@ describe("what the agent-facing copy must and must not say", () => {
       expect(copy).toMatch(/bundled v1 bank registry/i);
       expect(copy).toMatch(/plow_request_payment/);
       expect(copy).toMatch(/threshold/i);
+      expect(copy).toContain(PAYMENT_AUTHORIZATION);
+      expect(copy).toMatch(/exact hostname from the current browser URL/i);
+      expect(copy).toMatch(/not the eventual transaction/i);
+      expect(copy).toMatch(/fresh authorization/i);
       expect(copy).not.toContain("👍");
     }
   });

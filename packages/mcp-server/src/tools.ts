@@ -34,6 +34,7 @@ import {
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
+  PAYMENT_AUTHORIZATION,
   SAFARI_HARD_BLOCK_ROUTING,
   impliesNetwork,
   providerFor,
@@ -990,12 +991,8 @@ export const TOOLS: ToolSpec[] = [
       "A date of birth or a card's expiry takes a 'format' — the month alone, the year alone, " +
       "or the whole date in the page's shape — and a fill into a dropdown chooses the matching " +
       "option. " +
-      "A destination in the bundled v1 bank registry needs more than item rights: call " +
-      "plow_request_payment once with the bank domain, recipient, and exact amount. Plow " +
-      "authorizes payments at or below the owner's configured threshold immediately; above " +
-      "it, Plow sends the owner a single-use approval link. Continue after an authorized " +
-      "result, or after the owner uses the link for approval_required. Ordinary chat replies " +
-      "and reactions do not approve a payment. Otherwise fill_secret returns an error and " +
+      `${PAYMENT_AUTHORIZATION} Continue after an authorized result, or after the owner uses ` +
+      "the link for approval_required. Otherwise fill_secret returns an error and " +
       "types nothing. Request the payment authorization, then retry. " +
       "Fields the vault itself conceals (passwords, card numbers and codes, " +
       "hidden custom fields) also render masked and come back from 'forms' without their " +

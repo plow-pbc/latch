@@ -719,11 +719,15 @@ The browser server deliberately refuses to type a whole code into box one
 the mark is on); this is the "one fill per box" that trade was designed around.
 
 **Banking-credential payment gate (v1 domain registry).**
-The agent calls `plow_request_payment` with the bank domain, recipient, and
-exact amount. Plow immediately mints a single-use authorization at or below
-the owner's configured threshold; above it, Plow sends a single-use approval
-link to the owner thread, and only that page can approve it. Ordinary chat
-replies and reactions do not. `consume` spends the authorization at fill time.
+The agent calls `plow_request_payment` with the exact hostname from the current
+browser URL (including any subdomain), intended recipient, and exact amount.
+Plow immediately mints a single-use banking-credential release at or below the
+owner's configured threshold; above it, Plow sends a single-use approval link
+to the owner thread, and only that page can approve it. Ordinary chat replies
+and reactions do not. `consume` spends the authorization at fill time, scoped
+to the session and exact hostname; it does not verify or bind the eventual
+transaction amount or recipient. A fill failure after consumption therefore
+requires fresh authorization before retrying.
 What flags a fill as "banking" today is a bundled
 **bank-domain list** (`bankDomains.ts`), matched on the unspoofable
 device-observed destination host. This 55-domain list is the accepted v1
