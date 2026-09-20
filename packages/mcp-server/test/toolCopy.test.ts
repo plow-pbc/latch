@@ -121,10 +121,11 @@ describe("the server tells the agent what it is for", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/never tell the user .* pending/i);
   });
 
-  it("always sends the user to Plow Latch on their Mac after a denial", () => {
+  it("routes Gatekeeper denials to Latch without overriding other denial recovery", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/status 'denied'/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/Gatekeeper's AI Reviewer/);
     expect(SERVER_INSTRUCTIONS).toMatch(/open Plow Latch on their Mac/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/whenever/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/other 'denied'.*follow its reason/is);
   });
 
   // The third answer: this Mac itself said no. The distinction agents got
