@@ -1070,18 +1070,20 @@ async function apply(next) {
     void refreshAvailability();
   }
   if (state?.step === "done" && previousStep !== "done") {
-    const [example, plugins] = await Promise.all([
-      window.domo.onboardingBrowserExample().catch(() => null),
-      window.domo.pluginsGet().catch(() => null),
-    ]);
-    if (state?.step !== "done") return;
-    doneExample = example;
-    const browser = plugins?.rows?.find((row) => row.kind === "Browser");
-    // A failed status read must never leave an action that can import while
-    // Browser remains off. Enabling is idempotent, so unknown takes the
-    // explicit enable-and-import path once the read settles.
-    doneBrowserEnabled = browser ? browser.status !== "off" : false;
-    render();
+    void window.domo.pluginsGet().catch(() => null).then((plugins) => {
+      if (state?.step !== "done") return;
+      const browser = plugins?.rows?.find((row) => row.kind === "Browser");
+      // A failed status read must never leave an action that can import while
+      // Browser remains off. Enabling is idempotent, so unknown takes the
+      // explicit enable-and-import path once the read settles.
+      doneBrowserEnabled = browser ? browser.status !== "off" : false;
+      render();
+    });
+    void window.domo.onboardingBrowserExample().catch(() => null).then((example) => {
+      if (state?.step !== "done") return;
+      doneExample = example;
+      render();
+    });
   }
 }
 

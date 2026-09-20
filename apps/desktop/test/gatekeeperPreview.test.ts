@@ -143,7 +143,6 @@ describe("password finish example", () => {
       },
     });
     expect(await selectAllowedFinishExample("Allow online shopping.", d)).toEqual({
-      id: "amazon-refund",
       prompt: "Amazon overcharged me for a solar panel—can you get a refund?",
       site: "Amazon",
     });
@@ -160,7 +159,7 @@ describe("password finish example", () => {
           : { verdict: "deny", reason: "not allowed" };
       },
     });
-    expect((await selectAllowedFinishExample("Allow health care.", d))?.id).toBe("kaiser-follow-up");
+    expect((await selectAllowedFinishExample("Allow health care.", d))?.site).toBe("Kaiser");
     expect(seen).toHaveLength(3);
   });
 

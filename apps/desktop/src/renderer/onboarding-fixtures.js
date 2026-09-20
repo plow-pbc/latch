@@ -26,7 +26,6 @@ export function onboardingFixtures(now) {
     cloudAgents: [{ agentId: "agent_elm", name: "Elm", canMessage: true }],
   };
   const amazonBrowserExample = {
-    id: "amazon-refund",
     prompt: "Amazon overcharged me for a solar panel—can you get a refund?",
     site: "Amazon",
   };
@@ -603,6 +602,16 @@ export function onboardingFixtures(now) {
       browserExample: amazonBrowserExample,
       expect: ["Your agent asks. Plow signs in.", "Import passwords", "Not now"],
       reject: ["Text Elm", "Enable Browser & import passwords"],
+      expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
+    },
+    {
+      name: "done-example-loading",
+      state: { ...base, step: "done" },
+      cloud: noAgents,
+      plugins: browserReady,
+      browserExamplePending: true,
+      expect: ["Your agent asks. Plow signs in.", "Ask your agent to take care of something that needs a sign-in.", "Import passwords", "Not now"],
+      reject: ["Enable Browser & import passwords"],
       expectAriaLabel: "Agents including Claude, OpenAI, and Cursor",
     },
   ];

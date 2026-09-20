@@ -79,7 +79,9 @@ ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
   return current;
 });
 ipcMain.handle("onboarding:gatekeeperPresets", async () => currentFixture.gatekeeper?.presets ?? null);
-ipcMain.handle("onboarding:browserExample", async () => currentFixture.browserExample ?? null);
+ipcMain.handle("onboarding:browserExample", async () => currentFixture.browserExamplePending
+  ? new Promise(() => {})
+  : currentFixture.browserExample ?? null);
 // "pending" holds every row on Checking.
 ipcMain.handle("onboarding:gatekeeperPreview", async (_event, _preset, index) => {
   const results = currentFixture.gatekeeper?.results;
@@ -217,6 +219,14 @@ doneBrowserLoadingFixture.prepare = async (win) => {
     `Array.from(document.querySelectorAll("button")).find((button) => button.textContent.trim() === "Import passwords")?.disabled`,
   );
   if (disabled !== true) throw new Error("Import passwords was enabled before Browser status resolved");
+};
+
+const doneExampleLoadingFixture = SCREENS.find((fixture) => fixture.name === "done-example-loading");
+doneExampleLoadingFixture.prepare = async (win) => {
+  const disabled = await win.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll("button")).find((button) => button.textContent.trim() === "Import passwords")?.disabled`,
+  );
+  if (disabled !== false) throw new Error("A pending example kept Import passwords disabled after Browser status resolved");
 };
 
 failLoudly();

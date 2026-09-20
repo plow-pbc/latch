@@ -20,7 +20,7 @@
  */
 import { capabilityDisplay, makeIntent } from "@domo/protocol";
 import { ReviewArgs, ReviewFailureCause, Verdict } from "./adversarialAgent.js";
-import { finishCandidates, gatekeeperExamples, Operation, PresetKey } from "./onboardingExamples.js";
+import { FINISH_CANDIDATES, GATEKEEPER_DECKS, Operation, PresetKey } from "./onboardingExamples.js";
 import { Settings } from "./settings.js";
 
 export type { PresetKey } from "./onboardingExamples.js";
@@ -53,7 +53,6 @@ export interface PreviewDeps {
 }
 
 export interface FinishExampleView {
-  id: string;
   prompt: string;
   site: string;
 }
@@ -66,7 +65,7 @@ export interface FinishExampleView {
 export function gatekeeperPresets(): Record<PresetKey, PresetView> {
   const view = (key: PresetKey): PresetView => ({
     text: PRESET_TEXT[key],
-    rows: gatekeeperExamples(key).map(({ label, icon, operation }) => ({
+    rows: GATEKEEPER_DECKS[key].map(({ label, icon, operation }) => ({
       label,
       icon,
       command: operation.capabilities.map(capabilityDisplay),
@@ -85,7 +84,7 @@ export async function previewRow(
   draft: unknown,
   deps: PreviewDeps,
 ): Promise<PreviewResult> {
-  const deck = preset === "home" || preset === "work" ? gatekeeperExamples(preset) : undefined;
+  const deck = preset === "home" || preset === "work" ? GATEKEEPER_DECKS[preset] : undefined;
   const row = deck && typeof index === "number" && Number.isInteger(index) ? deck[index] : undefined;
   if (!row) throw new Error("no such preview row");
   return reviewOperation(row.operation, typeof draft === "string" ? draft : "", deps);
@@ -121,11 +120,11 @@ export async function selectAllowedFinishExample(
   purpose: string,
   deps: PreviewDeps,
 ): Promise<FinishExampleView | null> {
-  for (const example of finishCandidates()) {
+  for (const example of FINISH_CANDIDATES) {
     const result = await reviewOperation(example.operation, purpose, deps);
     if (result.cause) return null;
     if (result.verdict === "allow" && example.finish) {
-      return { id: example.id, prompt: example.finish.prompt, site: example.finish.site };
+      return { prompt: example.finish.prompt, site: example.finish.site };
     }
   }
   return null;
