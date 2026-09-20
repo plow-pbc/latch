@@ -64,8 +64,6 @@ window.domo = {
     awake = { enabled: on === true };
     return awake;
   },
-  cloudAgents: async () => selected.cloud,
-  cloudOpenMessages: async () => true,
   onOnboardingChanged: (callback) => {
     changed = callback;
   },

@@ -38,7 +38,7 @@ describe("onboarding visual fixtures", () => {
 
   it("gives every Done fixture the same display-safe browser example", () => {
     const done = fixtures.filter((f) => f.state?.step === "done");
-    expect(done).toHaveLength(5);
+    expect(done).toHaveLength(4);
     for (const f of done) {
       if (!f.browserExamplePending) {
         expect(f.browserExample).toEqual({

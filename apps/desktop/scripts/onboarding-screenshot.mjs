@@ -110,8 +110,6 @@ ipcMain.handle("plugins:get", async () => {
 ipcMain.handle("plugins:setEnabled", async () => currentFixture.plugins);
 ipcMain.handle("requirements:act", async () => ({ ...currentFixture.plugins, error: null }));
 ipcMain.handle("app:relaunch", async () => {});
-ipcMain.handle("cloud:agents", async () => currentFixture.cloud);
-ipcMain.handle("cloud:openMessages", async () => true);
 
 const verifyRearmFixture = SCREENS.find((fixture) => fixture.name === "verify-rearm");
 verifyRearmFixture.prepare = async (win) => {

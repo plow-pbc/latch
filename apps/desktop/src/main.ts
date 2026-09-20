@@ -83,7 +83,6 @@ import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
 import { fetchAgentIndex } from "./agentIndex.js";
-import { cloudAgentsIpcResult } from "./cloudAgentsIpc.js";
 import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
@@ -812,11 +811,6 @@ ipcMain.handle("connect:get", async () => agentsTabState());
 ipcMain.handle("cloud:refresh", async () => {
   await cloudAgents?.refresh();
   return agentsTabState();
-});
-// Setup needs only the cloud-agent projection. Keep connect-client state — in
-// particular its roster and one-time credential — off this narrower bridge.
-ipcMain.handle("cloud:agents", async () => {
-  return cloudAgentsIpcResult(cloudAgents);
 });
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
