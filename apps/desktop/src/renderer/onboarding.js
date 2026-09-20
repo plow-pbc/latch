@@ -4,7 +4,7 @@
 
 import { el, icon, switchEl } from "./dom.js";
 import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
-import { loadDoneAgent } from "./onboardingDone.js";
+import { HELLO_WORLD_DEMO, loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
 import { accessPrimary, clearMissed, runGrants } from "./onboardingGrants.js";
@@ -840,7 +840,7 @@ function doneScreen() {
   const actions = [];
   if (doneAgent) {
     actions.push(button(`Text ${doneAgent.name}`, "nav-next", async () => {
-      await window.domo.cloudOpenMessages(doneAgent.agentId);
+      await window.domo.cloudOpenMessages(doneAgent.agentId, HELLO_WORLD_DEMO);
     }));
   }
   actions.push(button(

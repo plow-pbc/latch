@@ -219,7 +219,7 @@ contextBridge.exposeInMainWorld("domo", {
   cloudAwaitNewAgent: (providerId: string): Promise<string | null> => ipcRenderer.invoke("cloud:awaitNewAgent", providerId),
   cloudChangeLine: (input: { agentId: string; lineUid: string }) =>
     ipcRenderer.invoke("cloud:changeLine", input),
-  cloudOpenMessages: (agentId?: string) => ipcRenderer.invoke("cloud:openMessages", agentId),
+  cloudOpenMessages: (agentId?: string, draft?: string) => ipcRenderer.invoke("cloud:openMessages", agentId, draft),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
   // Any external destination the app links to. A key, never a URL: main

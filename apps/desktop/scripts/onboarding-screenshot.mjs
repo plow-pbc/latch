@@ -47,6 +47,7 @@ let newCodeRequests = 0;
 let finishCalls = 0;
 let finishDestination;
 let openedAgent = null;
+let openedDraft = null;
 let releaseInitialGet;
 let markInitialGetStarted;
 const initialGetStarted = new Promise((resolve) => {
@@ -82,7 +83,10 @@ ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
 });
 ipcMain.handle("onboarding:gatekeeperPresets", async () => currentFixture.gatekeeper?.presets ?? null);
 ipcMain.handle("cloud:agents", async () => currentFixture.cloud ?? null);
-ipcMain.handle("cloud:openMessages", async (_event, agentId) => { openedAgent = agentId; });
+ipcMain.handle("cloud:openMessages", async (_event, agentId, draft) => {
+  openedAgent = agentId;
+  openedDraft = draft;
+});
 // "pending" holds every row on Checking.
 ipcMain.handle("onboarding:gatekeeperPreview", async (_event, _preset, index) => {
   const results = currentFixture.gatekeeper?.results;
@@ -181,10 +185,14 @@ pluginsFreshFixture.prepare = async (win) => {
 const doneAgentFixture = SCREENS.find((fixture) => fixture.name === "done-agent");
 doneAgentFixture.prepare = async (win) => {
   openedAgent = null;
+  openedDraft = null;
   finishCalls = 0;
   finishDestination = "not-called";
   await clickText(win, "Text Elm");
   if (openedAgent !== "agent_elm") throw new Error(`Text Elm opened ${String(openedAgent)}`);
+  if (openedDraft !== "Use Latch to run the `say` command: `say \"hello world\"` on my Mac.") {
+    throw new Error(`Text Elm drafted ${String(openedDraft)}`);
+  }
   await clickText(win, "Explore the app");
   if (finishCalls !== 1 || finishDestination !== undefined) {
     throw new Error(`Explore the app called finish ${finishCalls} times with ${String(finishDestination)}`);

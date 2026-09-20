@@ -361,9 +361,10 @@ export class CloudAgentState {
   }
 
   /** A Messages deep link for one resolved agent line, kept in main-process state. */
-  agentSmsUrl(agentId: string): string | null {
+  agentSmsUrl(agentId: string, body?: string): string | null {
     const lineUid = this.rows.get(agentId)?.line?.uid;
-    return this.lineDetails(lineUid ?? null).smsUrl;
+    const url = this.lineDetails(lineUid ?? null).smsUrl;
+    return url && body ? smsUrl(url.slice(4), body) : url;
   }
 
   /**

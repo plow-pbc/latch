@@ -856,9 +856,9 @@ ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
   await cloudAgents?.refresh();
   return agentsTabState();
 });
-ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown) => {
+ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown, draft?: unknown) => {
   const url = typeof agentId === "string"
-    ? cloudAgents?.agentSmsUrl(agentId)
+    ? cloudAgents?.agentSmsUrl(agentId, typeof draft === "string" ? draft : undefined)
     : null;
   return openSmsUrl(url);
 });

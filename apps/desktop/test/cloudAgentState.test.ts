@@ -219,6 +219,9 @@ describe("CloudAgentState line and thread display", () => {
     await state.refresh();
 
     expect(state.agentSmsUrl("agent_1")).toBe("sms:+15550100");
+    expect(state.agentSmsUrl("agent_1", "Say \"hello world\".")).toBe(
+      "sms:+15550100?&body=Say%20%22hello%20world%22.",
+    );
     expect(state.state().cloudAgents[0].canMessage).toBe(true);
 
     const { state: unresolved } = build({
