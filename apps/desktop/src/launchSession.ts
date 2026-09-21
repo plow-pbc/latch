@@ -60,8 +60,8 @@ export function launchSessionWarning(session: string): LaunchSessionWarning | nu
   return {
     message: "Plow Latch is running outside your Mac's desktop session",
     detail:
-      `Something opened it from a terminal, so macOS put it in the "${session}" session ` +
-      "instead of the desktop one.\n\n" +
+      `Something outside your desktop session opened it — a terminal, an ssh connection, a ` +
+      `script — so macOS put it in the "${session}" session instead.\n\n` +
       "Commands run from here cannot reach the speech synthesiser — `say` reports success " +
       "and the Mac stays silent — and other services that belong to the desktop session " +
       "can fail the same way, without an error.\n\n" +
