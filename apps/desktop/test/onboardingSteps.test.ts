@@ -21,21 +21,23 @@ describe("the setup step table", () => {
     expect(setupProgress(step)).toBeNull();
   });
 
-  // The activation secret lives in memory and never on disk, so a resumed
-  // setup pointing at that screen would show a code it cannot redeem.
-  it.each(["activate", "waiting", "welcome", "done", "nonsense"])(
-    "refuses to resume on %s",
-    (step) => {
-      expect(isResumableStep(step)).toBe(false);
-    },
-  );
-
-  it.each(["privacy", "gatekeeper", "plugins", "access", "availability"])(
-    "resumes on %s",
-    (step) => {
-      expect(isResumableStep(step)).toBe(true);
-    },
-  );
+  // `activate`/`waiting` are false because the activation secret lives in
+  // memory and never on disk: a resumed setup pointing there would show a code
+  // it cannot redeem.
+  it.each([
+    ["activate", false],
+    ["waiting", false],
+    ["welcome", false],
+    ["done", false],
+    ["nonsense", false],
+    ["privacy", true],
+    ["gatekeeper", true],
+    ["plugins", true],
+    ["access", true],
+    ["availability", true],
+  ] as const)("reports %s as resumable: %s", (step, expected) => {
+    expect(isResumableStep(step)).toBe(expected);
+  });
 
   it.each([
     ["activate", "welcome"],

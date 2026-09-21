@@ -1255,6 +1255,35 @@ describe("while the credential handoff is in the air", () => {
     expect(onboarding.state().step).toBe("privacy");
   });
 
+  // The credential becomes durable before this network call, and the step only
+  // becomes `privacy` after it. A quit inside the call used to leave a
+  // credential with no checkpoint, which reopens on Plugins — skipping Privacy
+  // AND Gatekeeper, so `agentPurpose` was never set.
+  it("checkpoints Privacy in the same write that makes the credential durable", async () => {
+    let release = () => {};
+    const inAir = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const original = plow.relayInfo.bind(plow);
+    plow.relayInfo = async (token: string) => {
+      await inAir;
+      return original(token);
+    };
+    const onboarding = build();
+    await onboarding.advance();
+    await settle();
+
+    // Mid-call: the credential is on disk, so a relaunch signs in — and must
+    // land on Privacy, not Plugins.
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(build().state().step).toBe("privacy");
+
+    release();
+    await settle();
+    expect(onboarding.state().step).toBe("privacy");
+  });
+
   it("stays signed out when the sign-out lands during relayInfo", async () => {
     let release = () => {};
     const inAir = new Promise<void>((r) => {

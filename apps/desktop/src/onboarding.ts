@@ -639,6 +639,14 @@ export class Onboarding {
     accepted.relayCredential = sessionToken;
     accepted.accountUid = "";
     accepted.mcpUrl = "";
+    // The checkpoint rides THIS write, not `publish()`'s, because the step only
+    // becomes `privacy` after the `relayInfo` await below — and a quit inside
+    // that network call would otherwise leave a durable credential with no
+    // checkpoint, which `initialStep` reads as Plugins, skipping Privacy and
+    // Gatekeeper (so `agentPurpose` is never set). `checkpoint()` still owns
+    // every step change; this makes the one write that creates a durable
+    // credential atomic with the screen that credential implies.
+    accepted.onboardingResumeStep = "privacy";
     this.save(accepted);
     this.deps.applyAvailabilityDefault?.();
     let info;
