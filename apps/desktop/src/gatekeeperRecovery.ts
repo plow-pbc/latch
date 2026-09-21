@@ -1,4 +1,3 @@
-import { capabilityDisplay } from "@domo/protocol";
 import type { DeniedIntent } from "@domo/device-core";
 import { echoesCredential, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 import {
@@ -24,19 +23,13 @@ export type GatekeeperRevisionResult =
 
 export interface GatekeeperRecoveryView {
   intentId: string;
-  agent: string;
   request: string;
-  capabilities: string[];
-  reason: string | null;
 }
 
 export function gatekeeperRecoveryView(denied: DeniedIntent): GatekeeperRecoveryView {
   return {
     intentId: denied.intent.intentId,
-    agent: denied.intent.agentDisplay ?? denied.intent.agentId,
     request: denied.intent.request,
-    capabilities: denied.intent.capabilities.map(capabilityDisplay),
-    reason: denied.reason,
   };
 }
 

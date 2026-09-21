@@ -673,10 +673,7 @@ const SCREENS = [
     prepare: async (win) => {
       gatekeeperRecoveryFixture = {
         intentId: "intent-gatekeeper-screenshot",
-        agent: "Family assistant",
         request: "Buy a $125 Lego set on Amazon",
-        capabilities: ["Browser: amazon.com"],
-        reason: "Purchases are not covered by the current family-assistant instructions.",
       };
       await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
       await waitFor(win, `document.querySelector("#view .audit-gatekeeper")`, "the Audit Gatekeeper card");

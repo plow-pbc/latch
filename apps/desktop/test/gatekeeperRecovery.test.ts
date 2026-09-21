@@ -21,10 +21,7 @@ beforeEach(() => {
 describe("dismissGatekeeperAttention", () => {
   const newer = {
     intentId: "newer",
-    agent: "Family assistant",
     request: "Send the itinerary",
-    capabilities: ["Network: allowed"],
-    reason: "Not covered",
   };
 
   it("clears only the denial the owner actually dismissed", () => {
@@ -37,7 +34,7 @@ describe("dismissGatekeeperAttention", () => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("gatekeeperRecoveryView", () => {
-  it("projects only the owner-facing request, capabilities, and reason", () => {
+  it("projects only the intent identity and request needed by the global notice", () => {
     const intent = makeIntent({
       agentId: "agent-1",
       agentDisplay: "Family assistant",
@@ -48,10 +45,7 @@ describe("gatekeeperRecoveryView", () => {
     });
     expect(gatekeeperRecoveryView({ intent, reason: "Purchase is outside the purpose." })).toEqual({
       intentId: intent.intentId,
-      agent: "Family assistant",
       request: "Buy the Lego set",
-      capabilities: ["Network: allowed"],
-      reason: "Purchase is outside the purpose.",
     });
   });
 });

@@ -83,10 +83,7 @@ ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", co
 ipcMain.handle("rules:list", async () => []);
 let gatekeeperRecoveryProbe = {
   intentId: "intent-gatekeeper-probe",
-  agent: "Family assistant",
   request: "Buy a $125 Lego set on Amazon",
-  capabilities: ["Browser: amazon.com"],
-  reason: "Purchases are not covered by the current family-assistant instructions.",
 };
 let holdGatekeeperRecoveryGet = false;
 let resolveGatekeeperRecoveryGet = null;
@@ -1258,10 +1255,7 @@ app.whenReady().then(async () => {
   // deleting that row.
   gatekeeperRecoveryProbe = {
     intentId: "intent-gatekeeper-probe",
-    agent: "Family assistant",
     request: "Buy a $125 Lego set on Amazon",
-    capabilities: ["Browser: amazon.com"],
-    reason: "Purchases are not covered by the current family-assistant instructions.",
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   win.webContents.send("gatekeeperRecovery:changed");
@@ -1288,10 +1282,7 @@ app.whenReady().then(async () => {
   // attach recovery to, so Audit must not silently retain a hidden denial.
   gatekeeperRecoveryProbe = {
     intentId: "intent-gatekeeper-probe",
-    agent: "Family assistant",
     request: "Buy a $125 Lego set on Amazon",
-    capabilities: ["Browser: amazon.com"],
-    reason: "Purchases are not covered by the current family-assistant instructions.",
   };
   win.webContents.send("gatekeeperRecovery:changed");
   await waitFor(win, `document.querySelector(".gatekeeper-notice")?.hidden === false`,
@@ -1308,10 +1299,7 @@ app.whenReady().then(async () => {
   await waitForNode(() => resolveAuditClear !== null, "the held Audit clear");
   gatekeeperRecoveryProbe = {
     intentId: "intent-after-clear",
-    agent: "Family assistant",
     request: "A newer denied request",
-    capabilities: ["Network: allowed"],
-    reason: "Newer denial",
   };
   win.webContents.send("gatekeeperRecovery:changed");
   await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
