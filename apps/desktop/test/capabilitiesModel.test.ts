@@ -465,9 +465,12 @@ describe("FullDiskWatch", () => {
  */
 describe("the Full Disk Access landed seam", () => {
   it.each<[FullDiskState | undefined, boolean | undefined, boolean]>([
-    ["granted", undefined, true],
     ["granted", false, true],
     ["granted", true, false],
+    // Absent is a baseline, not a negative: every install upgrading into this
+    // feature has no field, and announcing its week-old grant as fresh is the
+    // one way this feature can lie.
+    ["granted", undefined, false],
     // On, but a plugin's sandboxed run still cannot use it: announcing either
     // would name a capability that does not work.
     ["relaunch", undefined, false],

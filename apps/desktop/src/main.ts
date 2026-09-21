@@ -1721,7 +1721,13 @@ async function pluginsNow(acknowledge = false): Promise<{ rows: PluginRow[]; gra
   // read landing before the write, a fast Back-and-forward reading the value
   // mid-flight. One operation has no ordering to get wrong. The comparison
   // also resets the mark when the switch went off, so a re-grant is news again.
-  if (acknowledge && (fullDiskState === "granted") !== (seen === true)) {
+  // Recorded whenever the inventory answered and the record disagrees, which
+  // on a first visit writes the baseline: `false` while the switch is off is
+  // what makes the later grant news, and `true` on an install that already had
+  // it stops the upgrade from announcing a week-old permission. An unanswered
+  // inventory writes nothing — recording a guess as observed is how the real
+  // grant that follows reads as already-shown.
+  if (acknowledge && fullDiskState !== undefined && seen !== (fullDiskState === "granted")) {
     saveSettings(home, { ...loadSettings(home), fullDiskGrantedSeen: fullDiskState === "granted" });
   }
   return { rows, grants: grantList(rows), examples: pluginExamples(rows), landed };
