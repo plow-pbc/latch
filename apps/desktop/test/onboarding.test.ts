@@ -10,7 +10,7 @@ import {
   OnboardingDeps,
 } from "../src/onboarding.js";
 import { PlowApi, PlowApiError } from "../src/plowApi.js";
-import { loadSettings, saveSettings } from "../src/settings.js";
+import { loadSettings, saveSettings, Settings } from "../src/settings.js";
 import { PendingRevokeRetrier, queueRevokeAndSignOut, signOutOfPlow } from "../src/settingsActions.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
@@ -417,9 +417,9 @@ describe("wizard steps around the existing verification flow", () => {
     // The builder's accessNeeded answers false: nothing to grant skips Access.
     expect((await onboarding.advance()).step).toBe("availability");
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: false });
-    // The persisted gate deliberately resumes incomplete setup at Plugins, so a
-    // returning install still makes the telemetry choice before Availability.
-    expect(build().state().step).toBe("plugins");
+    // The checkpoint follows the step, so a returning install resumes right
+    // where this one left off rather than repeating the telemetry choice.
+    expect(build().state().step).toBe("availability");
 
     expect((await onboarding.advance()).step).toBe("done");
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: true });
@@ -452,7 +452,7 @@ describe("wizard steps around the existing verification flow", () => {
     // switch turned off on the screen stays off.
     await onboarding.back();
     expect((await onboarding.advance()).step).toBe("availability");
-    expect((await build({ applyAvailabilityDefault }).advance()).step).toBe("availability");
+    expect(build({ applyAvailabilityDefault }).state().step).toBe("availability");
     expect(applied).toBe(1);
 
     // Sign out and set up again: a new setup, so the switches open on again.
@@ -465,8 +465,8 @@ describe("wizard steps around the existing verification flow", () => {
     expect(applied).toBe(2);
   });
 
-  describe("the Access relaunch checkpoint", () => {
-    function signedIn(overrides: Partial<ReturnType<typeof loadSettings>> = {}) {
+  describe("the resume checkpoint", () => {
+    function signedIn(overrides: Partial<Settings> = {}): void {
       const settings = loadSettings(home);
       settings.relayCredential = DEVICE_TOKEN;
       Object.assign(settings, overrides);
@@ -481,13 +481,24 @@ describe("wizard steps around the existing verification flow", () => {
       return onboarding;
     }
 
-    it("reopens directly on Access after Access requests a relaunch", async () => {
-      const onboarding = await enterAccess();
-
-      onboarding.prepareRelaunch();
+    // The bug this replaces: the checkpoint was armed by setup's own Relaunch
+    // button, so macOS's "Quit & Reopen" after a Full Disk Access grant — and a
+    // reboot, and Cmd-Q — returned the owner to Plugins with nothing to show
+    // for what they had just granted.
+    it("reopens on Access after a quit nobody asked this app for", async () => {
+      await enterAccess();
 
       expect(loadSettings(home).onboardingResumeStep).toBe("access");
       expect(build({ accessNeeded: async () => true }).state().step).toBe("access");
+    });
+
+    it("reopens on Availability after a quit there", async () => {
+      signedIn();
+      const onboarding = build({ accessNeeded: async () => false });
+      expect((await onboarding.advance()).step).toBe("availability");
+
+      expect(loadSettings(home).onboardingResumeStep).toBe("availability");
+      expect(build().state().step).toBe("availability");
     });
 
     it("awaits Access preparation before the resumed initial step is ready", async () => {
@@ -528,28 +539,44 @@ describe("wizard steps around the existing verification flow", () => {
       expect(build().state().step).toBe(expectedStep);
     });
 
-    it.each([
-      ["Plugins", { setupComplete: false }, "plugins"],
-      ["Done", { setupComplete: true }, "done"],
-    ] as const)("does not arm the checkpoint from %s", (_name, overrides, expectedStep) => {
-      signedIn(overrides);
+    // A checkpoint written by another build — an older one, or a newer one with
+    // a screen this build has never heard of — must not wedge setup on a screen
+    // it cannot render.
+    it("falls back to Plugins for a checkpoint it does not recognise", () => {
+      signedIn({ onboardingResumeStep: "sometime-later" as never });
+
+      expect(build().state().step).toBe("plugins");
+    });
+
+    // The activation secret lives in memory and never on disk.
+    it("never checkpoints the activation screen", async () => {
       const onboarding = build();
-      expect(onboarding.state().step).toBe(expectedStep);
+      expect(onboarding.state().step).toBe("welcome");
+      await onboarding.advance();
 
-      onboarding.prepareRelaunch();
-
+      expect(onboarding.state().step).toBe("activate");
       expect(loadSettings(home).onboardingResumeStep).toBeUndefined();
     });
 
     it.each([
-      ["Back", (onboarding: Onboarding) => onboarding.back(), "plugins"],
-      ["Continue", (onboarding: Onboarding) => onboarding.advance(), "availability"],
-      ["reset", (onboarding: Onboarding) => onboarding.reset(), "plugins"],
-    ] as const)("clears the checkpoint when %s leaves Access", async (_name, leave, expectedStep) => {
-      const onboarding = await enterAccess();
-      onboarding.prepareRelaunch();
+      ["Back", (onboarding: Onboarding) => onboarding.back(), "plugins", "plugins"],
+      ["Continue", (onboarding: Onboarding) => onboarding.advance(), "availability", "availability"],
+    ] as const)(
+      "moves the checkpoint when %s leaves Access",
+      async (_name, leave, expectedStep, expectedCheckpoint) => {
+        const onboarding = await enterAccess();
 
-      expect((await leave(onboarding)).step).toBe(expectedStep);
+        expect((await leave(onboarding)).step).toBe(expectedStep);
+        expect(loadSettings(home).onboardingResumeStep).toBe(expectedCheckpoint);
+      },
+    );
+
+    it("clears the checkpoint once setup is complete", async () => {
+      signedIn();
+      const onboarding = build({ accessNeeded: async () => false });
+      await onboarding.advance();
+      expect((await onboarding.advance()).step).toBe("done");
+
       expect(loadSettings(home).onboardingResumeStep).toBeUndefined();
     });
   });
@@ -1097,10 +1124,10 @@ describe("the activation credential handoff", () => {
     expect(mode).toBe(0o600);
   });
 
-  it("opens on plugins when this Mac already holds an incomplete credential", async () => {
+  it("opens on the screen this Mac already holds an incomplete credential on", async () => {
     await signIn();
 
-    expect(build().state().step).toBe("plugins");
+    expect(build().state().step).toBe("privacy");
   });
 });
 

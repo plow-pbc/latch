@@ -1761,9 +1761,10 @@ ipcMain.handle("requirements:act", async (e, rawId: unknown) => {
   return { ...now, error };
 });
 // A relaunch-pending requirement's button, and setup's "Relaunch to finish":
-// the same relaunch the simulated updater's install does.
+// the same relaunch the simulated updater's install does. Nothing to arm —
+// setup checkpoints every step it lands on, so the quit macOS performs itself
+// after a grant comes back to the same screen this button would.
 ipcMain.handle("app:relaunch", () => {
-  onboarding?.prepareRelaunch();
   app.relaunch();
   app.quit();
 });

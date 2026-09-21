@@ -18,31 +18,17 @@ import { chatPeople, chatRowTitle, usableChatDisplayName } from "./chatRows.js";
 import { PRESET_TEXT } from "./gatekeeperPreview.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 import { queuePendingRevoke } from "./settingsActions.js";
+import { canGoBackFrom, isResumableStep, type SetupStep } from "./onboardingSteps.js";
 
 /**
  * The verification sub-steps retain their existing mechanics. A successful
  * login moves straight to Privacy, which doubles as the confirmation screen
  * before the gatekeeper's instructions and the post-login plugin choice.
+ *
+ * The dotted screens come from `SETUP_STEPS`; `welcome` and `done` own no dot,
+ * and `waiting` shares the activation screen's.
  */
-export type OnboardingStep =
-  | "welcome"
-  | "privacy"
-  | "gatekeeper"
-  | "activate"
-  | "waiting"
-  | "plugins"
-  | "access"
-  | "availability"
-  | "done";
-
-/** The one source of truth for both the Back affordance and its destination. */
-function previousOnboardingStep(step: OnboardingStep): OnboardingStep | null {
-  if (step === "activate" || step === "waiting") return "welcome";
-  if (step === "gatekeeper") return "privacy";
-  if (step === "plugins") return "gatekeeper";
-  if (step === "access" || step === "availability") return "plugins";
-  return null;
-}
+export type OnboardingStep = "welcome" | "waiting" | SetupStep | "done";
 
 /**
  * How long the screen counts down before it stalls and offers a fresh code.
@@ -220,7 +206,7 @@ export class Onboarding {
   state(): OnboardingState {
     return {
       step: this.step,
-      canGoBack: previousOnboardingStep(this.step) !== null,
+      canGoBack: canGoBackFrom(this.step) !== null,
       message: this.message,
       noteKind: this.noteKind,
       busy: this.busy,
@@ -279,14 +265,13 @@ export class Onboarding {
       });
     }
     if (this.step === "access") {
-      this.clearResumeStep();
       this.step = "availability";
       return this.publish();
     }
     if (this.step === "availability") {
       const settings = this.settings();
       settings.setupComplete = true;
-      this.clearResumeStep(settings);
+      this.save(settings);
       this.step = "done";
       return this.publish();
     }
@@ -296,21 +281,11 @@ export class Onboarding {
   /** Return through the steps that have a Back affordance. */
   async back(draft?: unknown): Promise<OnboardingState> {
     if (this.busy) return this.state();
-    const previous = previousOnboardingStep(this.step);
+    const previous = canGoBackFrom(this.step);
     if (previous === null) return this.state();
     if (this.step === "gatekeeper" && typeof draft === "string") this.purpose = draft;
-    if (this.step === "access") this.clearResumeStep();
     this.step = previous;
     return this.publish();
-  }
-
-  /** Persist the one setup location whose own grant flow requires a relaunch. */
-  prepareRelaunch(): OnboardingState {
-    if (this.step !== "access") return this.state();
-    const settings = this.settings();
-    settings.onboardingResumeStep = "access";
-    this.save(settings);
-    return this.state();
   }
 
   /** Change the pending choice; Continue from plugins is its only disk write. */
@@ -594,7 +569,6 @@ export class Onboarding {
     this.noteKind = "error";
     this.busy = false;
     const settings = this.settings();
-    this.clearResumeStep(settings);
     this.telemetryEnabled = settings.telemetryEnabled;
     this.purpose = this.storedPurpose(settings);
     this.step = this.initialStep(settings);
@@ -714,16 +688,13 @@ export class Onboarding {
     saveSettings(this.deps.home, settings);
   }
 
-  /** Clear a consumed or abandoned navigation intent and persist its peers. */
-  private clearResumeStep(settings: Settings = this.settings()): void {
-    settings.onboardingResumeStep = undefined;
-    this.save(settings);
-  }
-
   private initialStep(settings: Settings): OnboardingStep {
     if (!settings.relayCredential.trim()) return "welcome";
     if (settings.setupComplete) return "done";
-    return settings.onboardingResumeStep === "access" ? "access" : "plugins";
+    const resume = settings.onboardingResumeStep;
+    // A checkpoint another build wrote is not a reason to wedge setup on a
+    // screen this one cannot render.
+    return resume && isResumableStep(resume) ? resume : "plugins";
   }
 
   private now(): number {
@@ -752,7 +723,26 @@ export class Onboarding {
     return this.publish();
   }
 
+  /**
+   * Where a relaunch resumes, written wherever the step lands.
+   *
+   * Here rather than at the transitions because this is the one place every
+   * step change already funnels through, which is what makes the checkpoint
+   * impossible to forget. It used to be armed by setup's own Relaunch button,
+   * so the quit macOS performs itself after a Full Disk Access grant — and a
+   * reboot, and Cmd-Q — left it unwritten and returned the owner a screen
+   * early with nothing to show for what they had granted.
+   */
+  private checkpoint(): void {
+    const step = isResumableStep(this.step) ? this.step : undefined;
+    const settings = this.settings();
+    if (settings.onboardingResumeStep === step) return;
+    settings.onboardingResumeStep = step;
+    this.save(settings);
+  }
+
   private publish(): OnboardingState {
+    this.checkpoint();
     this.deps.onChange?.();
     return this.state();
   }

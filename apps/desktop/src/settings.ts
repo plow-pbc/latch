@@ -10,6 +10,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { ResumableStep } from "./onboardingSteps.js";
+
 /**
  * How the credential is encrypted at rest, when the OS offers a way.
  *
@@ -231,8 +233,9 @@ export interface Settings {
   /** The first-run setup has reached its final screen. Kept separately from
    * the credential because the data choice happens after sign-in. */
   setupComplete: boolean;
-  /** Where an incomplete setup should resume after a relaunch it requested. */
-  onboardingResumeStep?: "access";
+  /** The setup screen an incomplete setup resumes on — whatever ended the last
+   * run. `onboardingSteps.ts` owns which screens may appear here. */
+  onboardingResumeStep?: ResumableStep;
 }
 
 function settingsPath(home: string): string {

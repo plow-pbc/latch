@@ -8,7 +8,7 @@ const source = ts.createSourceFile("main.ts", fs.readFileSync(
   new URL("../src/main.ts", import.meta.url), "utf8",
 ), ts.ScriptTarget.Latest, true);
 
-it("arms Access resume before relaunching the app", () => {
+it("relaunches without arming anything — setup checkpoints itself", () => {
   const registration = source.statements.find((node) =>
     ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
     && node.expression.expression.getText(source) === "ipcMain.handle"
@@ -22,7 +22,6 @@ it("arms Access resume before relaunching the app", () => {
   let handler!: () => void;
   vm.runInNewContext(compiled, {
     ipcMain: { handle: (_channel: string, fn: typeof handler) => { handler = fn; } },
-    onboarding: { prepareRelaunch: () => calls.push("prepare") },
     app: {
       relaunch: () => calls.push("relaunch"),
       quit: () => calls.push("quit"),
@@ -31,5 +30,5 @@ it("arms Access resume before relaunching the app", () => {
 
   handler();
 
-  expect(calls).toEqual(["prepare", "relaunch", "quit"]);
+  expect(calls).toEqual(["relaunch", "quit"]);
 });
