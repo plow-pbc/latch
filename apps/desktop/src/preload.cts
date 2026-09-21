@@ -99,10 +99,9 @@ contextBridge.exposeInMainWorld("domo", {
   // The Plugins tab (pluginsModel.ts): one whole-state shape per read, with
   // `grants`, the ordered list setup walks; `setEnabled` is the owner's off
   // switch and answers with the fresh state.
-  pluginsGet: () => ipcRenderer.invoke("plugins:get"),
-  // Arriving on Access: the owner has now seen what Full Disk Access is, so
-  // the next change is the next thing worth animating.
-  pluginsAcknowledge: () => ipcRenderer.invoke("plugins:acknowledge"),
+  // `acknowledge` is Access saying the owner is being shown this payload, so
+  // the grant it reports lands once and the mark rides the same read.
+  pluginsGet: (acknowledge?: boolean) => ipcRenderer.invoke("plugins:get", acknowledge === true),
   pluginsSetEnabled: (name: string, on: boolean) => ipcRenderer.invoke("plugins:setEnabled", name, on),
   // Any requirement's button, by id (requirements.ts): the panel, macOS's
   // dialog, Google sign-in or Safari's setting, awaited to the flow's end.

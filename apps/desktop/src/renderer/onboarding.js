@@ -587,7 +587,8 @@ const showPlugins = latestOnly((next) => {
 });
 
 async function refreshPlugins() {
-  await showPlugins(() => window.domo.pluginsGet());
+  // Access acknowledges as it reads: one operation, no ordering to lose.
+  await showPlugins(() => window.domo.pluginsGet(state?.step === "access"));
 }
 
 /** Access's one button: the list's flows in order; a grant that did not land
@@ -834,17 +835,12 @@ function grantRow(grant) {
 }
 
 function accessScreen() {
-  // Once per visit, and not before the model has answered: a relaunch straight
-  // onto Access — the path the whole feature exists for — draws once with
-  // `pluginsState` still null, and snapshotting there would take an empty
-  // celebration AND mark the grant seen, swallowing it for good. The fetch
-  // that follows redraws this screen, which is where the snapshot belongs.
-  // Fire-and-forget on purpose: applying an answer here is what would cancel
-  // the animation it just enabled.
-  if (celebrating === null && pluginsState) {
-    celebrating = pluginsState.landed ?? [];
-    void window.domo.pluginsAcknowledge();
-  }
+  // Not before the model has answered: a relaunch straight onto Access — the
+  // path the whole feature exists for — draws once with `pluginsState` still
+  // null, and snapshotting there would take an empty celebration. The read
+  // that follows redraws this screen, and it is the read that marked the grant
+  // seen, so the snapshot and the mark cannot disagree.
+  if (celebrating === null && pluginsState) celebrating = pluginsState.landed ?? [];
   return el("div", { class: "form-screen" }, [
     el("div", { class: "step-inner" }, [
       el("div", { class: "head-center" }, [

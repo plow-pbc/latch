@@ -1677,7 +1677,7 @@ function connectorAccountNotices(): Record<string, { message: string; noteKind: 
  *  cannot disagree. The inventory asks only about the Automation pairs a
  *  staged plugin declares: this runs on every refresh, and the full sweep
  *  waits out a probe timeout on any app not answering Apple events. */
-async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; examples: PluginExample[]; landed: string[] }> {
+async function pluginsNow(acknowledge = false): Promise<{ rows: PluginRow[]; grants: GrantItem[]; examples: PluginExample[]; landed: string[] }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
   const automationTargets = stagedPlugins
     .flatMap((p) => p.manifest.requires.permissions)
@@ -1712,25 +1712,20 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; e
   // without a rename. A grant that needed the relaunch macOS forces is the
   // whole point: the process that watched it change is gone, so nothing but
   // the stored `fullDiskGrantedSeen` can tell the new one it is news.
-  const landed = fullDiskLanded(fullDiskState, loadSettings(home).fullDiskGrantedSeen)
-    ? ["full_disk_access"]
-    : [];
+  const seen = loadSettings(home).fullDiskGrantedSeen;
+  const landed = fullDiskLanded(fullDiskState, seen) ? ["full_disk_access"] : [];
+  // `acknowledge` is the Access screen saying the owner is being shown THIS
+  // payload, so the mark rides the same read that hands the celebration out.
+  // It used to be a second call, and every ordering between the two was a bug
+  // in its own right — the answer cancelling the animation it enabled, the
+  // read landing before the write, a fast Back-and-forward reading the value
+  // mid-flight. One operation has no ordering to get wrong. The comparison
+  // also resets the mark when the switch went off, so a re-grant is news again.
+  if (acknowledge && (fullDiskState === "granted") !== (seen === true)) {
+    saveSettings(home, { ...loadSettings(home), fullDiskGrantedSeen: fullDiskState === "granted" });
+  }
   return { rows, grants: grantList(rows), examples: pluginExamples(rows), landed };
 }
-
-/** The Access screen, on arrival: the owner has now seen whatever Full Disk
- *  Access currently is, so the next change is the next thing worth showing.
- *  Writes only when the inventory answers — an unknown state must not be
- *  recorded as seen, or the real grant that follows reads as already-shown.
- *
- *  Deliberately returns nothing. Answering with fresh state would hand the
- *  caller a payload whose `landed` this very call just emptied, and applying
- *  it would replace the chip the screen is still animating. */
-ipcMain.handle("plugins:acknowledge", async () => {
-  const inventory = device ? await device.hostInventory({ automationTargets: [] }) : null;
-  const seen = inventory ? fullDiskStateOf(inventory) : undefined;
-  if (seen) saveSettings(home, { ...loadSettings(home), fullDiskGrantedSeen: seen === "granted" });
-});
 
 /** Plugins → Continue: does a switched-on plugin still need a grant? A resumed
  *  setup can get here before the relay's poll, so ask Plow for the accounts —
@@ -1745,7 +1740,7 @@ async function accessNeeded(): Promise<boolean> {
   return (await pluginsNow()).grants.some((g) => g.status !== "met");
 }
 
-ipcMain.handle("plugins:get", async () => pluginsNow());
+ipcMain.handle("plugins:get", async (_e, acknowledge: unknown) => pluginsNow(acknowledge === true));
 
 /** The owner's off switches: the disabled NAMES persist (a later plugin is on
  *  by default), and the device is told in the same breath, so the skill and
