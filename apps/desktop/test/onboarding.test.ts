@@ -571,13 +571,17 @@ describe("wizard steps around the existing verification flow", () => {
       },
     );
 
-    it("clears the checkpoint once setup is complete", async () => {
+    // The checkpoint is never erased — it has no reader once setup is
+    // complete, and erasing is what drops a relaunch back on Plugins when a
+    // throw unwinds with the step still on a non-resumable screen.
+    it("opens on Done past a checkpoint setup left behind", async () => {
       signedIn();
       const onboarding = build({ accessNeeded: async () => false });
       await onboarding.advance();
       expect((await onboarding.advance()).step).toBe("done");
 
-      expect(loadSettings(home).onboardingResumeStep).toBeUndefined();
+      expect(loadSettings(home).onboardingResumeStep).toBe("availability");
+      expect(build().state().step).toBe("done");
     });
   });
 
@@ -1282,6 +1286,26 @@ describe("while the credential handoff is in the air", () => {
     release();
     await settle();
     expect(onboarding.state().step).toBe("privacy");
+  });
+
+  // A throw after the credential is durable unwinds to run(), whose publish()
+  // checkpoints whatever step is current — so the step has to have moved to
+  // Privacy already, or that publish erases the checkpoint and the relaunch
+  // lands on Plugins again.
+  it("keeps the Privacy checkpoint when the handoff throws after the credential lands", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build({
+      applyAvailabilityDefault: () => {
+        throw new Error("disk full");
+      },
+    });
+
+    await onboarding.advance();
+    await settle();
+
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(loadSettings(home).onboardingResumeStep).toBe("privacy");
+    expect(build().state().step).toBe("privacy");
   });
 
   it("stays signed out when the sign-out lands during relayInfo", async () => {

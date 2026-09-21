@@ -753,10 +753,17 @@ export class Onboarding {
    * early with nothing to show for what they had granted.
    */
   private checkpoint(): void {
-    const step = isResumableStep(this.step) ? this.step : undefined;
+    // Records a resumable step; never erases. `initialStep` reads this only
+    // while a credential is held and setup is unfinished, so a value left over
+    // from a finished or signed-out setup has no reader — while erasing one
+    // does real harm: a throw after the credential lands (see
+    // `finishWithSession`) unwinds through `run()`'s publish with the step
+    // still on the code screen, and clearing there would drop the relaunch
+    // back on Plugins, skipping Privacy and Gatekeeper.
+    if (!isResumableStep(this.step)) return;
     const settings = this.settings();
-    if (settings.onboardingResumeStep === step) return;
-    settings.onboardingResumeStep = step;
+    if (settings.onboardingResumeStep === this.step) return;
+    settings.onboardingResumeStep = this.step;
     this.save(settings);
   }
 
