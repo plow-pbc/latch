@@ -69,13 +69,11 @@ describe("Plow sign-out forgets the credential and leaves the mode alone", () =>
       accountUid: "u_someone",
       mcpUrl: "https://api.plow.co/v1/relay/devices/u_someone/mcp",
       setupComplete: true,
-      onboardingResumeStep: "access",
     });
 
     signOutOfPlow(home);
 
     expectSignedOutWithAdversarial(home);
-    expect(stored(home).onboardingResumeStep).toBeUndefined();
   });
 
   it("signing out with Adversarial selected leaves the mode alone", () => {

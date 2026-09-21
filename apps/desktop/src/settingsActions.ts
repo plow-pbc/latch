@@ -84,7 +84,6 @@ function clearPlowSession(settings: Settings): void {
   settings.accountUid = "";
   settings.mcpUrl = "";
   settings.setupComplete = false;
-  settings.onboardingResumeStep = undefined;
 }
 
 /**

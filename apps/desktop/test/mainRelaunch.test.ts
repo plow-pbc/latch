@@ -1,25 +1,15 @@
-import fs from "node:fs";
 import vm from "node:vm";
-import ts from "typescript";
 import { expect, it } from "vitest";
+import { compileMain, mainHandler } from "./mainSource.js";
 
 // Exercise the shipping handler without booting Electron.
-const source = ts.createSourceFile("main.ts", fs.readFileSync(
-  new URL("../src/main.ts", import.meta.url), "utf8",
-), ts.ScriptTarget.Latest, true);
+const compiled = compileMain(mainHandler("app:relaunch"));
 
 it("relaunches without arming anything — setup checkpoints itself", () => {
-  const registration = source.statements.find((node) =>
-    ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
-    && node.expression.expression.getText(source) === "ipcMain.handle"
-    && ts.isStringLiteral(node.expression.arguments[0])
-    && node.expression.arguments[0].text === "app:relaunch",
-  )!;
-  const compiled = ts.transpileModule(registration.getText(source), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022 },
-  }).outputText;
   const calls: string[] = [];
   let handler!: () => void;
+  // No `onboarding` in this context: if the handler ever reaches for it
+  // again, calling it below throws "onboarding is not defined".
   vm.runInNewContext(compiled, {
     ipcMain: { handle: (_channel: string, fn: typeof handler) => { handler = fn; } },
     app: {

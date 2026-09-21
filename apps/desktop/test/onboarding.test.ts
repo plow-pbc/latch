@@ -599,7 +599,6 @@ describe("wizard steps around the existing verification flow", () => {
       expect((await onboarding.advance()).progress).toBeNull();
     });
   });
-
 });
 
 describe("the gatekeeper's instructions", () => {

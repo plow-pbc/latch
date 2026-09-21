@@ -3,6 +3,7 @@ export const FALLBACK_STATE = Object.freeze({
   message: "",
   noteKind: "error",
   busy: false,
+  progress: null,
 });
 
 export const ONBOARDING_FAILURE_MESSAGE =
