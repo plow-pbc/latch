@@ -215,7 +215,7 @@ body {
 
 /* Gatekeeper policy lives above Audit's master-detail activity view. */
 .audit-gatekeeper {
-  margin: 12px 14px 0;
+  margin: 12px 14px;
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius);

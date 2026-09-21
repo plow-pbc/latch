@@ -54,6 +54,8 @@ let gatekeeperActivity = {
   agentDisplay: "Family assistant",
   goal: "Buy a birthday present",
   decidedBy: "AI Reviewer",
+  decisionSource: "adversarial",
+  reviewReason: "Purchases are not covered by the current family-assistant instructions.",
   intentId: "intent-gatekeeper-probe",
   exitCode: null,
   capabilities: ["Browser: amazon.com"],
@@ -102,7 +104,9 @@ const recoverySuggestion = {
 };
 let holdRecoverySuggestion = false;
 let resolveRecoverySuggestion = null;
-ipcMain.handle("gatekeeperRecovery:suggest", async () => {
+let lastSuggestedActivityId = null;
+ipcMain.handle("gatekeeperRecovery:suggest", async (_event, activityId) => {
+  lastSuggestedActivityId = activityId;
   if (!holdRecoverySuggestion) return recoverySuggestion;
   return new Promise((resolve) => { resolveRecoverySuggestion = resolve; });
 });
@@ -1030,8 +1034,30 @@ app.whenReady().then(async () => {
   })()`);
   await waitFor(win, `!document.querySelector(".rules-modal")`, "the rules preview modal to close");
 
-  // A suggestion for denial A must not appear after a live denial B replaces
-  // the card while the model call is in flight.
+  // Only denials made by the AI Reviewer offer prompt coaching. A manual
+  // denial remains normal Audit history even if it has the same decision.
+  gatekeeperActivity = {
+    ...gatekeeperActivity,
+    decidedBy: "You (asked)",
+    decisionSource: "prompt",
+    reviewReason: null,
+  };
+  win.webContents.send("audit:changed", { ids: [gatekeeperActivity.id] });
+  await waitFor(win, `!document.querySelector(".gatekeeper-denial-detail")`,
+    "a manual denial to remain plain Audit history");
+  approvalsReviewer.manualDenialHasNoCoaching = true;
+  gatekeeperActivity = {
+    ...gatekeeperActivity,
+    decidedBy: "AI Reviewer",
+    decisionSource: "adversarial",
+    reviewReason: "Purchases are not covered by the current family-assistant instructions.",
+  };
+  win.webContents.send("audit:changed", { ids: [gatekeeperActivity.id] });
+  await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
+    "AI Reviewer coaching to return with its Audit record");
+
+  // A historical denial remains actionable after a newer denial arrives: its
+  // audit record, not the transient latest-attention notice, owns coaching.
   holdRecoverySuggestion = true;
   await win.webContents.executeJavaScript(`(() => {
     [...document.querySelectorAll(".gatekeeper-denial-detail button")]
@@ -1055,8 +1081,10 @@ app.whenReady().then(async () => {
   resolveRecoverySuggestion(recoverySuggestion);
   resolveRecoverySuggestion = null;
   await win.webContents.executeJavaScript(`new Promise((resolve) => setTimeout(resolve, 25))`);
-  const staleSuggestionDiscarded = await win.webContents.executeJavaScript(
-    `!document.querySelector(".gatekeeper-suggestion") && document.querySelector(".gatekeeper-suggestion-modal")?.innerText.includes("newer Gatekeeper denial")`,
+  await waitFor(win, `document.querySelector(".gatekeeper-suggestion")`,
+    "the historical Gatekeeper suggestion after a newer denial");
+  const historicalSuggestionSurvivesNewerDenial = await win.webContents.executeJavaScript(
+    `document.querySelector(".gatekeeper-suggestion")?.value.includes("authorized to make purchases for the family")`,
   );
   holdRecoverySuggestion = false;
   gatekeeperRecoveryProbe = {
@@ -1069,11 +1097,23 @@ app.whenReady().then(async () => {
     intentId: "intent-gatekeeper-probe",
     title: "Buy a $125 Lego set on Amazon",
   };
+  gatekeeperRecoveryProbe = null;
   win.webContents.send("gatekeeperRecovery:changed");
   await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
-    "the original Gatekeeper recovery probe");
+    "the historical Gatekeeper recovery without live attention");
+  const historicalRecovery = {
+    visibleWithoutAttention: true,
+    usesActivityId: lastSuggestedActivityId === gatekeeperActivity.id,
+  };
   const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
     document.querySelector(".audit-gatekeeper")?.scrollIntoView({ block: "start" });
+    return true;
+  })()`);
+  // Close the first modal, then ask again for the historical denial. The coach's
+  // editable replacement must not apply until Save instructions is clicked.
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll(".gatekeeper-suggestion-modal button")]
+      .find((b) => b.textContent.trim() === "Cancel")?.click();
     return true;
   })()`);
   await scrollToApprovals();
@@ -1082,14 +1122,6 @@ app.whenReady().then(async () => {
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
   fs.writeFileSync(approvalsShot, (await win.webContents.capturePage()).toPNG());
-
-  // Close the stale modal, then ask again for the current denial. The coach's
-  // editable replacement must not apply until Save instructions is clicked.
-  await win.webContents.executeJavaScript(`(() => {
-    [...document.querySelectorAll(".gatekeeper-suggestion-modal button")]
-      .find((b) => b.textContent.trim() === "Cancel")?.click();
-    return true;
-  })()`);
   await win.webContents.executeJavaScript(`(() => {
     [...document.querySelectorAll(".gatekeeper-denial-detail button")]
       .find((b) => b.textContent.trim() === "Suggest revised instructions").click();
@@ -1127,6 +1159,21 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`new Promise((resolve) => setTimeout(resolve, 650))`);
   gatekeeperRecovery.savedAndDismissed = gatekeeperRecoveryProbe === null;
   gatekeeperRecovery.savedPurposeWon = loadSettings(probeHome).agentPurpose === recoverySuggestion.revision;
+
+  // Dismissing the historical helper is local to this selection. Selecting
+  // the same durable Audit row again makes its recovery action available.
+  await win.webContents.executeJavaScript(`document.querySelector(".gatekeeper-denial-dismiss").click()`);
+  await waitFor(win, `!document.querySelector(".gatekeeper-denial-detail")`,
+    "the historical Gatekeeper helper to dismiss");
+  historicalRecovery.dismissesLocally = true;
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelector(".list tbody tr.sel")
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    return true;
+  })()`);
+  await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
+    "the historical Gatekeeper helper to return after reselecting its row");
+  historicalRecovery.returnsOnReselect = true;
 
   // The field autosaves after typing pauses, and what goes back on screen is
   // what the setter stored.
@@ -1267,8 +1314,9 @@ app.whenReady().then(async () => {
     reason: "Newer denial",
   };
   win.webContents.send("gatekeeperRecovery:changed");
-  await waitFor(win, `!document.querySelector(".gatekeeper-denial-detail")`,
-    "the newer denial attention to replace the cleared row's attention");
+  await waitFor(win, `document.querySelector(".gatekeeper-denial-detail")`,
+    "the durable historical denial detail while Audit clear is pending");
+  globalNotice.concurrentAttentionKeepsHistoricalDetail = true;
   holdAuditClear = false;
   resolveAuditClear();
   resolveAuditClear = null;
@@ -1944,10 +1992,15 @@ app.whenReady().then(async () => {
     approvalsReviewer.recoveryNamesDenial &&
     approvalsReviewer.recoveryOffersCoaching &&
     approvalsReviewer.noRetryOverride &&
+    approvalsReviewer.manualDenialHasNoCoaching &&
     rulesModalView.opens &&
     rulesModalView.empty &&
     rulesModalView.explainsPluginReadPrefix &&
-    staleSuggestionDiscarded &&
+    historicalSuggestionSurvivesNewerDenial &&
+    historicalRecovery.visibleWithoutAttention &&
+    historicalRecovery.usesActivityId &&
+    historicalRecovery.dismissesLocally &&
+    historicalRecovery.returnsOnReselect &&
     gatekeeperRecovery.suggestionEditable &&
     gatekeeperRecovery.suggestionGeneralizes &&
     gatekeeperRecovery.notAppliedAutomatically &&
@@ -1969,6 +2022,7 @@ app.whenReady().then(async () => {
     globalNotice.dismiss &&
     globalNotice.routed &&
     globalNotice.dismissedWithoutDeletingRow &&
+    globalNotice.concurrentAttentionKeepsHistoricalDetail &&
     globalNotice.clearRemovesConcurrentAttention &&
     settings.noApprovalModeGroup &&
     settings.noModeChipsHere &&

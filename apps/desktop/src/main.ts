@@ -22,7 +22,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { PostHog } from "posthog-node";
-import { capabilityDisplay, Intent, JSONValue } from "@domo/protocol";
+import { Intent, JSONValue } from "@domo/protocol";
 import {
   ApprovalStore,
   LEGACY_VAULT_SERVER_FRAGMENTS,
@@ -259,8 +259,8 @@ let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 let telemetry: Telemetry | null = null;
-/** Latest AI Reviewer denial still useful to the owner. Raw intents remain in
- * PolicyEngine; the renderer gets only this capability-display view. */
+/** Latest AI Reviewer denial used for the cross-tab notice. Durable recovery
+ * context comes from Audit; the renderer gets only this capability-display view. */
 let gatekeeperAttention: GatekeeperRecoveryView | null = null;
 const gatekeeperNotified = new Set<string>();
 
@@ -636,17 +636,24 @@ ipcMain.handle("gatekeeperRecovery:dismiss", async (_e, intentId: unknown) => {
   }
   return gatekeeperAttention;
 });
-ipcMain.handle("gatekeeperRecovery:suggest", async (_e, intentId: unknown) => {
-  if (typeof intentId !== "string" || gatekeeperAttention?.intentId !== intentId || !device) {
+ipcMain.handle("gatekeeperRecovery:suggest", async (_e, activityId: unknown) => {
+  if (typeof activityId !== "string") {
     return { ok: false, reason: "That denied request is no longer available" };
   }
-  const denied = device.policy.deniedIntent(intentId);
-  if (!denied) return { ok: false, reason: "That denied request is no longer available" };
+  const activity = ensureAuditIndex().get(activityId);
+  if (
+    !activity ||
+    activity.decisionKind !== "denied" ||
+    activity.decisionSource !== "adversarial" ||
+    !activity.intentId
+  ) {
+    return { ok: false, reason: "That denied request is no longer available" };
+  }
   const settings = loadSettings(home);
   return suggestGatekeeperRevision({
     currentPurpose: settings.agentPurpose ?? "",
-    deniedRequest: denied.intent.request,
-    capabilities: denied.intent.capabilities.map((capability) => capabilityDisplay(capability)),
+    deniedRequest: activity.title,
+    capabilities: activity.capabilities,
     plowCredential: settings.relayCredential ?? "",
     apiBaseUrl,
   });

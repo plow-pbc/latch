@@ -101,6 +101,7 @@ async function refreshStatus() {
 const gatekeeperNotice = document.getElementById("gatekeeperNotice");
 let gatekeeperAttention = null;
 let gatekeeperAttentionGeneration = 0;
+let dismissedGatekeeperDetailId = null;
 
 async function dismissGatekeeperRecovery(intentId) {
   gatekeeperAttention = await window.domo.gatekeeperRecoveryDismiss(intentId);
@@ -121,7 +122,10 @@ async function showGatekeeperRecovery(attention = gatekeeperAttention) {
     keepId: selectedId,
   });
   const activity = page.rows.find((row) => row.intentId === attention.intentId);
-  if (activity) selectedId = activity.id;
+  if (activity) {
+    selectedId = activity.id;
+    dismissedGatekeeperDetailId = null;
+  }
   await refreshAudit({ changed: new Set(activity ? [activity.id] : ["*"]) });
   if (activity) auditMounted?.rows.get(activity.id)?.tr.scrollIntoView({ block: "center" });
   auditMounted?.detailScroll.focus({ preventScroll: true });
@@ -617,7 +621,11 @@ function createAuditRow(id) {
     el("td", {}, [actCw]),
   ]);
   // Select on mouse down (feels immediate, before the click completes).
-  tr.addEventListener("mousedown", () => { selectedId = id; refreshAudit(); });
+  tr.addEventListener("mousedown", () => {
+    selectedId = id;
+    dismissedGatekeeperDetailId = null;
+    refreshAudit();
+  });
   return {
     tr, timeCw, decisionCw, badgeCw, iconWrap, titleSpan,
     time: null, decision: null, decisionTone: null, tone: null, status: null, title: null, kind: null,
@@ -694,7 +702,7 @@ function closeGatekeeperSuggestionModal() {
   closeModal(closing.modal);
 }
 
-function openGatekeeperSuggestionModal(trigger, attention) {
+function openGatekeeperSuggestionModal(trigger, recovery) {
   const body = el("div", { class: "gatekeeper-suggestion-body" }, [
     el("div", { class: "gatekeeper-suggestion-loading" }, [
       el("span", { class: "gatekeeper-inline-spinner" }),
@@ -714,31 +722,26 @@ function openGatekeeperSuggestionModal(trigger, attention) {
       ]),
       el("div", { class: "gatekeeper-suggestion-context" }, [
         el("strong", { text: "Denied request" }),
-        el("div", { class: "mono", text: attention.request }),
-        attention.reason ? el("p", { class: "faint", text: `Reviewer: ${attention.reason}` }) : null,
+        el("div", { class: "mono", text: recovery.request }),
+        recovery.reason ? el("p", { class: "faint", text: `Reviewer: ${recovery.reason}` }) : null,
       ]),
       body,
     ],
     onDismiss: closeGatekeeperSuggestionModal,
   });
   if (!modal) return;
-  gatekeeperSuggestionModal = { modal, intentId: attention.intentId };
+  gatekeeperSuggestionModal = { modal, activityId: recovery.activityId };
 
   void Promise.all([
     window.domo.agentPurposeGet(),
-    window.domo.gatekeeperRecoverySuggest(attention.intentId),
+    window.domo.gatekeeperRecoverySuggest(recovery.activityId),
   ]).then(async ([currentPurpose, result]) => {
-    const latest = await window.domo.gatekeeperRecoveryGet();
     if (gatekeeperSuggestionModal?.modal !== modal) return;
-    if (latest?.intentId !== attention.intentId) {
-      body.replaceChildren(el("p", { class: "warn", text: "A newer Gatekeeper denial replaced this one." }));
-      return;
-    }
     if (!result?.ok) {
       const retry = el("button", { class: "btn", text: "Try again" });
       retry.addEventListener("click", () => {
         closeGatekeeperSuggestionModal();
-        openGatekeeperSuggestionModal(trigger, attention);
+        openGatekeeperSuggestionModal(trigger, recovery);
       });
       body.replaceChildren(
         el("p", { class: "warn", text: result?.reason || "Gatekeeper could not suggest a revision." }),
@@ -756,7 +759,7 @@ function openGatekeeperSuggestionModal(trigger, attention) {
         save.disabled = false;
         return;
       }
-      await dismissGatekeeperRecovery(attention.intentId);
+      await dismissGatekeeperRecovery(recovery.intentId);
       closeGatekeeperSuggestionModal();
     });
     body.replaceChildren(
@@ -776,23 +779,38 @@ function openGatekeeperSuggestionModal(trigger, attention) {
 }
 
 function gatekeeperDenialDetail(a) {
-  if (!attentionMatches(gatekeeperAttention, a)) return null;
-  const attention = gatekeeperAttention;
+  if (
+    dismissedGatekeeperDetailId === a.id ||
+    a.decisionKind !== "denied" ||
+    a.decisionSource !== "adversarial" ||
+    !a.intentId
+  ) return null;
+  const recovery = {
+    activityId: a.id,
+    intentId: a.intentId,
+    request: a.title,
+    capabilities: a.capabilities ?? [],
+    reason: a.reviewReason ?? null,
+  };
   const dismiss = el("button", {
     class: "gatekeeper-denial-dismiss",
     text: "×",
     attrs: { type: "button", "aria-label": "Dismiss Gatekeeper denial" },
   });
-  dismiss.addEventListener("click", () => void dismissGatekeeperRecovery(attention.intentId));
+  dismiss.addEventListener("click", () => {
+    dismissedGatekeeperDetailId = a.id;
+    if (attentionMatches(gatekeeperAttention, a)) void dismissGatekeeperRecovery(recovery.intentId);
+    else void refreshAudit({ changed: new Set([a.id]) });
+  });
   const suggest = el("button", { class: "btn gatekeeper-suggest", text: "Suggest revised instructions" });
-  suggest.addEventListener("click", () => openGatekeeperSuggestionModal(suggest, attention));
+  suggest.addEventListener("click", () => openGatekeeperSuggestionModal(suggest, recovery));
   return el("section", { class: "gatekeeper-denial-detail" }, [
     el("div", { class: "gatekeeper-denial-head" }, [
       el("h3", { text: "Gatekeeper denied this request" }),
       el("div", { class: "spacer" }),
       dismiss,
     ]),
-    attention.reason ? el("p", { class: "gatekeeper-denial-reason", text: attention.reason }) : null,
+    recovery.reason ? el("p", { class: "gatekeeper-denial-reason", text: recovery.reason }) : null,
     el("p", { text: "Revise Gatekeeper’s instructions if requests like this should be allowed." }),
     suggest,
   ]);

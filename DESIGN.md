@@ -153,7 +153,10 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   nothing — no audit line, no telemetry, no rule.
   A separate, owner-invoked **Gatekeeper revision coach** may run after an AI
   Reviewer denial. It sees the current owner-authored purpose, the denied
-  request, and its capability displays. The coach is asked for a complete
+  request, and its capability displays. Every persisted AI Reviewer denial in
+  Audit retains that context, so its row remains coachable after newer denials
+  and app restarts; manual denials and timeouts do not offer this action. The
+  coach is asked for a complete
   replacement that allows commands *similar to* the denied command by
   generalizing purpose and effect while preserving unrelated restrictions; it
   is explicitly forbidden from encoding the exact merchant, product, amount,
@@ -199,10 +202,11 @@ Decisions: **Always allow / Allow once / Deny.**
   call approved for one set of paths does not cover a call for a different
   one; a write is keyed on the full argv.
 - Rules are listed and revocable in the app. Goal text is never part of a rule.
-- An AI Reviewer denial grants nothing and cannot be overridden. Latch keeps
-  the latest denial in memory so the owner can review it and ask the revision
-  coach for an editable replacement Gatekeeper prompt; the operation remains
-  denied until a later request is decided under the owner's saved policy.
+- An AI Reviewer denial grants nothing and cannot be overridden. Latch keeps a
+  transient latest-denial notice for navigation and retains each reviewer
+  denial in Audit so the owner can review it and ask the revision coach for an
+  editable replacement Gatekeeper prompt; the operation remains denied until
+  a later request is decided under the owner's saved policy.
 - A third *observed* layer — processes spawned, files actually touched by the
   in-process file tools, sandbox denials, exit codes — lands in the audit log,
   not the approval flow. It is the raw material for the future iOS

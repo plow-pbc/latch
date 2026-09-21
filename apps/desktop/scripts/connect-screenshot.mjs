@@ -230,6 +230,8 @@ async function setUp() {
     agentDisplay: "Family assistant",
     goal: "Buy a birthday present",
     decidedBy: "AI Reviewer",
+    decisionSource: "adversarial",
+    reviewReason: "Purchases are not covered by the current family-assistant instructions.",
     intentId: "intent-gatekeeper-screenshot",
     exitCode: null,
     capabilities: ["Browser: amazon.com"],
