@@ -14,6 +14,8 @@ import {
   CapabilitiesInput,
   CapabilityGroup,
   CapabilityRow,
+  fullDiskChange,
+  type FullDiskChange,
   FullDiskWatch,
   type FullDiskState,
   isGroup,
@@ -455,6 +457,33 @@ describe("FullDiskWatch", () => {
     const watch = new FullDiskWatch(onAtLaunch);
     const states = reads.map(([app, inherited]) => watch.observe(app, inherited));
     expect(states.at(-1)).toBe(expected);
+  });
+});
+
+/**
+ * "Did Full Disk Access change since the owner was shown it?" — the one answer
+ * every surface reads, so one grant produces one acknowledgement.
+ */
+describe("the Full Disk Access change seam", () => {
+  it.each<[FullDiskState | undefined, FullDiskState | undefined, FullDiskChange]>([
+    ["granted", undefined, "granted"],
+    ["granted", "off", "granted"],
+    // Held by the app but not yet inherited by a plugin's sandboxed run, so
+    // there is no working capability to celebrate — and none lost either.
+    ["granted", "relaunch", "granted"],
+    ["relaunch", "off", null],
+    ["relaunch", "granted", "revoked"],
+    ["granted", "granted", null],
+    ["off", "granted", "revoked"],
+    ["broken", "granted", "revoked"],
+    ["off", undefined, null],
+    ["off", "off", null],
+    // No inventory yet. Reading that as a revocation would fire on every slow
+    // first probe.
+    [undefined, "granted", null],
+    [undefined, undefined, null],
+  ])("reads live=%s seen=%s as %s", (live, seen, change) => {
+    expect(fullDiskChange(live, seen)).toBe(change);
   });
 });
 

@@ -155,6 +155,33 @@ export class FullDiskWatch {
   }
 }
 
+/** Which way Full Disk Access moved since the owner was last shown it. */
+export type FullDiskChange = "granted" | "revoked" | null;
+
+/**
+ * Has Full Disk Access changed since the owner was shown it?
+ *
+ * The one answer any surface reads — setup's Grant access screen today, an
+ * in-app banner later — so one grant produces one acknowledgement rather than
+ * one per surface. `seen` is `Settings.fullDiskSeen`; `main.ts` owns writing
+ * it, which is what keeps this module pure.
+ *
+ * Only `granted` counts as held: `relaunch` and `broken` mean the switch is on
+ * but a plugin's sandboxed run still cannot use it, so arriving there is
+ * nothing to celebrate and leaving `granted` for it is a real loss. An unknown
+ * live state (no inventory yet) is never a change — otherwise a slow first
+ * probe reads as a revocation.
+ */
+export function fullDiskChange(
+  live: FullDiskState | undefined,
+  seen: FullDiskState | undefined,
+): FullDiskChange {
+  if (live === undefined) return null;
+  const is = live === "granted";
+  if (is === (seen === "granted")) return null;
+  return is ? "granted" : "revoked";
+}
+
 /**
  * Where each switch lives, as the deep link System Settings answers. The
  * panel flow opens the pane and floats beside it; whether the pane also
