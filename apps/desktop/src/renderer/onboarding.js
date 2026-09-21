@@ -35,11 +35,13 @@ let pluginsState = null;
 const skipped = new Set();
 let running = null;
 let missed = null;
-/** Whether this visit to Access has told main the owner has seen the current
- * Full Disk Access state. The screen is rebuilt on every redraw, so without
- * this the acknowledge would fire on each one — and the second would clear the
- * very `landed` flag the first is still animating. Reset when setup leaves the
- * step, so a later visit can celebrate a later grant. */
+/** The grant ids this visit to Access is celebrating, snapshotted on arrival.
+ * Held for the visit rather than read from `pluginsState` per draw, because
+ * acknowledging empties `landed` in the model and any later read — the
+ * acknowledge itself, a focus refresh, a grant flow — would drop the class
+ * mid-animation and cancel it. Empty until the first draw of the step; reset
+ * on leaving, so a later visit can celebrate a later grant. */
+let celebrating = [];
 let acknowledged = false;
 /** The id of the switch a redraw hands focus back to, so a click keeps it. */
 let restoreFocus = null;
@@ -791,10 +793,10 @@ function grantRow(grant) {
       ? button(grant.repeatAction, "link-button", () => void repeatGrant(grant.id))
       : null;
     if (repeat) repeat.disabled = running !== null;
-    // `landed` says this one is news — it arrived through the relaunch macOS
-    // forces, so without the animation it reads as a grant that was always
-    // there. The model decides; this file never tells grants apart by id.
-    const news = (pluginsState?.landed ?? []).includes(grant.id);
+    // News: it arrived through the relaunch macOS forces, so without the
+    // animation it reads as a grant that was always there. The model decides
+    // which ids those are; this file never tells grants apart by id.
+    const news = celebrating.includes(grant.id);
     control = el("span", { class: `item-chip${news ? " landed" : ""}` }, [
       icon("checkmark", { strokeWidth: "1.7" }),
       document.createTextNode(grant.done),
@@ -832,11 +834,13 @@ function grantRow(grant) {
 }
 
 function accessScreen() {
-  // Once per visit: the chips render with whatever `landed` this draw carries,
-  // and the acknowledge that follows clears it for the next arrival.
+  // Once per visit: take the snapshot this visit draws from, then tell main
+  // the owner has seen it. Fire-and-forget on purpose — applying an answer
+  // here is what would cancel the animation it just enabled.
   if (!acknowledged) {
     acknowledged = true;
-    void showPlugins(() => window.domo.pluginsAcknowledge());
+    celebrating = pluginsState?.landed ?? [];
+    void window.domo.pluginsAcknowledge();
   }
   return el("div", { class: "form-screen" }, [
     el("div", { class: "step-inner" }, [
@@ -966,7 +970,10 @@ function render() {
   clearInterval(expiryTimer);
   expiryTimer = null;
   if (state.step !== "plugins") restoreFocus = null;
-  if (state.step !== "access") acknowledged = false;
+  if (state.step !== "access") {
+    acknowledged = false;
+    celebrating = [];
+  }
   if (state.step !== "availability") syncAvailability = null;
 
   const continuingWelcome = state.step === "welcome" && screen.classList.contains("is-welcome");

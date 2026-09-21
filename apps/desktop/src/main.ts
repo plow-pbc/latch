@@ -1721,12 +1721,15 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; e
 /** The Access screen, on arrival: the owner has now seen whatever Full Disk
  *  Access currently is, so the next change is the next thing worth showing.
  *  Writes only when the inventory answers — an unknown state must not be
- *  recorded as seen, or the real grant that follows reads as already-shown. */
+ *  recorded as seen, or the real grant that follows reads as already-shown.
+ *
+ *  Deliberately returns nothing. Answering with fresh state would hand the
+ *  caller a payload whose `landed` this very call just emptied, and applying
+ *  it would replace the chip the screen is still animating. */
 ipcMain.handle("plugins:acknowledge", async () => {
   const inventory = device ? await device.hostInventory({ automationTargets: [] }) : null;
   const seen = inventory ? fullDiskStateOf(inventory) : undefined;
   if (seen) saveSettings(home, { ...loadSettings(home), fullDiskSeen: seen });
-  return pluginsNow();
 });
 
 /** Plugins → Continue: does a switched-on plugin still need a grant? A resumed
