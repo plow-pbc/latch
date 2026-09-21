@@ -3,7 +3,6 @@ import { echoesCredential, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 import {
   REVIEWER_MAX_TOKENS,
   REVIEWER_MODEL,
-  REVIEWER_THINKING_BUDGET,
   REVIEWER_TIMEOUT_MS,
 } from "./adversarialAgent.js";
 
@@ -106,7 +105,7 @@ export async function suggestGatekeeperRevision(
       {
         model: REVIEWER_MODEL,
         max_tokens: REVIEWER_MAX_TOKENS,
-        thinking: { type: "enabled", budget_tokens: REVIEWER_THINKING_BUDGET },
+        thinking: { type: "adaptive" },
         response_format: {
           type: "json_schema",
           json_schema: { name: "gatekeeper_revision", strict: true, schema: schema() },

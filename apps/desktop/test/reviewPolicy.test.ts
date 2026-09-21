@@ -161,7 +161,7 @@ describe("the model reported is the model that runs", () => {
   it("the wire id, provider prefix and all", () => {
     // A bare id is rejected by Plow's allowlist, and this is the value the
     // audit log records.
-    expect(REVIEWER_MODEL).toBe("anthropic/claude-sonnet-4-6");
+    expect(REVIEWER_MODEL).toBe("anthropic/claude-sonnet-5");
   });
 
   it("the audit record names the model that ran", async () => {
@@ -173,7 +173,7 @@ describe("the model reported is the model that runs", () => {
     );
     await h.run();
     const started = h.records.find((r) => r.event === "adversarial_review_started");
-    expect(started?.fields).toMatchObject({ model: "anthropic/claude-sonnet-4-6" });
+    expect(started?.fields).toMatchObject({ model: "anthropic/claude-sonnet-5" });
     // The provider field went with the choice it recorded.
     expect(started?.fields).not.toHaveProperty("provider");
   });

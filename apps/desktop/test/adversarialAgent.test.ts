@@ -465,20 +465,23 @@ describe("the Plow provider", () => {
       expect(fetchMock.mock.calls[0][0]).toBe("https://api.plow.co/v1/chat/completions");
     });
 
-    it("asks for anthropic/claude-sonnet-4-6, provider prefix and all", async () => {
-      // Not claude-sonnet-5: on the pinned litellm, thinking + response_format
-      // there drops the forced tool_choice and the schema stops being a
-      // guarantee. This model keeps both.
+    it("asks for anthropic/claude-sonnet-5, provider prefix and all", async () => {
+      // This was pinned to claude-sonnet-4-6 because thinking + response_format
+      // on sonnet-5 fell back to litellm's JSON-tool hack, which skips the
+      // forced tool_choice when thinking is on — the schema stopped being a
+      // guarantee. On the pinned litellm both models carry
+      // `supports_native_structured_output`, so both take the native
+      // `output_format` path and that fallback never runs for either.
       //
       // The `anthropic/` prefix is the part that has actually been wrong in
       // production: Plow's allowlist holds provider-prefixed ids and strips only
       // a leading `plow/` before checking membership, so the BARE id comes back
-      // `400 Model 'claude-sonnet-4-6' is not allowed` and the reviewer never
+      // `400 Model 'claude-sonnet-5' is not allowed` and the reviewer never
       // returns a verdict. It fails closed, so the symptom is a reviewer that
       // silently abstains forever — which is why this is pinned exactly rather
       // than matched loosely.
       await plowReview();
-      expect(requestBody().model).toBe("anthropic/claude-sonnet-4-6");
+      expect(requestBody().model).toBe("anthropic/claude-sonnet-5");
     });
 
     it("sends a model id that is prefixed, not bare", async () => {
@@ -487,7 +490,7 @@ describe("the Plow provider", () => {
       await plowReview();
       const model = requestBody().model as string;
       expect(model.startsWith("anthropic/")).toBe(true);
-      expect(model).not.toBe("claude-sonnet-4-6");
+      expect(model).not.toBe("claude-sonnet-5");
     });
 
     it("carries the verdict schema as an OpenAI json_schema response_format", async () => {
@@ -505,14 +508,15 @@ describe("the Plow provider", () => {
       });
     });
 
-    it("carries extended thinking, under the output cap", async () => {
+    it("carries adaptive thinking, not a token budget", async () => {
       await plowReview();
       const body = requestBody();
-      expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
+      // Adaptive is the only on-mode sonnet-5 accepts: `budget_tokens` is
+      // rejected outright, and an opaque provider 400 is a review with no
+      // verdict — which in adversarial mode denies the operation.
+      expect(body.thinking).toEqual({ type: "adaptive" });
+      expect(body.thinking).not.toHaveProperty("budget_tokens");
       expect(body.max_tokens).toBe(4096);
-      // litellm only auto-raises max_tokens when the caller sends none; a
-      // budget >= max_tokens comes back as an opaque provider 400.
-      expect(body.thinking.budget_tokens).toBeLessThan(body.max_tokens);
     });
 
     it("never sends temperature", async () => {
