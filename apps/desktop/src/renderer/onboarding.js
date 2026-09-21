@@ -834,12 +834,16 @@ function grantRow(grant) {
 }
 
 function accessScreen() {
-  // Once per visit: take the snapshot this visit draws from, then tell main
-  // the owner has seen it. Fire-and-forget on purpose — applying an answer
-  // here is what would cancel the animation it just enabled.
-  if (!acknowledged) {
+  // Once per visit, and not before the model has answered: a relaunch straight
+  // onto Access — the path the whole feature exists for — draws once with
+  // `pluginsState` still null, and snapshotting there would take an empty
+  // celebration AND mark the grant seen, swallowing it for good. The fetch
+  // that follows redraws this screen, which is where the snapshot belongs.
+  // Fire-and-forget on purpose: applying an answer here is what would cancel
+  // the animation it just enabled.
+  if (!acknowledged && pluginsState) {
     acknowledged = true;
-    celebrating = pluginsState?.landed ?? [];
+    celebrating = pluginsState.landed ?? [];
     void window.domo.pluginsAcknowledge();
   }
   return el("div", { class: "form-screen" }, [
