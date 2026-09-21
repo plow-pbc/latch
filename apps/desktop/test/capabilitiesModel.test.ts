@@ -14,8 +14,7 @@ import {
   CapabilitiesInput,
   CapabilityGroup,
   CapabilityRow,
-  fullDiskChange,
-  type FullDiskChange,
+  fullDiskLanded,
   FullDiskWatch,
   type FullDiskState,
   isGroup,
@@ -461,29 +460,26 @@ describe("FullDiskWatch", () => {
 });
 
 /**
- * "Did Full Disk Access change since the owner was shown it?" — the one answer
- * every surface reads, so one grant produces one acknowledgement.
+ * "Is Full Disk Access usable now and not yet shown?" — the one answer every
+ * surface reads, so one grant produces one acknowledgement.
  */
-describe("the Full Disk Access change seam", () => {
-  it.each<[FullDiskState | undefined, FullDiskState | undefined, FullDiskChange]>([
-    ["granted", undefined, "granted"],
-    ["granted", "off", "granted"],
-    // Held by the app but not yet inherited by a plugin's sandboxed run, so
-    // there is no working capability to celebrate — and none lost either.
-    ["granted", "relaunch", "granted"],
-    ["relaunch", "off", null],
-    ["relaunch", "granted", "revoked"],
-    ["granted", "granted", null],
-    ["off", "granted", "revoked"],
-    ["broken", "granted", "revoked"],
-    ["off", undefined, null],
-    ["off", "off", null],
-    // No inventory yet. Reading that as a revocation would fire on every slow
-    // first probe.
-    [undefined, "granted", null],
-    [undefined, undefined, null],
-  ])("reads live=%s seen=%s as %s", (live, seen, change) => {
-    expect(fullDiskChange(live, seen)).toBe(change);
+describe("the Full Disk Access landed seam", () => {
+  it.each<[FullDiskState | undefined, boolean | undefined, boolean]>([
+    ["granted", undefined, true],
+    ["granted", false, true],
+    ["granted", true, false],
+    // On, but a plugin's sandboxed run still cannot use it: announcing either
+    // would name a capability that does not work.
+    ["relaunch", undefined, false],
+    ["relaunch", false, false],
+    ["broken", undefined, false],
+    ["off", undefined, false],
+    ["off", false, false],
+    // No inventory yet — a slow first probe must not announce itself.
+    [undefined, undefined, false],
+    [undefined, false, false],
+  ])("reads live=%s seen=%s as %s", (live, seen, landed) => {
+    expect(fullDiskLanded(live, seen)).toBe(landed);
   });
 });
 

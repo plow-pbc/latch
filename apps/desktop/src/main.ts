@@ -62,7 +62,7 @@ import { AuditIndex, AuditQuery } from "./auditIndex.js";
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { capabilitiesView, CapabilitiesView, fullDiskChange, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
+import { capabilitiesView, CapabilitiesView, fullDiskLanded, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
 import { browserPluginRow, grantList, pluginExamples, pluginRows, type GrantItem, type PluginExample, type PluginRow } from "./pluginsModel.js";
 import { actOnRequirement } from "./requirements.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
@@ -1711,8 +1711,8 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; e
   // today; the list shape means the Google account and Safari slot in later
   // without a rename. A grant that needed the relaunch macOS forces is the
   // whole point: the process that watched it change is gone, so nothing but
-  // the stored `fullDiskSeen` can tell the new one it is news.
-  const landed = fullDiskChange(fullDiskState, loadSettings(home).fullDiskSeen) === "granted"
+  // the stored `fullDiskGrantedSeen` can tell the new one it is news.
+  const landed = fullDiskLanded(fullDiskState, loadSettings(home).fullDiskGrantedSeen)
     ? ["full_disk_access"]
     : [];
   return { rows, grants: grantList(rows), examples: pluginExamples(rows), landed };
@@ -1729,7 +1729,7 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; e
 ipcMain.handle("plugins:acknowledge", async () => {
   const inventory = device ? await device.hostInventory({ automationTargets: [] }) : null;
   const seen = inventory ? fullDiskStateOf(inventory) : undefined;
-  if (seen) saveSettings(home, { ...loadSettings(home), fullDiskSeen: seen });
+  if (seen) saveSettings(home, { ...loadSettings(home), fullDiskGrantedSeen: seen === "granted" });
 });
 
 /** Plugins → Continue: does a switched-on plugin still need a grant? A resumed

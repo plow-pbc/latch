@@ -155,31 +155,24 @@ export class FullDiskWatch {
   }
 }
 
-/** Which way Full Disk Access moved since the owner was last shown it. */
-export type FullDiskChange = "granted" | "revoked" | null;
-
 /**
- * Has Full Disk Access changed since the owner was shown it?
+ * Is Full Disk Access usable now, and not yet shown to the owner?
  *
- * The one answer any surface reads — setup's Grant access screen today, an
- * in-app banner later — so one grant produces one acknowledgement rather than
- * one per surface. `seen` is `Settings.fullDiskSeen`; `main.ts` owns writing
- * it, which is what keeps this module pure.
+ * The one answer any surface reads, so one grant produces one acknowledgement
+ * rather than one per surface. `seen` is `Settings.fullDiskGrantedSeen`;
+ * `main.ts` owns writing it, which is what keeps this module pure.
  *
- * Only `granted` counts as held: `relaunch` and `broken` mean the switch is on
- * but a plugin's sandboxed run still cannot use it, so arriving there is
- * nothing to celebrate and leaving `granted` for it is a real loss. An unknown
- * live state (no inventory yet) is never a change — otherwise a slow first
- * probe reads as a revocation.
+ * A line of code, and a rule worth pinning anyway: only `granted` counts.
+ * `relaunch` and `broken` both mean the switch is on while a plugin's
+ * sandboxed run still cannot use it, so announcing either would name a
+ * capability that does not work; and an unknown live state (no inventory yet)
+ * is never news, or a slow first probe announces itself.
  */
-export function fullDiskChange(
+export function fullDiskLanded(
   live: FullDiskState | undefined,
-  seen: FullDiskState | undefined,
-): FullDiskChange {
-  if (live === undefined) return null;
-  const is = live === "granted";
-  if (is === (seen === "granted")) return null;
-  return is ? "granted" : "revoked";
+  seen: boolean | undefined,
+): boolean {
+  return live === "granted" && seen !== true;
 }
 
 /**
