@@ -3,8 +3,9 @@
 
 import { onboardingFixtures } from "./onboarding-fixtures.js";
 import { pluginExamples } from "../onboardingExampleCatalog.js";
+import * as steps from "../onboardingSteps.js";
 
-const fixtures = onboardingFixtures(Date.now(), pluginExamples);
+const fixtures = onboardingFixtures(Date.now(), pluginExamples, steps);
 const fixturesByName = new Map(fixtures.map((fixture) => [fixture.name, fixture]));
 const params = new URLSearchParams(window.location.search);
 let initialGetDelayMs = Number(params.get("onboardingGetDelayMs")) || 0;

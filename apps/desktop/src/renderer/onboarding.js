@@ -73,8 +73,8 @@ const body = el("div", { class: "wizard-body" }, [screen]);
 const backButton = button("", "nav-back", () =>
   update(() => window.domo.onboardingBack(state?.step === "gatekeeper" ? gatekeeper?.text : undefined)));
 backButton.append(arrowIcon("back"), document.createTextNode("Back"));
-const dots = [0, 1, 2, 3, 4, 5].map(() => el("i", { class: "foot-dot" }));
-const dotRow = el("span", { class: "foot-dots", attrs: { "aria-hidden": "true" } }, dots);
+// Filled from state.progress — main counts the setup screens, not this file.
+const dotRow = el("span", { class: "foot-dots", attrs: { "aria-hidden": "true" } });
 const primaryLabel = el("span", { text: "Get started" });
 const primaryArrow = arrowIcon("next");
 const primaryButton = el("button", { class: "nav-next", attrs: { type: "button" } }, [
@@ -876,31 +876,28 @@ function footerForStep() {
   if (step === "done") return { hidden: true };
   if (step === "welcome") {
     return {
-      dot: null,
       label: "Get started",
       arrow: false,
       action: advance,
     };
   }
   if (step === "activate" || step === "waiting") {
-    return { dot: 0, label: "Continue", arrow: true, primaryHidden: true, disabled: true, action: null };
+    return { label: "Continue", arrow: true, primaryHidden: true, disabled: true, action: null };
   }
   if (step === "privacy") {
     return {
-      dot: 1,
       label: "Continue",
       arrow: true,
       action: advance,
     };
   }
   if (step === "gatekeeper") {
-    return { dot: 2, label: "Continue", arrow: true, action: continueFromGatekeeper };
+    return { label: "Continue", arrow: true, action: continueFromGatekeeper };
   }
   if (step === "access") {
     const { label, kind } = accessPrimary({ grants: pluginsState?.grants ?? [], skipped, running, missed });
     const actions = { run: startGrants, relaunch: () => window.domo.appRelaunch(), advance };
     return {
-      dot: 4,
       label,
       arrow: kind !== null,
       disabled: kind === null || pluginsState === null,
@@ -909,14 +906,12 @@ function footerForStep() {
   }
   if (step === "availability") {
     return {
-      dot: 5,
       label: "Continue",
       arrow: true,
       action: advance,
     };
   }
   return {
-    dot: 3,
     label: "Continue",
     arrow: true,
     action: advance,
@@ -981,11 +976,20 @@ function render() {
     backButton.hidden = state.canGoBack !== true;
     backButton.disabled = !!state.busy;
     primaryButton.hidden = !!config.primaryHidden;
-    dotRow.hidden = config.dot === null;
-    dots.forEach((dot, index) => {
-      dot.classList.toggle("active", index === config.dot);
-      dot.classList.toggle("complete", config.dot !== null && index < config.dot);
-    });
+    const progress = state.progress ?? null;
+    dotRow.hidden = progress === null;
+    if (progress) {
+      if (dotRow.childElementCount !== progress.total) {
+        dotRow.replaceChildren(...Array.from(
+          { length: progress.total },
+          () => el("i", { class: "foot-dot" }),
+        ));
+      }
+      [...dotRow.children].forEach((dot, index) => {
+        dot.classList.toggle("active", index === progress.index);
+        dot.classList.toggle("complete", index < progress.index);
+      });
+    }
     primaryLabel.textContent = config.label;
     primaryArrow.toggleAttribute("hidden", !config.arrow);
     primaryButton.disabled = !!config.disabled || !!state.busy;

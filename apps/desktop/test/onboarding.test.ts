@@ -581,6 +581,25 @@ describe("wizard steps around the existing verification flow", () => {
     });
   });
 
+  describe("the footer's progress", () => {
+    it("reports no dots on the screens that have none", () => {
+      expect(build().state().progress).toBeNull();
+    });
+
+    it("walks the dots forward through setup", async () => {
+      const settings = loadSettings(home);
+      settings.relayCredential = DEVICE_TOKEN;
+      saveSettings(home, settings);
+      const onboarding = build({ accessNeeded: async () => true });
+
+      expect(onboarding.state().step).toBe("plugins");
+      expect(onboarding.state().progress).toEqual({ index: 3, total: 6 });
+      expect((await onboarding.advance()).progress).toEqual({ index: 4, total: 6 });
+      expect((await onboarding.advance()).progress).toEqual({ index: 5, total: 6 });
+      expect((await onboarding.advance()).progress).toBeNull();
+    });
+  });
+
 });
 
 describe("the gatekeeper's instructions", () => {

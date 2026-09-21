@@ -1,7 +1,8 @@
-/** Shared states for the browser picker and the offscreen screenshot harness. */
-const BACK_STEPS = new Set(["activate", "waiting", "gatekeeper", "plugins", "access", "availability"]);
-
-export function onboardingFixtures(now, pluginExamples) {
+/** Shared states for the browser picker and the offscreen screenshot harness.
+ *  `steps` is `onboardingSteps.js` — passed in, like `pluginExamples`, because
+ *  the three callers resolve it from different places (src for the test, dist
+ *  for the screenshot script and the dev harness). */
+export function onboardingFixtures(now, pluginExamples, steps) {
   const displayCode = "Z1SWY";
   const sendTo = "+1 555 987 6543";
   const activation = {
@@ -540,7 +541,8 @@ export function onboardingFixtures(now, pluginExamples) {
     ...fixture,
     state: {
       ...fixture.state,
-      canGoBack: BACK_STEPS.has(fixture.state.step),
+      canGoBack: steps.canGoBackFrom(fixture.state.step) !== null,
+      progress: steps.setupProgress(fixture.state.step),
     },
   }));
 }

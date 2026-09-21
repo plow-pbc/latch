@@ -18,7 +18,13 @@ import { chatPeople, chatRowTitle, usableChatDisplayName } from "./chatRows.js";
 import { PRESET_TEXT } from "./gatekeeperPreview.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 import { queuePendingRevoke } from "./settingsActions.js";
-import { canGoBackFrom, isResumableStep, type SetupStep } from "./onboardingSteps.js";
+import {
+  canGoBackFrom,
+  isResumableStep,
+  setupProgress,
+  type SetupProgress,
+  type SetupStep,
+} from "./onboardingSteps.js";
 
 /**
  * The verification sub-steps retain their existing mechanics. A successful
@@ -122,6 +128,10 @@ export interface OnboardingState {
   step: OnboardingStep;
   /** Whether the shared setup footer should offer Back on this step. */
   canGoBack: boolean;
+  /** Which footer dot this screen lights, and how many there are — both from
+   * `SETUP_STEPS`, so adding a screen moves the dots without touching the
+   * renderer. Null on the screens that show no dots at all. */
+  progress: SetupProgress | null;
   /** One honest line: what happened, or what we are waiting for. Never a bare
    * spinner — every failure below produces text here. */
   message: string;
@@ -207,6 +217,7 @@ export class Onboarding {
     return {
       step: this.step,
       canGoBack: canGoBackFrom(this.step) !== null,
+      progress: setupProgress(this.step),
       message: this.message,
       noteKind: this.noteKind,
       busy: this.busy,
