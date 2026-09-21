@@ -828,7 +828,7 @@ function accessScreen() {
         el("h1", { text: "Grant access" }),
         el("p", {
           class: "subhead",
-          text: "One at a time. Skip anything and it'll wait for you in Settings\u00a0›\u00a0Plugins.",
+          text: "The Plow Gatekeeper will monitor how your agents use these permissions.",
         }),
       ]),
       el("div", { class: "item-rows" }, (pluginsState?.grants ?? []).map(grantRow)),
@@ -976,7 +976,7 @@ function render() {
     backButton.hidden = state.canGoBack !== true;
     backButton.disabled = !!state.busy;
     primaryButton.hidden = !!config.primaryHidden;
-    const progress = state.progress ?? null;
+    const progress = state.progress;
     dotRow.hidden = progress === null;
     if (progress) {
       if (dotRow.childElementCount !== progress.total) {

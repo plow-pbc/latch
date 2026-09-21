@@ -447,7 +447,7 @@ export function onboardingFixtures(now, pluginExamples, steps) {
       plugins: picked,
       expect: [
         "Grant access",
-        "One at a time. Skip anything and it'll wait for you in Settings",
+        "The Plow Gatekeeper will monitor how your agents use these permissions.",
         "Full Disk Access",
         `For ${iMessage}`,
         "Drag Plow Latch into the list in System Settings.",
