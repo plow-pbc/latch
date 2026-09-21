@@ -333,7 +333,7 @@ export function onboardingFixtures(now, pluginExamples) {
       gatekeeper: { presets: gatekeeperPresets, results: homeResults },
       expect: [
         "Meet the Plow Gatekeeper",
-        "Protect your data from malicious queries, while allowing your agents to get useful work done.",
+        "The Plow Gatekeeper uses a HIPAA-compliant model to protect your data from malicious queries, while allowing your agents to get useful work done.",
         "What access should Plow Latch allow to your Mac?",
         "Use a default:", "Personal assistant", "Executive assistant",
         ...gatekeeperPresets.home.rows.map((r) => r.label),

@@ -315,7 +315,7 @@ function gatekeeperScreen() {
     el("h1", { text: "Meet the Plow Gatekeeper" }),
     el("p", {
       class: "subhead",
-      text: "Protect your data from malicious queries, while allowing your agents to get useful work done.",
+      text: "The Plow Gatekeeper uses a HIPAA-compliant model to protect your data from malicious queries, while allowing your agents to get useful work done.",
     }),
   ]);
   const g = gatekeeper;

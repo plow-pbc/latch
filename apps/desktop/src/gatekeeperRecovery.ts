@@ -51,7 +51,7 @@ function schema() {
 }
 
 function systemPrompt(currentPurpose: string): string {
-  return `You help the owner of a Mac improve their Plow Latch Gatekeeper instructions after an AI Reviewer denial.
+  return `You help the owner of a Mac improve their Plow Gatekeeper instructions after an AI Reviewer denial.
 
 The current Gatekeeper prompt below is TRUSTED owner-authored policy. Return a full replacement, not an appended exception. Revise it to allow commands similar to the denied command by identifying the general purpose and effect that should be authorized. Do not encode the particular merchant, product, amount, path, recipient, URL, or exact command. Preserve every unrelated restriction. Keep the replacement concise, plain-language, and no broader than the denied command and capability bounds support.
 
