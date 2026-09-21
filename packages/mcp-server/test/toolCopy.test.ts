@@ -596,6 +596,20 @@ describe("what the agent-facing copy must and must not say", () => {
   });
 
   /**
+   * `say` is named with a caveat rather than left out: it speaks on a Mac whose
+   * app was opened from Finder and is silent on one opened from a terminal,
+   * exiting 0 either way (apps/desktop/src/launchSession.ts). An agent that
+   * reads only the promise reports the silent run as success, which is the
+   * user-visible failure — so the caveat, and the move that fixes it, are
+   * part of the contract.
+   */
+  it("the tooling list says a clean `say` is not evidence it was heard", () => {
+    expect(MACOS_TOOLING).toContain("say");
+    expect(MACOS_TOOLING).toMatch(/not evidence it was heard/);
+    expect(MACOS_TOOLING).toMatch(/Finder/);
+  });
+
+  /**
    * Every fault that must not appear ANYWHERE a model reads, in one table.
    * `offends` is a predicate rather than a regex so the bare-tool-name sweep —
    * a function call, not a match — belongs in the same table.

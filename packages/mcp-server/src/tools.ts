@@ -217,7 +217,9 @@ const GOAL = {
  */
 export const MACOS_TOOLING =
   "mdfind for Spotlight search across their files, sips for images, " +
-  "pbcopy and pbpaste for the clipboard, say to speak text aloud through the Mac's speakers, " +
+  "pbcopy and pbpaste for the clipboard, say to speak text aloud through the Mac's speakers " +
+  "(a clean exit is not evidence it was heard — a Latch opened from a terminal rather than from " +
+  "Finder runs it silently, and the user reopening it from Finder is the fix), " +
   "and whatever else they have installed";
 
 /**
