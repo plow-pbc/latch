@@ -20,10 +20,24 @@ import { ApiBaseUrl, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
  * provider-prefixed id — a bare model name is refused by the allowlist.
  *
  * Recorded on every `adversarial_review_started`, so the audit log names the
- * model that actually saw the intent. Keep in sync with the request below.
+ * model that actually saw the intent.
  */
 export const REVIEWER_MODEL = "anthropic/claude-sonnet-5";
-export const REVIEWER_MAX_TOKENS = 4096;
+/**
+ * The wire contract both Gatekeeper calls share, spread into each payload so
+ * there is one spelling of it rather than two kept in sync by hand — which is
+ * how the reviewer and the recovery coach could have drifted apart on the
+ * thinking shape, the drift this file's history already shows.
+ */
+export const REVIEWER_COMPLETION_BASE = {
+  model: REVIEWER_MODEL,
+  max_tokens: 4096,
+  // Adaptive is the only on-mode sonnet-5 accepts — a `budget_tokens` thinking
+  // param comes back as an opaque provider 400, which in adversarial mode is a
+  // DENY (`reviewPolicy.ts`). litellm forwards this shape verbatim to an
+  // adaptive-capable model.
+  thinking: { type: "adaptive" },
+} as const;
 /**
  * How long a review may take before we give up on it.
  *
@@ -428,15 +442,9 @@ function plowCall(
       ({ status, body } = await api.chatCompletion(
         credential,
         {
-          model: REVIEWER_MODEL,
+          ...REVIEWER_COMPLETION_BASE,
           // No `temperature`: litellm forwards it and Sonnet 5 rejects the
           // sampling params outright.
-          max_tokens: REVIEWER_MAX_TOKENS,
-          // Adaptive is the only on-mode Sonnet 5 accepts — a `budget_tokens`
-          // thinking param comes back as an opaque provider 400, which in
-          // adversarial mode is a DENY (`reviewPolicy.ts`). litellm forwards
-          // this shape verbatim to an adaptive-capable model.
-          thinking: { type: "adaptive" },
           response_format: {
             type: "json_schema",
             json_schema: {
