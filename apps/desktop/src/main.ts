@@ -66,6 +66,7 @@ import { capabilitiesView, CapabilitiesView, FullDiskState, FullDiskWatch, isGro
 import { browserPluginRow, grantList, pluginExamples, pluginRows, type GrantItem, type PluginExample, type PluginRow } from "./pluginsModel.js";
 import { actOnRequirement } from "./requirements.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
+import { launchSessionWarning, managerName } from "./launchSession.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -2699,6 +2700,13 @@ app.whenReady().then(async () => {
   // until it has one, so it gets the setup window and nothing else — not the
   // main window with a setup window floating beside it.
   gate.sync();
+
+  // Launched by a terminal rather than by Finder, this app is in the wrong
+  // login session and loses the desktop one's services silently — speech
+  // above all (launchSession.ts). Said once, after the gate has put a window
+  // up, and never awaited: it is a remark, not a step of the launch.
+  const session = launchSessionWarning(managerName());
+  if (session) void dialog.showMessageBox({ type: "warning", buttons: ["OK"], ...session });
 
   app.on("activate", () => {
     // Whichever window is the right one — never the main window on a Mac that

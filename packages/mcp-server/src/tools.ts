@@ -202,7 +202,12 @@ const GOAL = {
  * printed: `mdfind`, `sips`, `pbcopy` and `pbpaste` all exit 0 under
  * `(deny default)` + `(allow mach-lookup)`. `say hello world` ran through
  * `plow_run_command` under the generated profile on a real owner's Mac on
- * 2026-09-03 (relay 200, agent reported it spoke; exit code not captured).
+ * 2026-09-03 — but the evidence was the agent's own report that it spoke,
+ * which is not evidence: exit 0 is what a silent `say` returns too. The
+ * measurement that settles it is the synthesised bytes (`say -o`), and they
+ * say the profile is not the variable. The app's LOGIN SESSION is: speech
+ * produces nothing when the app was launched outside Aqua, and the app now
+ * says so at launch (apps/desktop/src/launchSession.ts).
  * `osascript` driving another application, `screencapture`, `shortcuts` and
  * `afplay` are deliberately absent — the profile grants no `appleevent-send`
  * and the app ships no automation entitlement, so naming them would point an
