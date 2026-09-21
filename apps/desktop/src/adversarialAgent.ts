@@ -9,8 +9,8 @@
  * Inference runs through Plow's OpenAI-shaped `/v1/chat/completions`, billed to
  * the user's Plow account and authenticated with the device's relay credential.
  *
- * The model uses the classic extended-thinking parameter (`budget_tokens`), not
- * the newer `effort` control, and the verdict comes back as structured JSON.
+ * The model thinks adaptively — it decides its own depth, rather than being
+ * handed a token budget — and the verdict comes back as structured JSON.
  */
 import { capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
 import { ApiBaseUrl, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";

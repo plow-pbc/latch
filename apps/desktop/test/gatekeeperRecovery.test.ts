@@ -81,6 +81,16 @@ describe("suggestGatekeeperRevision", () => {
     expect(JSON.stringify(body)).not.toContain(CREDENTIAL);
   });
 
+  it("runs on the reviewer's own model and thinking mode", async () => {
+    // The coach shares `adversarialAgent`'s constants, so a wire shape only the
+    // reviewer asserts can regress here alone — and sonnet-5 rejects a
+    // `budget_tokens` thinking param outright.
+    await suggest();
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.model).toBe("anthropic/claude-sonnet-5");
+    expect(body.thinking).toEqual({ type: "adaptive" });
+  });
+
   it("returns a proposal without changing the current purpose", async () => {
     await expect(suggest()).resolves.toEqual({
       ok: true,
