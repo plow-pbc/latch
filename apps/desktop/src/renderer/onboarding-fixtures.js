@@ -92,11 +92,14 @@ export function onboardingFixtures(now, pluginExamples, steps) {
     row("wiki", "Obsidian-style wiki", "A notebook your agents keep about the people and projects in your life.", "CLI", "ready", []),
     row("browser", "Browser use", "Browse and fill in forms in a private browser, with Safari as a fallback.", "Browser", browserStatus, [fda, safari]),
   ];
-  const pluginState = (pluginRows, grants) => {
+  // `landed` is what the owner has not been shown yet — empty unless a grant
+  // arrived through the relaunch macOS forces, which is the case worth drawing.
+  const pluginState = (pluginRows, grants, landed = []) => {
     return {
       rows: pluginRows,
       grants,
       examples: pluginExamples(pluginRows),
+      landed,
     };
   };
   const onlyWiki = pluginState(rows("off", "off", fullDisk, "off"), []);
@@ -108,6 +111,13 @@ export function onboardingFixtures(now, pluginExamples, steps) {
   const fullDiskDone = pluginState(
     rows("needs-setup", "ready", fullDiskMet, "off"),
     [{ ...fullDiskMet, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
+  );
+  // The same screen on the draw right after the relaunch, when the grant is
+  // news: the chip animates in rather than reading as always-there.
+  const fullDiskLanded = pluginState(
+    rows("needs-setup", "ready", fullDiskMet, "off"),
+    [{ ...fullDiskMet, plugins: [iMessage] }, { ...google, plugins: [gmail] }],
+    ["full_disk_access"],
   );
   // The Gatekeeper step's presets as main serves them (gatekeeperPreview.ts) on
   // Friday 2026-09-18, and the verdicts its example decks are rehearsed to read.
@@ -469,6 +479,15 @@ export function onboardingFixtures(now, pluginExamples, steps) {
       plugins: fullDiskDone,
       expect: ["Grant access", "Full Disk Access", "Granted", "Google account", "Set up all 1"],
       reject: ["Set up all 2"],
+      expectFocus: "Set up all 1",
+      expectDotCount: 6,
+    },
+    {
+      name: "access-landed",
+      state: { ...base, step: "access" },
+      plugins: fullDiskLanded,
+      expect: ["Grant access", "Full Disk Access", "Granted", "Google account", "Set up all 1"],
+      reject: ["Quit and reopen Plow Latch to finish."],
       expectFocus: "Set up all 1",
       expectDotCount: 6,
     },

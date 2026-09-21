@@ -62,7 +62,7 @@ import { AuditIndex, AuditQuery } from "./auditIndex.js";
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { capabilitiesView, CapabilitiesView, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
+import { capabilitiesView, CapabilitiesView, fullDiskChange, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
 import { browserPluginRow, grantList, pluginExamples, pluginRows, type GrantItem, type PluginExample, type PluginRow } from "./pluginsModel.js";
 import { actOnRequirement } from "./requirements.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
@@ -1677,7 +1677,7 @@ function connectorAccountNotices(): Record<string, { message: string; noteKind: 
  *  cannot disagree. The inventory asks only about the Automation pairs a
  *  staged plugin declares: this runs on every refresh, and the full sweep
  *  waits out a probe timeout on any app not answering Apple events. */
-async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; examples: PluginExample[] }> {
+async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; examples: PluginExample[]; landed: string[] }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
   const automationTargets = stagedPlugins
     .flatMap((p) => p.manifest.requires.permissions)
@@ -1707,8 +1707,27 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; e
     relaunchPending,
     description: device?.skills.skill(BROWSING_SKILL.name)?.description ?? BROWSING_SKILL.description,
   }));
-  return { rows, grants: grantList(rows), examples: pluginExamples(rows) };
+  // What the owner has not been shown yet. Only Full Disk Access populates it
+  // today; the list shape means the Google account and Safari slot in later
+  // without a rename. A grant that needed the relaunch macOS forces is the
+  // whole point: the process that watched it change is gone, so nothing but
+  // the stored `fullDiskSeen` can tell the new one it is news.
+  const landed = fullDiskChange(fullDiskState, loadSettings(home).fullDiskSeen) === "granted"
+    ? ["full_disk_access"]
+    : [];
+  return { rows, grants: grantList(rows), examples: pluginExamples(rows), landed };
 }
+
+/** The Access screen, on arrival: the owner has now seen whatever Full Disk
+ *  Access currently is, so the next change is the next thing worth showing.
+ *  Writes only when the inventory answers — an unknown state must not be
+ *  recorded as seen, or the real grant that follows reads as already-shown. */
+ipcMain.handle("plugins:acknowledge", async () => {
+  const inventory = device ? await device.hostInventory({ automationTargets: [] }) : null;
+  const seen = inventory ? fullDiskStateOf(inventory) : undefined;
+  if (seen) saveSettings(home, { ...loadSettings(home), fullDiskSeen: seen });
+  return pluginsNow();
+});
 
 /** Plugins → Continue: does a switched-on plugin still need a grant? A resumed
  *  setup can get here before the relay's poll, so ask Plow for the accounts —

@@ -51,6 +51,9 @@ window.domo = {
   cloudAgents: async () => selected.cloud ?? null,
   cloudOpenMessages: async () => {},
   pluginsGet: plugins,
+  // The preview keeps whatever `landed` its fixture declares, so the animation
+  // is visible here rather than clearing itself on the first draw.
+  pluginsAcknowledge: plugins,
   pluginsSetEnabled: plugins,
   requirementsAct: async () => ({ ...selected.plugins, error: null }),
   appRelaunch: async () => {},
