@@ -12,6 +12,7 @@ import {
   decodeTileImage,
   fallbackPanelFrame,
   panelFrame,
+  windowInWorkArea,
 } from "../src/permissionFlow.js";
 
 describe("appBundlePath", () => {
@@ -90,6 +91,39 @@ describe("fallbackPanelFrame", () => {
       width: 420,
       height: 96,
     });
+  });
+});
+
+/**
+ * A fixed-size window against the height the screen actually has. The setup
+ * window is laid out for 840 and cannot be resized, so on a 13" Mac — where
+ * the menu bar and the Dock leave less than that — an unclamped window puts
+ * its primary button under the Dock.
+ */
+describe("windowInWorkArea", () => {
+  const design = { width: 660, height: 840 };
+
+  it("keeps the design size and centres it when the screen has room", () => {
+    expect(windowInWorkArea({ x: 0, y: 25, width: 1512, height: 920 }, design))
+      .toEqual({ x: 426, y: 65, width: 660, height: 840 });
+  });
+
+  it("clamps to the work area's height and sits flush in it when it does not", () => {
+    // A 13" Mac with the Dock showing: shorter than the design height, so the
+    // window ends where the work area does instead of under the Dock.
+    expect(windowInWorkArea({ x: 0, y: 25, width: 1440, height: 768 }, design))
+      .toEqual({ x: 390, y: 25, width: 660, height: 768 });
+  });
+
+  it("clamps width the same way", () => {
+    expect(windowInWorkArea({ x: 0, y: 0, width: 600, height: 900 }, design))
+      .toEqual({ x: 0, y: 30, width: 600, height: 840 });
+  });
+
+  it("centres within a work area that does not start at the origin", () => {
+    // A second display sitting to the right of the built-in one.
+    expect(windowInWorkArea({ x: 1512, y: 25, width: 1920, height: 1055 }, design))
+      .toEqual({ x: 2142, y: 133, width: 660, height: 840 });
   });
 });
 

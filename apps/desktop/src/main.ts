@@ -59,7 +59,7 @@ import type { AutomationStatus, HostInventory, NativePermissions, RequestablePer
 import { approvalViewModel, CredentialTitles } from "./viewModel.js";
 import { AuditIndex, AuditQuery } from "./auditIndex.js";
 
-import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
+import { appBundleName, appBundlePath, decodeTileImage, windowInWorkArea } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { capabilitiesView, CapabilitiesView, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
@@ -2056,10 +2056,15 @@ function openOnboardingWindow(): void {
     onboardingWindow.focus();
     return;
   }
+  // 840 is the height these screens are drawn for, and it is taller than a
+  // 13" Mac has free once the menu bar and the Dock are out — so the window,
+  // which cannot be resized, put its primary button under the Dock. Nothing in
+  // the layout has to change for a shorter one: `.wizard-body` is the flex
+  // child that scrolls and the footer is its sibling, so the button stays put.
+  const frame = windowInWorkArea(screen.getPrimaryDisplay().workArea, { width: 660, height: 840 });
   onboardingWindow = new BrowserWindow({
     show: false,
-    width: 660,
-    height: 840,
+    ...frame,
     resizable: false,
     fullscreenable: false,
     title: "Plow Latch — Set Up",

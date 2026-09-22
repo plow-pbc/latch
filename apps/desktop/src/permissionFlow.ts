@@ -114,6 +114,29 @@ export function fallbackPanelFrame(workArea: Rect, size: { width: number; height
 const TILE_IMAGE_PREFIX = "data:image/png;base64,";
 // A tile is ~400×60pt at up to 3x — even uncompressed that is far under this.
 const TILE_IMAGE_MAX_BASE64 = 4 * 1024 * 1024;
+/**
+ * A fixed-size window placed inside the space the screen actually has.
+ *
+ * The work area excludes the menu bar and the Dock, so a design height taller
+ * than it — 840 on a 13" Mac — would put the bottom of a non-resizable window
+ * under the Dock, and with it whichever control lives there. Clamped to the
+ * work area rather than shrunk to a smaller fixed number, so it stays the size
+ * it was drawn for wherever there is room for it.
+ *
+ * Centred within the work area, not the display: a centre computed against the
+ * whole screen re-introduces the same overlap by half the Dock's height.
+ */
+export function windowInWorkArea(workArea: Rect, size: { width: number; height: number }): Rect {
+  const width = Math.min(size.width, workArea.width);
+  const height = Math.min(size.height, workArea.height);
+  return {
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + (workArea.height - height) / 2),
+    width,
+    height,
+  };
+}
+
 export function decodeTileImage(
   dataUrl: unknown,
   scale: unknown,
