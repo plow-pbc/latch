@@ -587,8 +587,7 @@ const showPlugins = latestOnly((next) => {
 });
 
 async function refreshPlugins() {
-  // Access acknowledges as it reads: one operation, no ordering to lose.
-  await showPlugins(() => window.domo.pluginsGet(state?.step === "access"));
+  await showPlugins(() => window.domo.pluginsGet());
 }
 
 /** Access's one button: the list's flows in order; a grant that did not land
@@ -840,7 +839,12 @@ function accessScreen() {
   // null, and snapshotting there would take an empty celebration. The read
   // that follows redraws this screen, and it is the read that marked the grant
   // seen, so the snapshot and the mark cannot disagree.
-  if (celebrating === null && pluginsState) celebrating = pluginsState.landed ?? [];
+  if (celebrating === null && pluginsState) {
+    celebrating = pluginsState.landed ?? [];
+    // Only now, with a committed payload drawn: acknowledging during the read
+    // let a superseded response consume a celebration nobody ever saw.
+    void window.domo.pluginsAcknowledge();
+  }
   return el("div", { class: "form-screen" }, [
     el("div", { class: "step-inner" }, [
       el("div", { class: "head-center" }, [

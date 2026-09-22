@@ -1677,7 +1677,7 @@ function connectorAccountNotices(): Record<string, { message: string; noteKind: 
  *  cannot disagree. The inventory asks only about the Automation pairs a
  *  staged plugin declares: this runs on every refresh, and the full sweep
  *  waits out a probe timeout on any app not answering Apple events. */
-async function pluginsNow(acknowledge = false): Promise<{ rows: PluginRow[]; grants: GrantItem[]; examples: PluginExample[]; landed: string[] }> {
+async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; examples: PluginExample[]; landed: string[] }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
   const automationTargets = stagedPlugins
     .flatMap((p) => p.manifest.requires.permissions)
@@ -1712,24 +1712,15 @@ async function pluginsNow(acknowledge = false): Promise<{ rows: PluginRow[]; gra
   // without a rename. A grant that needed the relaunch macOS forces is the
   // whole point: the process that watched it change is gone, so nothing but
   // the stored `fullDiskGrantedSeen` can tell the new one it is news.
-  const seen = loadSettings(home).fullDiskGrantedSeen;
-  const landed = fullDiskLanded(fullDiskState, seen) ? ["full_disk_access"] : [];
-  // `acknowledge` is the Access screen saying the owner is being shown THIS
-  // payload, so the mark rides the same read that hands the celebration out.
-  // It used to be a second call, and every ordering between the two was a bug
-  // in its own right — the answer cancelling the animation it enabled, the
-  // read landing before the write, a fast Back-and-forward reading the value
-  // mid-flight. One operation has no ordering to get wrong. The comparison
-  // also resets the mark when the switch went off, so a re-grant is news again.
-  // Recorded whenever the inventory answered and the record disagrees, which
-  // on a first visit writes the baseline: `false` while the switch is off is
-  // what makes the later grant news, and `true` on an install that already had
-  // it stops the upgrade from announcing a week-old permission. An unanswered
-  // inventory writes nothing — recording a guess as observed is how the real
-  // grant that follows reads as already-shown.
-  if (acknowledge && fullDiskState !== undefined && seen !== (fullDiskState === "granted")) {
-    saveSettings(home, { ...loadSettings(home), fullDiskGrantedSeen: fullDiskState === "granted" });
-  }
+  // This read is PURE, and that is what makes the celebration survivable.
+  // Marking it seen here meant one read consumed it, so when `latestOnly`
+  // discarded that response for a newer one the mark was already written and
+  // the animation never reached the DOM. Reading without consuming means every
+  // concurrent read carries the same answer and whichever one the renderer
+  // commits still has it; `plugins:acknowledge` records it afterwards.
+  const landed = fullDiskLanded(fullDiskState, loadSettings(home).fullDiskGrantedSeen)
+    ? ["full_disk_access"]
+    : [];
   return { rows, grants: grantList(rows), examples: pluginExamples(rows), landed };
 }
 
@@ -1746,7 +1737,25 @@ async function accessNeeded(): Promise<boolean> {
   return (await pluginsNow()).grants.some((g) => g.status !== "met");
 }
 
-ipcMain.handle("plugins:get", async (_e, acknowledge: unknown) => pluginsNow(acknowledge === true));
+ipcMain.handle("plugins:get", async () => pluginsNow());
+
+/** The Access screen, once it has COMMITTED a payload and drawn it: the owner
+ *  has now seen whatever Full Disk Access is, so the next change is the next
+ *  thing worth showing. After the render, never during the read — a mark
+ *  written by a response that `latestOnly` then discards consumes a
+ *  celebration nobody saw.
+ *
+ *  Re-probes rather than trusting the caller, so the renderer never decides
+ *  what was observed, and writes only when the inventory answered: the
+ *  baseline it records is what separates an install that has always had the
+ *  grant from one about to receive it. Answers with nothing — fresh state here
+ *  would replace the chip the screen is still animating. */
+ipcMain.handle("plugins:acknowledge", async () => {
+  const inventory = device ? await device.hostInventory({ automationTargets: [] }) : null;
+  const state = inventory ? fullDiskStateOf(inventory) : undefined;
+  if (state === undefined) return;
+  saveSettings(home, { ...loadSettings(home), fullDiskGrantedSeen: state === "granted" });
+});
 
 /** The owner's off switches: the disabled NAMES persist (a later plugin is on
  *  by default), and the device is told in the same breath, so the skill and

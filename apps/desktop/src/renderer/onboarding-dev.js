@@ -51,6 +51,9 @@ window.domo = {
   cloudAgents: async () => selected.cloud ?? null,
   cloudOpenMessages: async () => {},
   pluginsGet: plugins,
+  // Answers with nothing in production; the preview matches, so its fixture's
+  // `landed` stands and the animation is visible here.
+  pluginsAcknowledge: async () => {},
   pluginsSetEnabled: plugins,
   requirementsAct: async () => ({ ...selected.plugins, error: null }),
   appRelaunch: async () => {},
