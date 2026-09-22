@@ -115,6 +115,10 @@ ipcMain.handle("plugins:get", async () => {
   if (currentFixture.pluginsPending) return new Promise(() => {});
   return currentFixture.plugins;
 });
+// Access calls this once it has drawn a payload. It answers with nothing in
+// production, and nothing here either — the fixture's `landed` has to stand,
+// or the shot is of a screen that already forgot what it was celebrating.
+ipcMain.handle("plugins:acknowledge", async () => {});
 ipcMain.handle("plugins:setEnabled", async () => currentFixture.plugins);
 ipcMain.handle("requirements:act", async () => ({ ...currentFixture.plugins, error: null }));
 ipcMain.handle("app:relaunch", async () => {});
