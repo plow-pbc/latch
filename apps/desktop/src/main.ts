@@ -62,7 +62,7 @@ import { AuditIndex, AuditQuery } from "./auditIndex.js";
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { capabilitiesView, CapabilitiesView, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
+import { capabilitiesView, CapabilitiesView, fullDiskLanded, FullDiskState, FullDiskWatch, isGroup, paneFor, permissionTitle } from "./capabilitiesModel.js";
 import { browserPluginRow, grantList, pluginExamples, pluginRows, type GrantItem, type PluginExample, type PluginRow } from "./pluginsModel.js";
 import { actOnRequirement } from "./requirements.js";
 import { enableSafariJavaScript, Runner, safariJavaScriptEnabled } from "./safariJavaScript.js";
@@ -1677,7 +1677,7 @@ function connectorAccountNotices(): Record<string, { message: string; noteKind: 
  *  cannot disagree. The inventory asks only about the Automation pairs a
  *  staged plugin declares: this runs on every refresh, and the full sweep
  *  waits out a probe timeout on any app not answering Apple events. */
-async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; examples: PluginExample[] }> {
+async function pluginsNow(acknowledge = false): Promise<{ rows: PluginRow[]; grants: GrantItem[]; examples: PluginExample[]; landed: string[] }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
   const automationTargets = stagedPlugins
     .flatMap((p) => p.manifest.requires.permissions)
@@ -1707,7 +1707,30 @@ async function pluginsNow(): Promise<{ rows: PluginRow[]; grants: GrantItem[]; e
     relaunchPending,
     description: device?.skills.skill(BROWSING_SKILL.name)?.description ?? BROWSING_SKILL.description,
   }));
-  return { rows, grants: grantList(rows), examples: pluginExamples(rows) };
+  // What the owner has not been shown yet. Only Full Disk Access populates it
+  // today; the list shape means the Google account and Safari slot in later
+  // without a rename. A grant that needed the relaunch macOS forces is the
+  // whole point: the process that watched it change is gone, so nothing but
+  // the stored `fullDiskGrantedSeen` can tell the new one it is news.
+  const seen = loadSettings(home).fullDiskGrantedSeen;
+  const landed = fullDiskLanded(fullDiskState, seen) ? ["full_disk_access"] : [];
+  // `acknowledge` is the Access screen saying the owner is being shown THIS
+  // payload, so the mark rides the same read that hands the celebration out.
+  // It used to be a second call, and every ordering between the two was a bug
+  // in its own right — the answer cancelling the animation it enabled, the
+  // read landing before the write, a fast Back-and-forward reading the value
+  // mid-flight. One operation has no ordering to get wrong. The comparison
+  // also resets the mark when the switch went off, so a re-grant is news again.
+  // Recorded whenever the inventory answered and the record disagrees, which
+  // on a first visit writes the baseline: `false` while the switch is off is
+  // what makes the later grant news, and `true` on an install that already had
+  // it stops the upgrade from announcing a week-old permission. An unanswered
+  // inventory writes nothing — recording a guess as observed is how the real
+  // grant that follows reads as already-shown.
+  if (acknowledge && fullDiskState !== undefined && seen !== (fullDiskState === "granted")) {
+    saveSettings(home, { ...loadSettings(home), fullDiskGrantedSeen: fullDiskState === "granted" });
+  }
+  return { rows, grants: grantList(rows), examples: pluginExamples(rows), landed };
 }
 
 /** Plugins → Continue: does a switched-on plugin still need a grant? A resumed
@@ -1723,7 +1746,7 @@ async function accessNeeded(): Promise<boolean> {
   return (await pluginsNow()).grants.some((g) => g.status !== "met");
 }
 
-ipcMain.handle("plugins:get", async () => pluginsNow());
+ipcMain.handle("plugins:get", async (_e, acknowledge: unknown) => pluginsNow(acknowledge === true));
 
 /** The owner's off switches: the disabled NAMES persist (a later plugin is on
  *  by default), and the device is told in the same breath, so the skill and

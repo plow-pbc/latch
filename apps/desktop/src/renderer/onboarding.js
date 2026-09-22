@@ -35,6 +35,14 @@ let pluginsState = null;
 const skipped = new Set();
 let running = null;
 let missed = null;
+/** The grant ids this visit to Access is celebrating, snapshotted on arrival —
+ * `null` until it has been taken, which is also what says the acknowledge has
+ * not fired yet. Held for the visit rather than read from `pluginsState` per
+ * draw, because acknowledging empties `landed` in the model and any later read
+ * — the acknowledge itself, a focus refresh, a grant flow — would drop the
+ * class mid-animation and cancel it. Back to `null` on leaving, so a later
+ * visit can celebrate a later grant. */
+let celebrating = null;
 /** The id of the switch a redraw hands focus back to, so a click keeps it. */
 let restoreFocus = null;
 let doneAgent = null;
@@ -579,7 +587,8 @@ const showPlugins = latestOnly((next) => {
 });
 
 async function refreshPlugins() {
-  await showPlugins(() => window.domo.pluginsGet());
+  // Access acknowledges as it reads: one operation, no ordering to lose.
+  await showPlugins(() => window.domo.pluginsGet(state?.step === "access"));
 }
 
 /** Access's one button: the list's flows in order; a grant that did not land
@@ -785,7 +794,11 @@ function grantRow(grant) {
       ? button(grant.repeatAction, "link-button", () => void repeatGrant(grant.id))
       : null;
     if (repeat) repeat.disabled = running !== null;
-    control = el("span", { class: "item-chip" }, [
+    // News: it arrived through the relaunch macOS forces, so without the
+    // animation it reads as a grant that was always there. The model decides
+    // which ids those are; this file never tells grants apart by id.
+    const news = celebrating?.includes(grant.id) ?? false;
+    control = el("span", { class: `item-chip${news ? " landed" : ""}` }, [
       icon("checkmark", { strokeWidth: "1.7" }),
       document.createTextNode(grant.done),
       repeat,
@@ -822,6 +835,12 @@ function grantRow(grant) {
 }
 
 function accessScreen() {
+  // Not before the model has answered: a relaunch straight onto Access — the
+  // path the whole feature exists for — draws once with `pluginsState` still
+  // null, and snapshotting there would take an empty celebration. The read
+  // that follows redraws this screen, and it is the read that marked the grant
+  // seen, so the snapshot and the mark cannot disagree.
+  if (celebrating === null && pluginsState) celebrating = pluginsState.landed ?? [];
   return el("div", { class: "form-screen" }, [
     el("div", { class: "step-inner" }, [
       el("div", { class: "head-center" }, [
@@ -950,6 +969,7 @@ function render() {
   clearInterval(expiryTimer);
   expiryTimer = null;
   if (state.step !== "plugins") restoreFocus = null;
+  if (state.step !== "access") celebrating = null;
   if (state.step !== "availability") syncAvailability = null;
 
   const continuingWelcome = state.step === "welcome" && screen.classList.contains("is-welcome");
@@ -1023,7 +1043,12 @@ async function apply(next) {
     gatekeeper = null;
   }
   if (state?.step !== "done") doneAgent = null;
-  if (!onPluginStep()) pluginsState = null;
+  // Dropped on any step change, not just off the plugin steps: Access and
+  // Plugins share this state, so keeping it across Access → Plugins → Access
+  // let the second visit snapshot the FIRST visit's `landed` — replaying a
+  // celebration for a grant already acknowledged. Each visit waits for its own
+  // read, which the transition below starts.
+  if (!onPluginStep() || state?.step !== previousStep) pluginsState = null;
   if (state?.step !== previousStep) missed = null;
   if (!onPluginStep() && state?.step !== "availability") skipped.clear();
   if (state?.step !== "availability") availability = null;

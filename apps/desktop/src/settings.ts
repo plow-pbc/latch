@@ -220,6 +220,11 @@ export interface Settings {
   /** When the owner last dismissed the Capabilities banner (ISO-8601);
    *  blocks before it stay out of the next banner. */
   blockedBannerSeenAt?: string;
+  /** Whether the owner has been shown that Full Disk Access is usable.
+   *  `fullDiskLanded` in capabilitiesModel.ts reads it against the live state,
+   *  and it is shared on purpose, so one grant cannot produce both a setup
+   *  animation and, later, a banner for the same event. */
+  fullDiskGrantedSeen?: boolean;
   /** Keep this Mac awake while plugged in (off until setup's Availability
    * screen turns it on). The opt-in only —
    * keepAwake.ts owns when a blocker is actually held (AC power only, and an

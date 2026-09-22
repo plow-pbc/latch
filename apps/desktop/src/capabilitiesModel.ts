@@ -156,6 +156,30 @@ export class FullDiskWatch {
 }
 
 /**
+ * Is Full Disk Access usable now, and not yet shown to the owner?
+ *
+ * The one answer any surface reads, so one grant produces one acknowledgement
+ * rather than one per surface. `seen` is `Settings.fullDiskGrantedSeen`;
+ * `main.ts` owns writing it, which is what keeps this module pure.
+ *
+ * A line of code, and three rules worth pinning. Only `granted` counts:
+ * `relaunch` and `broken` both mean the switch is on while a plugin's
+ * sandboxed run still cannot use it, so announcing either would name a
+ * capability that does not work. An unknown live state (no inventory yet) is
+ * never news, or a slow first probe announces itself. And `seen` must be an
+ * explicit `false` — a missing field means this install has never recorded an
+ * observation, which every install upgrading into this feature looks like, and
+ * treating that as "not yet shown" would announce a week-old grant as fresh.
+ * Absent is a baseline, not a negative.
+ */
+export function fullDiskLanded(
+  live: FullDiskState | undefined,
+  seen: boolean | undefined,
+): boolean {
+  return live === "granted" && seen === false;
+}
+
+/**
  * Where each switch lives, as the deep link System Settings answers. The
  * panel flow opens the pane and floats beside it; whether the pane also
  * ACCEPTS A DROPPED APP (Full Disk Access and Accessibility do; the rest

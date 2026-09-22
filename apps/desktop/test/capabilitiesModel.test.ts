@@ -14,6 +14,7 @@ import {
   CapabilitiesInput,
   CapabilityGroup,
   CapabilityRow,
+  fullDiskLanded,
   FullDiskWatch,
   type FullDiskState,
   isGroup,
@@ -455,6 +456,33 @@ describe("FullDiskWatch", () => {
     const watch = new FullDiskWatch(onAtLaunch);
     const states = reads.map(([app, inherited]) => watch.observe(app, inherited));
     expect(states.at(-1)).toBe(expected);
+  });
+});
+
+/**
+ * "Is Full Disk Access usable now and not yet shown?" — the one answer every
+ * surface reads, so one grant produces one acknowledgement.
+ */
+describe("the Full Disk Access landed seam", () => {
+  it.each<[FullDiskState | undefined, boolean | undefined, boolean]>([
+    ["granted", false, true],
+    ["granted", true, false],
+    // Absent is a baseline, not a negative: every install upgrading into this
+    // feature has no field, and announcing its week-old grant as fresh is the
+    // one way this feature can lie.
+    ["granted", undefined, false],
+    // On, but a plugin's sandboxed run still cannot use it: announcing either
+    // would name a capability that does not work.
+    ["relaunch", undefined, false],
+    ["relaunch", false, false],
+    ["broken", undefined, false],
+    ["off", undefined, false],
+    ["off", false, false],
+    // No inventory yet — a slow first probe must not announce itself.
+    [undefined, undefined, false],
+    [undefined, false, false],
+  ])("reads live=%s seen=%s as %s", (live, seen, landed) => {
+    expect(fullDiskLanded(live, seen)).toBe(landed);
   });
 });
 
