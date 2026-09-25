@@ -68,7 +68,6 @@ import { parseFrontmatter, type Skill, SkillRegistry } from "./skills.js";
 import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
-import { registerWhatsappSkill } from "./whatsappSkill.js";
 
 /** The browser's own name in `disabledPlugins` — it has no manifest and is
  *  not one of `this.plugins`, but the owner's off switch treats it the same. */
@@ -401,19 +400,13 @@ export class DeviceAgent {
     );
     this.executor = new Executor(path.join(home, "device/scratch"));
     this.skills = new SkillRegistry();
-    // `ownerHome`, not `home` — this describes where WhatsApp put the owner's
-    // messages on the real machine, while `home` is a DOMO_HOME a test points
-    // at a throwaway root. It is a parameter rather than an `os.homedir()` read
-    // in here so construction stays hermetic: otherwise a DeviceAgent built in
-    // a test publishes a different manifest depending on whether the developer
-    // happens to have WhatsApp installed. Presence is sampled ONCE, here — the
-    // same start-time answer `browserRuntime` gives, so installing WhatsApp
-    // while the app is running needs a restart to publish the skill.
-    registerWhatsappSkill(this.skills, ownerHome);
+    // `ownerHome`, not `home`. Presence of the iMessage store is sampled
+    // once, here, so a test's throwaway ownerHome keeps the suite off the
+    // developer's own archive.
     registerImessageSkill(this.skills, ownerHome);
     // The playground exists before any agent asks about it, and the skill can
     // therefore name a folder that is really there. `ownerHome` for the same
-    // reason as WhatsApp above: the folder belongs to the owner's real home,
+    // reason as iMessage above: the folder belongs to the owner's real home,
     // and a test's throwaway ownerHome keeps the suite off the developer's.
     ensurePlowFolder(ownerHome);
     registerPlowFolderSkill(this.skills, ownerHome);

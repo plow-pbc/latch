@@ -2,8 +2,11 @@
 
 Stages [`plow-messages`](https://github.com/plow-pbc/plow-messages)'s
 `plow-messages` CLI for an agent driving this Mac through Latch — read access
-to the owner's iMessage archive (`~/Library/Messages/chat.db`), with bodies
-already decoded.
+to the owner's iMessage archive (`~/Library/Messages/chat.db`) and WhatsApp
+archive (`~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite`),
+with bodies already decoded. WhatsApp is `--app whatsapp` before the verb.
+The default is iMessage. `--app` and `--store` after the verb are refused by
+the argv allowlist before an intent exists.
 
 The plugin ships the way `gog` and `wiki` do: a sha-pinned, self-contained
 `plow-messages` binary per architecture under `runtime.binaries`, fetched and
