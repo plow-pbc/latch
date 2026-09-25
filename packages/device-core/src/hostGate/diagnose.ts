@@ -457,7 +457,14 @@ export function diagnose(f: HostFacts): Diagnosis {
     requires_relaunch: cause === "macos_permission" && permission === "full_disk_access",
   });
 
-  // 1. Apple events are their own service with their own evidence, and none
+  // 1. Assistive access is its own grant. A UI-scripted send that lacks it
+  //    must not read as the script's own problem.
+  if (f.stderr_hint === "assistive_access_refused") {
+    evidence.push("the run reported it is not allowed assistive access (-1719)");
+    return verdict("macos_permission", "confirmed", "accessibility");
+  }
+
+  // 2. Apple events are their own service with their own evidence, and none
   //    of the file facts bear on them.
   if (f.automation_target !== null) {
     const target = f.automation_target;

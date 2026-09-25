@@ -174,7 +174,11 @@ from, the audit log stores, and the adversarial reviewer evaluates.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`,
   `apple_events`, `browser`, `credential`, `applescript` (an app by name + its
   bundle id resolved on this Mac + the whole script + the `args` handed to
-  its `on run argv`; runs via osascript outside the sandbox — §6).
+  its `on run argv`; runs via osascript outside the sandbox — §6),
+  `message_send` (an app `imessage` or `whatsapp`, a canonical recipient, and
+  a `bodyPreview` the card shows). The rule key drops `bodyPreview` with the
+  reason, so always-allow is `(app, recipient)` and a different recipient is
+  a different card. There is no per-app grant.
 
 ## 5. Approval model
 

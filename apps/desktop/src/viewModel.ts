@@ -108,7 +108,9 @@ export function approvalViewModel(
     runsCommand: caps.some((c) => c.kind === "process.exec"),
     usesBrowser: caps.some((c) => c.kind === "browser"),
     fillsCredentials: caps.some((c) => c.kind === "credential" && c.access === "fill"),
-    sendsAppleEvents: caps.some((c) => (c.kind === "apple_events" && c.allowed === true) || c.kind === "applescript"),
+    sendsAppleEvents: caps.some(
+      (c) => (c.kind === "apple_events" && c.allowed === true) || c.kind === "applescript",
+    ),
     scriptsApp: scriptCap
       ? {
           app: scriptCap.app ?? "?",

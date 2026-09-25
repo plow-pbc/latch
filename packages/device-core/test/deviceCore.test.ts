@@ -352,6 +352,30 @@ describe("PolicyEngine", () => {
     expect(engine.allRules()).toHaveLength(0);
   });
 
+  it("always_allow for one recipient covers a later body and not a different recipient", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const always = new HeadlessPolicy({ intent: "always_allow" });
+    const deny = new HeadlessPolicy({ intent: "deny" });
+    const toAda = (body: string): Capability => ({
+      kind: "message_send",
+      app: "imessage",
+      recipient: "ada@example.com",
+      bodyPreview: body,
+    });
+    const first = await engine.decide(intentWith([toAda("hello")]), always);
+    expect(first.decision).toBe("always_allow");
+    expect(first.source).toBe("prompt");
+    expect(engine.allRules()).toHaveLength(1);
+    const same = await engine.decide(intentWith([toAda("a different sentence")]), deny);
+    expect(same.decision).toBe("always_allow");
+    expect(same.source).toBe("rule");
+    const other = await engine.decide(
+      intentWith([{ kind: "message_send", app: "imessage", recipient: "grace@example.com", bodyPreview: "hello" }]),
+      deny,
+    );
+    expect(other.decision).toBe("deny");
+  });
+
   it("an applescript intent is never stored as a rule either: the same script is decided fresh", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const always = new HeadlessPolicy({ intent: "always_allow" });

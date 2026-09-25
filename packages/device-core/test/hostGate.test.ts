@@ -159,6 +159,19 @@ describe("reading an error", () => {
     expect(bare.evidence.join(" ")).toMatch(/ran outside the sandbox/);
   });
 
+  it("reads -1719 as missing Accessibility, confirmed", () => {
+    expect(stderrHint("execution error: System Events got an error: osascript is not allowed assistive access. (-1719)")).toBe(
+      "assistive_access_refused",
+    );
+    expect(stderrHint("not allowed assistive access")).toBe("assistive_access_refused");
+    expect(errnoFromHint("assistive_access_refused")).toBeNull();
+    const d = diagnose(facts({ stderr_hint: "assistive_access_refused", automation_target: "System Events" }));
+    expect(d.cause).toBe("macos_permission");
+    expect(d.confidence).toBe("confirmed");
+    expect(d.permission).toBe("accessibility");
+    expect(d.owner_action).toMatch(/Accessibility/);
+  });
+
   it("reads AppleScript's -54 as a scripted app refusing its data", () => {
     expect(stderrHint("143:474: execution error: File permission error. (-54)")).toBe("scripted_data_not_permitted");
     expect(errnoFromHint("scripted_data_not_permitted")).toBeNull();

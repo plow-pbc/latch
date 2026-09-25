@@ -27,6 +27,7 @@ export type StderrHint =
   | "scripted_data_not_permitted"
   | "authorization_denied"
   | "apple_event_privilege_violation"
+  | "assistive_access_refused"
   | "read_only_filesystem";
 
 export function stderrHint(output: string): StderrHint | null {
@@ -51,6 +52,11 @@ export function stderrHint(output: string): StderrHint | null {
   // outgoing message" is the known one. Not consent, which was granted;
   // nothing in System Settings changes it.
   if (/\(-10004\)|errAEPrivilegeError|A privilege violation occurred/i.test(output)) return "apple_event_privilege_violation";
+  // errAEEventNotPermitted's cousin for UI scripting: -1719, "not allowed
+  // assistive access". The grant is Accessibility, which the inventory
+  // already knows how to query. Without this hint the run reads as the
+  // script's own problem.
+  if (/-1719\b|not allowed assistive access/i.test(output)) return "assistive_access_refused";
   // AppleScript's permErr (-54): an app the script drives — Contacts,
   // Calendar — refused it the DATA, which is that service's own privacy
   // permission for the calling app, not Automation consent (the event

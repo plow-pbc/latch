@@ -585,6 +585,13 @@ function classifyActivity(
       // Started and not yet ended: still approved, still in flight.
       return ran("Running", "blue", "running");
     }
+    const sent = latest("message_send_result");
+    if (sent && jv(sent).get("verified").bool !== true) return ran("Unverified", "amber", "failed");
+    if (has("message_send_refused")) {
+      const cause = jv(entry("message_send_refused")!).get("cause").str;
+      if (cause === "accessibility") return ran("Blocked · Accessibility", "amber", "blocked");
+      return ran("Error", "red", "failed");
+    }
     return ran("Completed", "green", "completed");
   }
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
@@ -840,6 +847,24 @@ function describeStep(e: JSONValue): AuditStep {
       state = ev.get("exit_code").int === 0 ? "ok" : "bad";
       break;
     case "applescript_error": text = `Script error: ${ev.get("error").str ?? ""}`; state = "bad"; break;
+    case "message_send_refused": {
+      const cause = ev.get("cause").str;
+      text = cause === "accessibility"
+        ? "Message not sent: Accessibility is not granted"
+        : "Message not sent: the store could not be read";
+      state = "bad";
+      break;
+    }
+    case "message_send_result": {
+      const app = ev.get("app").str ?? "";
+      const recipient = ev.get("recipient").str ?? "";
+      const verified = ev.get("verified").bool === true;
+      text = verified
+        ? `Message verified: ${app} to ${recipient} (row ${ev.get("rowid").int ?? "?"})`
+        : `Message unverified: ${app} to ${recipient}. Not sent again.`;
+      state = verified ? "ok" : "bad";
+      break;
+    }
     case "file_read": text = `File read: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
     case "file_write": text = `File written: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
     case "denied_operation": {

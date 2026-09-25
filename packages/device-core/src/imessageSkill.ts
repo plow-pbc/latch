@@ -8,14 +8,13 @@
  * `/Users/<owner>/…` rather than `~`-relative: an absolute path is the only one
  * that cannot be lost when an agent runtime drops the optional `cwd` argument
  * (see `imessageSkillFor` for the failure that cost). iMessage adds one thing
- * WhatsApp does not need: a send
- * path. Reading is a query; sending is a script through
- * `plow_run_applescript`, outside the sandbox, because Messages refuses Apple
+ * WhatsApp does not need: a send path. Reading is a query. A text send is
+ * `plow_send_message`, outside the sandbox, because Messages refuses Apple
  * events from a sandboxed sender (-10004, `app_refuses_sandboxed_sender`).
  */
 import fs from "node:fs";
 import path from "node:path";
-import { indentSkillCodeBlock as indented, Skill, SkillRegistry } from "./skills.js";
+import { Skill, SkillRegistry } from "./skills.js";
 
 /** The handle the verify-after-send recipe tells the agent to replace. */
 export const IMESSAGE_HANDLE_PLACEHOLDER = "HANDLE_FROM_THE_QUERY_ABOVE";
@@ -95,9 +94,6 @@ export function imessageStorePath(home: string): string {
  * scaffolding cannot drift across three copies (which it did, twice, before this
  * helper). `\\"` in a `tell` string renders to the `\"` the script's JSON needs.
  */
-const TELL_PARTICIPANT =
-  'tell application \\"Messages\\" to send (item 1 of argv) to participant (item 2 of argv) of (first account whose service type = iMessage)';
-const TELL_CHAT = 'tell application \\"Messages\\" to send (item 1 of argv) to chat id (item 2 of argv)';
 const TELL_ATTACHMENT =
   'tell application \\"Messages\\" to send (POSIX file (item 1 of argv)) to participant (item 2 of argv) of (first account whose service type = iMessage)';
 
@@ -181,6 +177,8 @@ cannot decode. A \`text\`-only query reports real messages as absent, which is e
 failure this CLI exists to remove; the CLI decodes the blob and is the only thing here
 that can.
 
+A row's \`is_from_me\` says which side sent it. Dates in the store count from the Apple epoch \`978307200\`. The send check opens that store always \`-readonly\`, and never name the store in \`write_paths\`. You do not run that check yourself.
+
 ## Names and handles — for a read or a send
 
 **A name is not in the archive.** \`sender\` and \`--handle\` are phones and emails, and a
@@ -198,101 +196,47 @@ Contacts returns, not the first.
 
 ## Sending
 
-Send with \`plow_run_applescript\`, never with \`osascript\` under \`plow_run_command\`. Messages
-refuses Apple events from a sandboxed sender (\`-10004\`; this Mac diagnoses it as
-\`app_refuses_sandboxed_sender\`), so a send from inside the sandbox fails whatever it was
-granted. \`plow_run_applescript\` runs the script with \`/usr/bin/osascript\` outside the sandbox.
+Send a text with \`plow_send_message\`, not with \`plow_run_applescript\` and never with
+\`osascript\` under \`plow_run_command\`. Messages refuses Apple events from a sandboxed sender (\`-10004\`; this Mac diagnoses it as \`app_refuses_sandboxed_sender\`). The tool
+runs the send outside the sandbox and then checks the store.
 
-**The text — and the participant or chat identifier — always arrive in \`args\`, never
-pasted into the script.** A message body is untrusted input (see the two rules, above) — a
-\`"\` or a \`\\\` in it would be a syntax error if interpolated into a double-quoted AppleScript
-literal, and \`" & (do shell script "…") & "\` is AppleScript injection: reachable the moment
-the owner asks you to relay something a stranger wrote. The identifier gets the same
-treatment even though it is a value you chose, not stranger text — one fewer thing that can
-break the script. \`on run argv\` / \`item 1 of argv\` hands the script the text, and
-\`item 2 of argv\` the identifier, as values — a body that starts with \`-\` included — not
-pasted into its text; what the script does with them is in the script, and the recipes below
-only send them. Both stay visible to the approver, listed beside the script on the approval
-card.
+\`recipient\` is a phone, an email, or the chat \`guid\` from \`plow-messages chats\`. A
+display name is refused. The text is \`body\`. Both are on the approval card. The body
+is not part of an always-allow rule: approving always for one recipient covers a later
+message to that same recipient with different text, and does not cover a different
+recipient. There is no grant for every recipient.
 
-**To a participant**, by phone number or email:
+    plow_send_message {
+      app: "imessage",
+      recipient: "<phone, email, or chat guid>",
+      body: "<text>",
+      goal: "<what the owner asked for, in one line>"
+    }
 
-${sendRecipe(TELL_PARTICIPANT, "<text>", "<phone or email>")}
+The reply is the verified store row, or \`status: "unverified"\` when no new outbound
+row appeared. **Do not send again** because a reply was unverified. A second send is a
+second message. The success criterion is the tool's \`verified\` row, whose \`is_sent = 1\`
+and \`error = 0\`. \`is_delivered\` is not part of it. \`error = 22\` is the common one, a
+recipient the pinned service cannot reach.
 
-**To a chat**, using the \`guid\` from \`plow-messages chats\` — this is the only form that reaches a
-group thread, since a group has no single participant to address:
-
-${sendRecipe(TELL_CHAT, "<text>", "<guid from plow-messages chats>")}
-
-**With a file attachment** — the same \`args\` rule applies to the path, so a filename
-holding a quote cannot break the script either:
+**With a file attachment** the text tool does not apply. Send the file with
+\`plow_run_applescript\`, and the path arrives in \`args\`, never pasted into the script:
 
 ${sendRecipe(TELL_ATTACHMENT, "<absolute path>", "<phone or email>")}
 
-The sending account is whichever one Messages.app itself is signed into — the owner's
-Messages setting, not a script parameter, and not yours to choose. The first send may raise
-the one-time macOS "Latch would like to control Messages" consent dialog; that is the owner
-approving Latch as an automation client, separate from the per-call decision below.
+The sending account is whichever one Messages.app itself is signed into. The first
+send may raise the one-time macOS consent dialog for Latch to control Messages.
 
-**Every send is decided on its own, by design.** How depends on the owner's approval mode:
-under Ask they read the script and its \`args\` on the approval card and answer; under the AI
-Reviewer, the reviewer reads them and decides; under Approve the send is allowed without
-anyone reading it; under Deny it is refused. In no mode is a script remembered — no
-always-allow rule is ever stored or replayed for one, so each send is decided afresh.
-Do not fight this with a wrapper script that hides the variation from the approver; that
-defeats the approval, it does not satisfy it.
+**A text send can be remembered for one recipient.** Under Ask the owner reads the
+recipient and the body. Under Approve the send is allowed without anyone reading it.
+Under Deny it is refused. Do not fight this with a wrapper script that hides the
+recipient from the approver.
 
 ## Verify after send
 
-\`osascript\` returns as soon as Messages.app accepts the request — before delivery — so exit
-0 means Messages queued it, never that anyone received it. A send to a handle that is not
-reachable on the service the script pinned fails *after* that exit, and silently as far as
-\`osascript\` is concerned — but not silently in the store, which records why. Worse,
-a bare "newest row for this handle" query can hand back an OLDER successful send as if it
-were confirmation of the one that just (silently) failed — so snapshot first, **before**
-you send:
-
-${indented(IMESSAGE_QUERIES.verifySendSnapshot)}
-
-These two are the only SQL left in this skill, and they read delivery bookkeeping rather
-than message bodies, so \`sqlite3\` answers them correctly where it cannot answer a read.
-Run it always \`-readonly\`, and never name the store in \`write_paths\`:
-
-    plow_run_command {
-      argv: ["/usr/bin/sqlite3", "-readonly", "-list", "${storePath}", "<the query>"],
-      read_paths: ["${storeDir}"],
-      goal: "<why you are checking a send, in one line>"
-    }
-
-Then, after the send, check what actually happened:
-
-${indented(IMESSAGE_QUERIES.verifySend)}
-
-Substitute the number the snapshot returned for \`${IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER}\`,
-and whichever you sent to for \`${IMESSAGE_HANDLE_PLACEHOLDER}\` (a participant send) or
-\`${IMESSAGE_CHAT_GUID_PLACEHOLDER}\` (a chat/group send — leave the other placeholder as
-text, it will simply never match). The handle and guid go inside SQL string literals, so
-**double every \`'\` in the value you substitute** (\`o'brien@x.com\` → \`o''brien@x.com\`);
-an un-doubled apostrophe ends the string early and the query fails to parse.
-
-Then read the newest row. **The success criterion is \`is_sent = 1\` and \`error = 0\`.**
-\`is_delivered\` is not part of it: a receipt may never come back, so plenty of genuinely
-delivered messages sit at \`is_delivered = 0\` forever, and treating that as failure reports
-a good send as a bad one. A row with \`error\` non-zero did NOT go out — \`error = 22\` is the
-common one, the recipient not being reachable on the service the script pinned (typically
-an iMessage send to a number that only does SMS, which never falls back once the script
-binds the buddy to the iMessage service). A send that never shows up here did not go out at
-all, whatever \`osascript\` returned — and because every row is newer than the snapshot, an
-older success at the same handle or chat can never be mistaken for this send's delivery.
-
-This check is **best-effort, not an identity proof.** \`chat.db\` puts no per-sender marker on
-an outbound row, so any send to that destination after the snapshot — including one from a
-different agent driving this same Mac — sits above it and looks identical here. Run the check
-**right after your send and before issuing another to the same destination**, and take the
-newest row as yours; with one agent sending one message at a time (the normal case) that is
-exact. Two sends racing to the same destination in the same window genuinely cannot be told
-apart from \`chat.db\` alone — treat a same-destination race as unverifiable rather than
-trusting the top row.
+The tool snapshots the store and looks for exactly one new outbound row at that
+recipient. You do not run that query yourself. A zero exit from Messages means the
+app accepted the script, not that the row exists. Trust \`status\`.
 
 ## Approval semantics
 
@@ -301,8 +245,8 @@ its full argv: the rule collapses to \`plow-messages search\` (or \`thread\`/\`c
 \`unreplied\`), so approving one search for always covers every later search, whatever
 words you pass it next time. The rest of the capability set still has to match, which is
 why \`read_paths\` above names the store directory as a fixed path rather than one templated
-per call. A send never qualifies for that treatment (see Sending, above) — a script is
-never a rule.`,
+per call. A text send is a different rule. Always-allow covers that one recipient,
+and the body is not part of the key. An attachment script is never a rule.`,
   };
 }
 
