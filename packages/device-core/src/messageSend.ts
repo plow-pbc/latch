@@ -128,7 +128,7 @@ export function parseOutbound(text: string, whatsapp: boolean): OutboundRow[] {
     .trim()
     .split("\n")
     .map((line) => {
-      const cols = line.split("|");
+      const cols = line.split("|").map((cell) => cell.replace(/\r/g, ""));
       const rowid = Number(cols[0]);
       if (whatsapp) return { rowid, chat: cols[1] ?? "", sent: true };
       // verifySend selects ROWID, chat guid, handle, is_sent, is_delivered, error.

@@ -374,6 +374,11 @@ describe("PolicyEngine", () => {
       deny,
     );
     expect(other.decision).toBe("deny");
+    const sameJidOtherApp = await engine.decide(
+      intentWith([{ kind: "message_send", app: "whatsapp", recipient: "ada@example.com", bodyPreview: "hello" }]),
+      deny,
+    );
+    expect(sameJidOtherApp.decision).toBe("deny");
   });
 
   it("an applescript intent is never stored as a rule either: the same script is decided fresh", async () => {

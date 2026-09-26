@@ -6,15 +6,22 @@
  * new rows, or more than one, is unverified, and the script is not run again.
  */
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   canonicalRecipient,
   imessageScript,
+  imessageVerifySql,
   IMESSAGE_PARTICIPANT_SCRIPT,
   parseOutbound,
   performMessageSend,
   RECIPIENT_NOT_A_HANDLE,
   verifyOutcome,
   whatsappOpenUrl,
+  whatsappSnapshotSql,
+  whatsappVerifySql,
   WHATSAPP_SCRIPT,
   type MessageSendDeps,
   type MessageSendRequest,
@@ -179,5 +186,65 @@ describe("performMessageSend", () => {
     );
     expect(result).toMatchObject({ status: "blocked", host_gate: "accessibility" });
     expect(h.scripts).toBe(1);
+  });
+});
+
+function sqliteList(db: string, sql: string): string {
+  return execFileSync("/usr/bin/sqlite3", ["-readonly", "-list", db, sql], { encoding: "utf8" });
+}
+
+describe("verify SQL against a real sqlite -list", () => {
+  it("reads a successful iMessage row and ignores a later failure and a CR on the error cell", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-send-im-"));
+    const db = path.join(dir, "chat.db");
+    const schema = [
+      "create table handle (ROWID integer primary key, id text);",
+      "create table chat (ROWID integer primary key, guid text);",
+      "create table message (ROWID integer primary key, handle_id integer, date integer, is_from_me integer, is_sent integer, is_delivered integer, error integer);",
+      "create table chat_message_join (chat_id integer, message_id integer);",
+      "insert into handle (ROWID, id) values (1, 'ada@example.com');",
+      "insert into chat (ROWID, guid) values (1, 'iMessage;-;ada@example.com');",
+      "insert into chat (ROWID, guid) values (2, 'iMessage;+;chatgroup');",
+      "insert into message values (4, 1, 1, 1, 1, 1, 0);",
+      "insert into message values (9, 1, 2, 1, 1, 0, 0);",
+      "insert into message values (10, 1, 3, 1, 0, 0, 22);",
+      "insert into message values (11, NULL, 4, 1, 1, 1, 0);",
+      "insert into chat_message_join values (1, 4);",
+      "insert into chat_message_join values (1, 9);",
+      "insert into chat_message_join values (1, 10);",
+      "insert into chat_message_join values (2, 11);",
+    ].join(" ");
+    execFileSync("/usr/bin/sqlite3", [db, schema]);
+    const listed = sqliteList(db, imessageVerifySql(4, "ada@example.com"));
+    const rows = parseOutbound(listed, false);
+    expect(rows.filter((r) => r.sent).map((r) => r.rowid)).toEqual([9]);
+    expect(rows.find((r) => r.rowid === 10)?.sent).toBe(false);
+    const group = parseOutbound(sqliteList(db, imessageVerifySql(4, "iMessage;+;chatgroup")), false);
+    expect(group.filter((r) => r.sent).map((r) => r.rowid)).toEqual([11]);
+    expect(parseOutbound("9|iMessage;-;ada@example.com|ada@example.com|1|0|0\r|now", false)[0]?.sent).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("counts one new WhatsApp from-me row and not an older one or another chat", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-send-wa-"));
+    const db = path.join(dir, "ChatStorage.sqlite");
+    const schema = [
+      "create table ZWACHATSESSION (Z_PK integer primary key, ZCONTACTJID text);",
+      "create table ZWAMESSAGE (ZCHATSESSION integer, ZISFROMME integer);",
+      "insert into ZWACHATSESSION values (1, '14155550100@s.whatsapp.net');",
+      "insert into ZWACHATSESSION values (2, '19998887777@s.whatsapp.net');",
+      "insert into ZWAMESSAGE (rowid, ZCHATSESSION, ZISFROMME) values (3, 1, 1);",
+      "insert into ZWAMESSAGE (rowid, ZCHATSESSION, ZISFROMME) values (8, 1, 1);",
+      "insert into ZWAMESSAGE (rowid, ZCHATSESSION, ZISFROMME) values (9, 1, 0);",
+      "insert into ZWAMESSAGE (rowid, ZCHATSESSION, ZISFROMME) values (10, 2, 1);",
+    ].join(" ");
+    execFileSync("/usr/bin/sqlite3", [db, schema]);
+    const before = Number(sqliteList(db, whatsappSnapshotSql()).trim());
+    expect(before).toBe(10);
+    const listed = sqliteList(db, whatsappVerifySql(3, "14155550100@s.whatsapp.net"));
+    const rows = parseOutbound(listed, true);
+    expect(rows.map((r) => r.rowid)).toEqual([8]);
+    expect(verifyOutcome(rows)).toMatchObject({ verified: true, row: { rowid: 8 } });
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
