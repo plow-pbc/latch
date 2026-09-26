@@ -490,7 +490,8 @@ export const TOOLS: ToolSpec[] = [
       // caller-supplied cwd, which its dispatch never reads (`pluginDir`
       // below is the one true cwd). None of it may reach an approval card,
       // or the card the owner approved and what could run would disagree.
-      const rawCwd = a.get("cwd").str;
+      // An empty cwd names no directory: treated as absent, not refused.
+      const rawCwd = a.get("cwd").str || null;
       const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd ?? undefined);
       if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
       // Resolved here, before the intent is built, so the approval card
