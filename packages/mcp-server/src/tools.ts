@@ -490,8 +490,9 @@ export const TOOLS: ToolSpec[] = [
       // caller-supplied cwd, which its dispatch never reads (`pluginDir`
       // below is the one true cwd). None of it may reach an approval card,
       // or the card the owner approved and what could run would disagree.
-      const rawCwd = a.get("cwd").str;
-      const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd ?? undefined);
+      // An empty cwd names no directory: treated as absent, not refused.
+      const rawCwd = a.get("cwd").str || undefined;
+      const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd);
       if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
       // Resolved here, before the intent is built, so the approval card
       // shows the owner the true run location (`Run: <argv> (in <dir>)`)
@@ -502,7 +503,7 @@ export const TOOLS: ToolSpec[] = [
 
       // Resolve every declared or provider-derived path before it becomes the
       // bound the human approves and the sandbox enforces.
-      const cwd = rawCwd === null ? undefined : await resolved(rawCwd);
+      const cwd = rawCwd === undefined ? undefined : await resolved(rawCwd);
       const providerReadPaths: string[] = [];
       const providerWritePaths: string[] = [];
       if (provider !== null) {

@@ -977,28 +977,7 @@ describe("review findings", () => {
     // Refused by name, same as env
     // above, rather than silently dropped: a silent drop would let an agent
     // believe it chose a cwd it didn't.
-    it("refuses a caller-supplied cwd for a plugin before an intent is ever built", async () => {
-      let decided = false;
-      const { server, device, home } = makePluginServer({
-        async decideIntent() {
-          decided = true;
-          return "allow_once" as const;
-        },
-      });
-
-      const { isError, payload } = await callTool(
-        server,
-        "plow_run_command",
-        { argv: ["echoer", "say"], cwd: home },
-        AGENT,
-      );
-
-      expect(isError).toBe(true);
-      expect(String(payload.error ?? payload)).toContain("cwd");
-      expect(decided).toBe(false);
-      expect(events(device)).not.toContain("exec_start");
-    });
-
+    //
     // The refusal is unconditional on cwd being present at all — never
     // conditional on its value differing from the plugin's own directory.
     // Pins that a later "only refuse when cwd disagrees with plugin.dir"
@@ -1006,20 +985,22 @@ describe("review findings", () => {
     // gap: a plugin's own dispatch always execs in plugin.dir regardless, so
     // even a cwd that happens to equal it is still a caller belief the card
     // would have to lie about if it were ever allowed through.
-    it("refuses a caller-supplied cwd equal to the plugin's own directory too", async () => {
+    it.each([
+      ["a caller-supplied cwd", (home: string) => home],
+      ["a caller-supplied cwd equal to the plugin's own directory", (_home: string, root: string) => path.join(root, "echoer")],
+    ])("refuses %s for a plugin before an intent is ever built", async (_name, cwdFor) => {
       let decided = false;
-      const { server, device, root } = makePluginServer({
+      const { server, device, home, root } = makePluginServer({
         async decideIntent() {
           decided = true;
           return "allow_once" as const;
         },
       });
 
-      const pluginDir = path.join(root, "echoer");
       const { isError, payload } = await callTool(
         server,
         "plow_run_command",
-        { argv: ["echoer", "say"], cwd: pluginDir },
+        { argv: ["echoer", "say"], cwd: cwdFor(home, root) },
         AGENT,
       );
 
@@ -1037,7 +1018,14 @@ describe("review findings", () => {
     // resolves that directory itself, before the intent is built, and puts
     // it in the very capability the approver is shown — same as any other
     // `cwd` (capability.ts's `capabilityDisplay`).
-    it("offers the plugin's own directory as the approved cwd, so the card shows the true run location", async () => {
+    //
+    // An empty cwd names no directory, so it is the same as none — not a
+    // caller-chosen cwd to refuse. Some models fill every optional field with
+    // an empty default and would otherwise be refused on every plugin call.
+    it.each([
+      ["no cwd", {}],
+      ["an empty cwd", { cwd: "" }],
+    ])("offers the plugin's own directory as the approved cwd given %s, so the card shows the true run location", async (_name, extra) => {
       let cwd: string | undefined;
       const { server, root } = makePluginServer({
         async decideIntent(intent) {
@@ -1046,7 +1034,7 @@ describe("review findings", () => {
         },
       });
 
-      await callTool(server, "plow_run_command", { argv: ["echoer", "say"] }, AGENT);
+      await callTool(server, "plow_run_command", { argv: ["echoer", "say"], ...extra }, AGENT);
 
       expect(cwd).toBe(canonicalize(path.join(root, "echoer")));
     });
