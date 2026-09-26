@@ -24,7 +24,6 @@ export * from "./browser/vaultStore.js";
 export * from "./browser/vaultKeychain.js";
 export * from "./browser/browsingSkill.js";
 export * from "./skills.js";
-export * from "./whatsappSkill.js";
 export * from "./imessageSkill.js";
 export * from "./auditView.js";
 export * from "./plowFolder.js";

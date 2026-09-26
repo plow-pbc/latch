@@ -55,9 +55,14 @@ describe("messages plugin", () => {
     expect(PLUGINS.find((p) => p.name === "messages")?.skill).toMatch(/carries the owner's authority in this\s+conversation/);
   });
 
-  it("refuses --store: the CLI accepts it only ahead of the subcommand, and the allowlist requires the agent's tail to start with one", () => {
+  it("refuses --store and --app except as a pinned prefix ahead of the verb", () => {
     const messages = PLUGINS.find((p) => p.name === "messages");
     expect(messages).toBeDefined();
-    expect(classifyArgv(messages!.manifest, ["plow-messages", "--store", "/x", "chats"]).kind).toBe("refused");
+    const manifest = messages!.manifest;
+    expect(classifyArgv(manifest, ["plow-messages", "--store", "/x", "chats"]).kind).toBe("refused");
+    expect(classifyArgv(manifest, ["plow-messages", "chats", "--store", "/x"]).kind).toBe("refused");
+    expect(classifyArgv(manifest, ["plow-messages", "chats", "--app", "whatsapp"]).kind).toBe("refused");
+    expect(classifyArgv(manifest, ["plow-messages", "--app", "whatsapp", "chats"]).kind).toBe("read");
+    expect(classifyArgv(manifest, ["plow-messages", "--app", "/tmp/ChatStorage.sqlite", "chats"]).kind).toBe("refused");
   });
 });
