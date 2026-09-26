@@ -40,6 +40,8 @@ import {
   providerFor,
   providerRefusal,
   resolveAppBundleId,
+  canonicalRecipient,
+  RECIPIENT_NOT_A_HANDLE,
 } from "@domo/device-core";
 import { BlockedError, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
@@ -617,6 +619,61 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
+    name: "plow_send_message",
+    title: "Send an iMessage or a WhatsApp message",
+    description:
+      "Send one message as the owner, to one canonical recipient, on iMessage or WhatsApp. " +
+      "'recipient' is a phone, an email, an iMessage chat guid, or a WhatsApp jid. A display " +
+      "name is refused. The text is 'body'. Always-allow, if the owner chooses it, covers " +
+      "later messages to that same recipient and does not cover a different one. The reply " +
+      "is the verified store row, or status 'unverified' when no new outbound row appeared. " +
+      "An unverified send is not retried. WhatsApp needs Accessibility. Without it the call " +
+      "is blocked and nothing is typed. A zero exit from the app is not evidence the message " +
+      "landed. The account is whichever one the app is signed into.",
+    inputSchema: {
+      type: "object",
+      required: ["app", "recipient", "body"],
+      properties: {
+        app: { type: "string", enum: ["imessage", "whatsapp"] },
+        recipient: { type: "string", description: "Phone, email, iMessage chat guid, or WhatsApp jid" },
+        body: { type: "string", description: "The message text. Shown on the approval card. Not part of an always-allow rule." },
+        goal: GOAL,
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      const a = jv(args);
+      const app = a.get("app").str;
+      if (app !== "imessage" && app !== "whatsapp") throw new ToolError("app must be imessage or whatsapp");
+      const recipient = a.get("recipient").str;
+      if (recipient === null || recipient === "") throw new ToolError("missing 'recipient'");
+      const canonical = canonicalRecipient(app, recipient);
+      if (canonical === null) throw new ToolError(RECIPIENT_NOT_A_HANDLE);
+      const body = a.get("body").str;
+      if (body === null || body === "") throw new ToolError("missing 'body'");
+      const capabilities: Capability[] = [
+        { kind: "message_send", app, recipient: canonical, bodyPreview: body },
+      ];
+      const claim = (result: JSONValue) => {
+        const handle = jv(result).get("handle").str;
+        if (handle !== null) ctx.jobs.claim(ctx.agent.agentId, handle);
+      };
+      let result: JSONValue;
+      try {
+        result = await decideAndRun(ctx, progress, `send ${app} to ${canonical}`, a.get("goal").str ?? undefined, capabilities, {
+          wait_ms: 20_000,
+        });
+      } catch (error: unknown) {
+        if (error instanceof BlockedError) claim(error.payload);
+        throw error;
+      }
+      claim(result);
+      return result;
+    },
+  },
+  {
     name: "plow_run_applescript",
     title: "Script an app on the user's Mac",
     description:
@@ -636,8 +693,8 @@ export const TOOLS: ToolSpec[] = [
       "osascript's message with a non-zero exit_code and 'host_gate': 'none' — the script's own " +
       "problem, not a permission. A zero exit_code means the app accepted the script, not that " +
       "anything reached anyone — a send to an unreachable handle fails silently, so it is never " +
-      "your evidence a message went out; for a Messages send, this Mac's iMessage skill " +
-      "(plow_list_skills) carries the check that is. And a script that sends goes out as the " +
+      "your evidence a message went out; a text iMessage or WhatsApp goes through " +
+      "plow_send_message, and this Mac's iMessage skill (plow_list_skills) says so. And a script that sends goes out as the " +
       "owner's own account, whichever one the app is signed into — their setting, not yours to " +
       "choose — so say whose it went out as when you report it. A long script returns a job " +
       "handle for plow_get_output, and a " +

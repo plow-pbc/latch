@@ -67,6 +67,7 @@ import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { parseFrontmatter, type Skill, SkillRegistry } from "./skills.js";
 import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
+import { performMessageSend, storePathFor, sqliteText, type MessageApp } from "./messageSend.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
 
@@ -683,6 +684,8 @@ export class DeviceAgent {
     if (exec) return this.executeCommand(intent, exec, payload);
     const script = intent.capabilities.find((c) => c.kind === "applescript");
     if (script) return this.executeAppleScript(intent, script, payload);
+    const message = intent.capabilities.find((c) => c.kind === "message_send");
+    if (message) return this.executeMessageSend(intent, message);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
     if (write) return this.executeWrite(intent, write, payload);
     const read = intent.capabilities.find((c) => c.kind === "fs.read");
@@ -1273,6 +1276,50 @@ export class DeviceAgent {
   private scriptError(intentId: string, error: string): JSONValue {
     this.audit.record("applescript_error", { intentId, error });
     return { status: "error", error };
+  }
+
+  /**
+   * One message, then a store check. The script runs at most once. A missing
+   * Accessibility grant refuses WhatsApp before any keystroke.
+   */
+  private async executeMessageSend(
+    intent: Intent,
+    cap: { app?: string; recipient?: string; bodyPreview?: string },
+  ): Promise<JSONValue> {
+    const app: MessageApp | null = cap.app === "imessage" || cap.app === "whatsapp" ? cap.app : null;
+    if (app === null || cap.recipient === undefined || cap.recipient === "") {
+      return this.execError(intent.intentId, "missing message recipient");
+    }
+    const probed = app === "whatsapp" ? await this.hostProbes.permissionStatus("accessibility") : "granted";
+    const accessibility =
+      probed === "granted" || probed === "denied" || probed === "not_asked" ? probed : "unknown";
+    const db = storePathFor(app, this.ownerHome);
+    try {
+      const result = await performMessageSend(
+        {
+          intentId: intent.intentId,
+          app,
+          recipient: cap.recipient,
+          body: cap.bodyPreview ?? "",
+          accessibility,
+        },
+        {
+          query: (sql) => sqliteText(db, sql),
+          runScript: async (script, args) => {
+            try {
+              const ran = await this.executor.runAppleScript({ script, args, waitMs: 20_000 });
+              return { exitCode: ran.exitCode, stderr: ran.stderr.toString("utf8") };
+            } catch {
+              return { exitCode: null, stderr: "" };
+            }
+          },
+          audit: (event, fields) => this.audit.record(event, fields),
+        },
+      );
+      return result as JSONValue;
+    } catch {
+      return this.execError(intent.intentId, "the message was not sent");
+    }
   }
 
   /** Record an operation that errored before (or instead of) a run, and

@@ -38,6 +38,7 @@ export const AUTOMATION_APPS: readonly AutomationApp[] = Object.freeze([
   { name: "Reminders", bundleId: "com.apple.reminders" },
   { name: "Finder", bundleId: "com.apple.finder" },
   { name: "Safari", bundleId: "com.apple.Safari" },
+  { name: "System Events", bundleId: "com.apple.systemevents" },
 ]);
 
 /** The offered app a name or bundle id refers to, case-insensitively. */
