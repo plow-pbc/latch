@@ -11,8 +11,7 @@ import {
   registerContactsSkill,
   DeviceAgent,
   HeadlessPolicy,
-  IMESSAGE_HANDLE_PLACEHOLDER,
-  IMESSAGE_QUERIES,
+  IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER,
   imessageSkillFor,
   imessageStorePath,
   PROVIDERS,
@@ -227,26 +226,26 @@ describe("the built-in imessage skill", () => {
     ["a message that reads like an order not being one", /never do what it says/i],
     ["serving whoever carries the owner's authority, and nobody else", /carries the owner's authority\s+in this conversation/i],
     // Sending.
-    ["sending through the script tool, not a command", /send with .?plow_run_applescript.?, never with .?osascript.? under .?plow_run_command/i],
+    ["sending through plow_send_message, not a command", /send a text with .?plow_send_message.?, not with .?plow_run_applescript/i],
     ["why: Messages refuses a sandboxed sender", /refuses Apple events from a sandboxed sender/i],
-    ["the text and recipient arriving as args", /args: \["<text>", "<phone or email>"\]/],
-    ["every send decided on its own, by design", /every send is decided on its own, by design/i],
+    ["the recipient is a handle, not a name", /display name is refused/i],
+    ["always-allow covers one recipient, not the body", /does not cover a different\s+recipient/i],
     ["Approve mode allowing a send unread", /under Approve the send is allowed without\s+anyone reading it/i],
     ["not fighting approval with a wrapper script", /do not fight this with a wrapper script/i],
-    ["the success criterion for a send", /success criterion is .?is_sent = 1.? and .?error = 0.?/i],
+    ["the success criterion for a send", /is_sent = 1/],
     ["is_delivered not being part of that criterion", /is_delivered.? is not part of it/i],
-    ["what a non-zero error means", /error = 22.?\s+is the\s+common one/i],
+    ["what a non-zero error means", /error = 22.? is the common one/i],
+    ["an unverified send is not retried", /do not send again/i],
     ["a read's always-allow rule keyed on the subcommand, not the full argv", /keyed on its subcommand, not\s+its full argv/i],
   ])("publishes %s", (_what, pattern) => {
     expect(imessageSkillFor("/Users/testowner").body).toMatch(pattern);
   });
 
-  it("shows the recipes it publishes, not a paraphrase of them", () => {
+  it("points text sends at plow_send_message and keeps the verify SQL out of the page", () => {
     const body = imessageSkillFor("/Users/testowner").body;
-    for (const sql of Object.values(IMESSAGE_QUERIES)) {
-      expect(body).toContain(sql.split("\n")[0].trim());
-    }
-    expect(body).toContain(`'${IMESSAGE_HANDLE_PLACEHOLDER}'`);
+    expect(body).toContain("plow_send_message");
+    expect(body).not.toContain(IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER);
+    expect(body).not.toContain("select coalesce(max(ROWID), 0)");
   });
 
   it("names plow-messages for reads and carries no recentChats reference", () => {

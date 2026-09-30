@@ -67,6 +67,8 @@ import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { parseFrontmatter, type Skill, SkillRegistry } from "./skills.js";
 import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
+import { performMessageSend, storePathFor, sqliteText, type MessageApp, type OutboundRow } from "./messageSend.js";
+import { withMessageBodyStore } from "./messageBodyStore.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
 
@@ -304,6 +306,9 @@ export class DeviceAgent {
    *  lands in between waits for it, or the agent would take "completed,
    *  exit 1" as the whole story and stop asking. */
   private readonly pendingDiagnoses = new Map<string, Promise<void>>();
+  /** Sends share the owner's apps. A queued send snapshots only after the
+   * preceding send has finished verification, including across agents. */
+  private messageSendQueue: Promise<unknown> = Promise.resolve();
   /** Runs recorded as blocked, with the cause on record: one that was found
    *  parked while running and then reaped is one story, not two audit rows —
    *  but a DIFFERENT cause at the end (the owner clicked Don't Allow, and a
@@ -683,6 +688,8 @@ export class DeviceAgent {
     if (exec) return this.executeCommand(intent, exec, payload);
     const script = intent.capabilities.find((c) => c.kind === "applescript");
     if (script) return this.executeAppleScript(intent, script, payload);
+    const message = intent.capabilities.find((c) => c.kind === "message_send");
+    if (message) return this.executeMessageSend(intent, message);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
     if (write) return this.executeWrite(intent, write, payload);
     const read = intent.capabilities.find((c) => c.kind === "fs.read");
@@ -1273,6 +1280,95 @@ export class DeviceAgent {
   private scriptError(intentId: string, error: string): JSONValue {
     this.audit.record("applescript_error", { intentId, error });
     return { status: "error", error };
+  }
+
+  /**
+   * One message, then a store check. The script runs at most once. A missing
+   * Accessibility grant refuses WhatsApp before any keystroke.
+   */
+  private async executeMessageSend(
+    intent: Intent,
+    cap: { app?: string; recipient?: string; bodyPreview?: string },
+  ): Promise<JSONValue> {
+    this.audit.record("message_send_queued", { intentId: intent.intentId, app: cap.app ?? "" });
+    const pending = this.messageSendQueue.then(() => this.runMessageSend(intent, cap));
+    this.messageSendQueue = pending.catch(() => undefined);
+    return pending;
+  }
+
+  private async runMessageSend(
+    intent: Intent,
+    cap: { app?: string; recipient?: string; bodyPreview?: string },
+  ): Promise<JSONValue> {
+    const app: MessageApp | null = cap.app === "imessage" || cap.app === "whatsapp" ? cap.app : null;
+    if (app === null || cap.recipient === undefined || cap.recipient === "") {
+      return this.execError(intent.intentId, "missing message recipient");
+    }
+    const probed = app === "whatsapp" ? await this.hostProbes.permissionStatus("accessibility") : "granted";
+    const accessibility =
+      probed === "granted" || probed === "denied" || probed === "not_asked" ? probed : "unknown";
+    const db = storePathFor(app, this.ownerHome);
+    try {
+      const result = await performMessageSend(
+        {
+          intentId: intent.intentId,
+          app,
+          recipient: cap.recipient,
+          body: cap.bodyPreview ?? "",
+          accessibility,
+        },
+        {
+          query: (sql) => sqliteText(db, sql),
+          readDecodedBody: (row) => this.readSentMessageBody(row),
+          runScript: async (script, args) => {
+            try {
+              let ran = await this.executor.runAppleScript({ script, args, waitMs: 20_000,
+                language: app === "whatsapp" ? "JavaScript" : "AppleScript" });
+              // The MCP deferred handle owns this whole operation. An inner
+              // job still running cannot be called an unverified send: it
+              // may not have reached the send yet.
+              if (ran.running) {
+                await new Promise<void>((resolve) => this.executor.onExit(ran.handle, () => resolve()));
+                ran = this.executor.output(ran.handle, 0);
+              }
+              return { exitCode: ran.exitCode, stderr: ran.stderr.toString("utf8") };
+            } catch {
+              return { exitCode: null, stderr: "" };
+            }
+          },
+          audit: (event, fields) => this.audit.record(event, fields),
+        },
+      );
+      return result as JSONValue;
+    } catch (error) {
+      // A store error can escape only before the script; a failed check
+      // after it is explicitly unverified in performMessageSend.
+      if (error instanceof FileOpsError) return this.fileOpFailed(intent.intentId, "read", db, error);
+      return this.execError(intent.intentId, "the message send could not be verified; do not retry automatically");
+    }
+  }
+
+  /** Reuse the pinned native typedstream decoder with a private single-row
+   * copy. No network, writes, Apple events, or access to the live store. */
+  private async readSentMessageBody(row: OutboundRow): Promise<string | null> {
+    const plugin = this.plugin("messages");
+    if (plugin === null) return null;
+    return withMessageBodyStore(row, async (db) => {
+      const result = await this.executor.run({
+        argv: [path.join(plugin.binDir, plugin.manifest.exec.argv[0]!), ...plugin.manifest.exec.argv.slice(1),
+          "--store", db, "search", "--chat-id", String(row.chatId),
+          "--after-rowid", String(row.rowid - 1), "--order", "asc", "--limit", "1"],
+        readPaths: [path.dirname(db), plugin.binDir], writePaths: [], network: false, appleEvents: false,
+        waitMs: 5_000,
+        guard: () => this.plugin("messages") === plugin ? null : "the messages decoder is unavailable",
+      });
+      if (result.running || result.exitCode !== 0) throw new Error("the message body could not be decoded");
+      const lines = this.executor.stdout(result.handle).toString("utf8").trim().split("\n");
+      if (lines.length !== 1) return null;
+      const decoded = jv(JSON.parse(lines[0]!));
+      return decoded.get("rowid").int === row.rowid && decoded.get("chat_guid").str === row.chat
+        && decoded.get("is_from_me").bool === true ? decoded.get("body").str : null;
+    });
   }
 
   /** Record an operation that errored before (or instead of) a run, and

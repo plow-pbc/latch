@@ -509,7 +509,7 @@ describe("every tool says what kind of tool it is", () => {
       what: "reach the open internet",
       // A script reaches out through the app it drives — Mail sends, Safari
       // browses — so it is as open-world as a command with network.
-      tools: ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_applescript", "plow_run_command"],
+      tools: ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_applescript", "plow_run_command", "plow_send_message"],
     },
   ])("the tools that $what are exactly the ones marked $hint", async ({ hint, tools }) => {
     const marked = (await listed(makeServer()))

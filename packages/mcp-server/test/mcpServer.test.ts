@@ -107,6 +107,7 @@ describe("the reduced tool surface (§4.5)", () => {
       "plow_read_skill",
       "plow_run_applescript",
       "plow_run_command",
+      "plow_send_message",
       "plow_vault",
       "plow_write_file",
     ]);

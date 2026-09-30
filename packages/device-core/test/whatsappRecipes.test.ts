@@ -202,9 +202,9 @@ describe("the recipes the skill publishes", () => {
   });
 
   // One case, both renderings. The parsing helper reads with -list; the skill
-  // teaches -header -csv, and an agent runs THAT — and the body's claim for it
+  // teaches -csv -header, and an agent runs THAT — and the body's claim for it
   // is that it survives commas in message text, so the fixture has one.
-  it("finds a word across chats, survives -header -csv, and breaks on a bare apostrophe", () => {
+  it("finds a word across chats, survives -csv -header, and breaks on a bare apostrophe", () => {
     const rows = query(store, WHATSAPP_QUERIES.search);
     // Two chats, newest first — the property that distinguishes this recipe
     // from `conversation` is that it spans sessions.
@@ -222,8 +222,8 @@ describe("the recipes the skill publishes", () => {
       query(store, WHATSAPP_QUERIES.search.replace("dinner", "don''t")).map((r) => r[2]),
     ).toEqual(["don't forget dinner"]);
 
-    const csv = sqlite(["-readonly", "-header", "-csv", store, WHATSAPP_QUERIES.search]).trim();
-    const [header, ...rest] = csv.split("\n");
+    const csv = sqlite(["-readonly", "-csv", "-header", store, WHATSAPP_QUERIES.search]).trim();
+    const [header, ...rest] = csv.split(/\r?\n/);
     expect(header).toBe("chat,at,ZTEXT");
     // The comma is inside the quoted cell, not a fourth column — and csv
     // quotes the apostrophe cells too, so neither reaches the reader as syntax.

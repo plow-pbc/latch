@@ -17,7 +17,8 @@ export type CapabilityKind =
   | "tool"
   | "browser"
   | "credential"
-  | "applescript";
+  | "applescript"
+  | "message_send";
 
 export interface Capability {
   kind: CapabilityKind;
@@ -33,6 +34,8 @@ export interface Capability {
   bundleId?: string; // applescript: that app's bundle id, resolved on this Mac
   script?: string; // applescript: the whole script, verbatim
   args?: string[]; // applescript: values handed to its `on run argv`, not pasted into its text
+  recipient?: string; // message_send: canonical phone, email, chat guid, or jid
+  bodyPreview?: string; // message_send: the text, shown on the card, excluded from the rule key
   reason?: string; // display-only justification
 }
 
@@ -43,6 +46,7 @@ export interface Capability {
 export function normalizedCapability(c: Capability): Capability {
   const out: Capability = { ...c };
   delete out.reason;
+  delete out.bodyPreview;
   if (out.paths) out.paths = out.paths.map((p) => canonicalize(p)).sort();
   if (out.cwd !== undefined) out.cwd = canonicalize(out.cwd);
   if (out.origins) out.origins = out.origins.map((o) => normalizeOrigin(o)).sort();
@@ -78,6 +82,12 @@ export function capabilityDisplay(c: Capability): string {
         `Script ${c.app ?? "?"} (${c.bundleId ?? "?"}): ${c.script ?? ""}` +
         (c.args?.length ? `\nargs: ${JSON.stringify(c.args)}` : "")
       );
+    case "message_send":
+      return `Send ${c.app ?? "?"} to ${c.recipient ?? "?"}: ${c.bodyPreview ?? ""}`;
+    default: {
+      const exhaustive: never = c.kind;
+      return exhaustive;
+    }
   }
 }
 

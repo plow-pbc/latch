@@ -523,7 +523,9 @@ export class Executor {
    * Never reapable: a script that has sent an event has changed another
    * app's state, the same reason an `apple_events` command is exempt.
    */
-  async runAppleScript(run: { script: string; args: readonly string[]; waitMs: number }): Promise<ExecResult> {
+  async runAppleScript(run: {
+    script: string; args: readonly string[]; waitMs: number; language?: "AppleScript" | "JavaScript";
+  }): Promise<ExecResult> {
     const handle = crypto.randomUUID().toUpperCase();
     const scratch = path.join(this.scratchRoot, handle);
     fs.mkdirSync(scratch, { recursive: true });
@@ -533,7 +535,8 @@ export class Executor {
     // with the script's path as given, and the agent's output should read
     // `script.applescript:6:56: execution error: …`, not this Mac's
     // application-support path.
-    return this.launch(handle, scratch, "/usr/bin/osascript", [path.basename(file), ...run.args], {
+    const language = run.language === "JavaScript" ? ["-l", "JavaScript"] : [];
+    return this.launch(handle, scratch, "/usr/bin/osascript", [...language, path.basename(file), ...run.args], {
       cwd: scratch,
       waitMs: run.waitMs,
       reapable: false,

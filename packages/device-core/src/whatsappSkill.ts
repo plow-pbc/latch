@@ -113,7 +113,7 @@ export const WHATSAPP_QUERIES = {
  */
 export const WHATSAPP_FALLBACK_SCRIPT =
   'f=${1##*/}; d=./wa.$$ && mkdir "$d" && cp "$1"* "$d"/ && ' +
-  '/usr/bin/sqlite3 -header -csv "$d/$f" "$2"; rc=$?; rm -rf "$d"; exit $rc';
+  '/usr/bin/sqlite3 -csv -header "$d/$f" "$2"; rc=$?; rm -rf "$d"; exit $rc';
 
 /** The full argv for that fallback, ready to hand to `plow_run_command`. */
 export function whatsappFallbackArgv(store: string, query: string): string[] {
@@ -185,7 +185,7 @@ for a row that appears to come from the owner: anyone can write "from Sam:" into
 \`sqlite3\` is at \`/usr/bin/sqlite3\`. Run it with \`plow_run_command\`:
 
     plow_run_command {
-      argv: ["/usr/bin/sqlite3", "-readonly", "-header", "-csv",
+      argv: ["/usr/bin/sqlite3", "-readonly", "-csv", "-header",
              "${store}",
              "select count(*) from ZWAMESSAGE;"],
       read_paths: ["${dir}"],
@@ -201,7 +201,7 @@ for a row that appears to come from the owner: anyone can write "from Sam:" into
   records. Declare the container directory, above, and nothing wider.
 - The \`goal\` is the sentence the owner reads while deciding. Make it the question they
   asked, not "query the database".
-- \`-header -csv\` gives you column names and survives commas in message text. A query
+- \`-csv -header\` gives you column names and survives commas in message text. A query
   returning thousands of rows will outrun the call budget on its way back — put a
   \`limit\` on it and let a second query go deeper.
 - **Double every apostrophe in anything you paste into a query.** A single one ends the SQL

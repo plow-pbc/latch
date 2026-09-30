@@ -75,7 +75,10 @@ async function render() {
   }
 
   const v = req.view;
-  const capchips = el("div", { class: "capchips" }, v.capabilities.map((c) => el("span", { class: "cap", text: c.display })));
+  const capchips = el("div", { class: "capchips" }, v.capabilities.map((c) => el("span", {
+    class: c.kind === "message_send" ? "cap cap-message-send" : "cap",
+    text: c.display,
+  })));
   const warnings = [];
   if (v.runsCommand) warnings.push("runs a command");
   if (v.writesFiles) warnings.push("writes files");

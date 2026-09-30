@@ -55,6 +55,22 @@ describe("approvalViewModel", () => {
     expect(vm.sendsAppleEvents).toBe(true);
   });
 
+  it("a message_send card shows the recipient and the body, and still offers Always Allow", () => {
+    const body = `first line\n  indented line\twith a tab\n${"long".repeat(100)}\nlast line`;
+    const vm = approvalViewModel(
+      intentOf({
+        capabilities: [
+          { kind: "message_send", app: "whatsapp", recipient: "14155550100@s.whatsapp.net", bodyPreview: body },
+        ],
+      }),
+    );
+    expect(vm.capabilities.map((c) => c.display)).toEqual([
+      `Send whatsapp to 14155550100@s.whatsapp.net: ${body}`,
+    ]);
+    expect(vm.sendsAppleEvents).toBe(false);
+    expect(vm.scriptsApp).toBeNull();
+  });
+
   it("flags network when a network capability is allowed", () => {
     const vm = approvalViewModel(
       intentOf({ capabilities: [{ kind: "network", allowed: true }] }),
@@ -93,6 +109,46 @@ describe("auditActivities (scripts)", () => {
       "Script started: Mail (com.apple.mail)",
       "Script finished (exit 1)",
     ]);
+  });
+
+  it("an unverified message says so, and a verified one names the row", () => {
+    const unverified = auditActivities([
+      { event: "intent_received", intentId: "m1", request: "send imessage to ada@example.com", ts: "2026-08-20T12:00:20Z" },
+      { event: "intent_decision", intentId: "m1", decision: "allow_once", source: "prompt", ts: "2026-08-20T12:00:20Z" },
+      { event: "message_send_result", intentId: "m1", app: "imessage", recipient: "ada@example.com", verified: false, rowid: null, script_exit: 0, ts: "2026-08-20T12:00:21Z" },
+    ]);
+    expect(unverified[0]!.status).toBe("Unverified");
+    expect(unverified[0]!.statusKind).toBe("failed");
+    expect(unverified[0]!.timeline.map((s) => s.text)).toContain(
+      "Message unverified: imessage to ada@example.com. Not sent again.",
+    );
+    const verified = auditActivities([
+      { event: "intent_received", intentId: "m2", request: "send whatsapp to 14155550100@s.whatsapp.net", ts: "2026-08-20T12:00:20Z" },
+      { event: "intent_decision", intentId: "m2", decision: "allow_once", source: "prompt", ts: "2026-08-20T12:00:20Z" },
+      { event: "message_send_result", intentId: "m2", app: "whatsapp", recipient: "14155550100@s.whatsapp.net", verified: true, rowid: 8, script_exit: 0, ts: "2026-08-20T12:00:21Z" },
+    ]);
+    expect(verified[0]!.status).toBe("Completed");
+    expect(verified[0]!.timeline.map((s) => s.text)).toContain(
+      "Message verified: whatsapp to 14155550100@s.whatsapp.net (row 8)",
+    );
+  });
+
+  it("a message target refusal is blocked after a queued send, never completed or unverified", () => {
+    const events: JSONValue[] = [
+      { event: "intent_received", intentId: "m3", request: "send whatsapp", ts: "2026-08-20T12:00:20Z" },
+      { event: "intent_decision", intentId: "m3", decision: "allow_once", source: "prompt", ts: "2026-08-20T12:00:20Z" },
+      { event: "message_send_queued", intentId: "m3", ts: "2026-08-20T12:00:20Z" },
+    ];
+    expect(auditActivities(events)[0]!.status).toBe("Queued");
+    events.push({ event: "message_send_start", intentId: "m3", ts: "2026-08-20T12:00:21Z" });
+    expect(auditActivities(events)[0]!.status).toBe("Running");
+    events.push({ event: "message_send_refused", intentId: "m3", cause: "target_validation", ts: "2026-08-20T12:00:22Z" });
+    const activity = auditActivities(events)[0]!;
+    expect(activity.status).toBe("Blocked · Message target");
+    expect(activity.statusKind).toBe("blocked");
+    expect(activity.timeline.map((step) => step.text)).toContain(
+      "Message not sent: the approved recipient or composer could not be confirmed",
+    );
   });
 
   it("a script this Mac blocked reads as blocked, and one still going as running", () => {

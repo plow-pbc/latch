@@ -392,6 +392,12 @@ dl.meta dd { margin: 0; }
   border: 1px solid var(--border);
   color: var(--fg);
 }
+.cap-message-send {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
+}
 .empty { color: var(--faint); padding: 40px; text-align: center; }
 
 /* Detail-pane timeline: one row per underlying raw event. */

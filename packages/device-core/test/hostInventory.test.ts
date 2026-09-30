@@ -95,6 +95,8 @@ describe("hostInventory", () => {
     // agent is told after a block is what the owner sees.
     expect(AUTOMATION_TARGETS).toEqual(AUTOMATION_APPS.map((a) => a.name));
     expect(AUTOMATION_TARGETS).toContain("Mail");
+    expect(AUTOMATION_TARGETS).toContain("System Events");
+    expect(automationApp("System Events")?.bundleId).toBe("com.apple.systemevents");
     expect(automationApp("mail")?.bundleId).toBe("com.apple.mail");
   });
 
