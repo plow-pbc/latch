@@ -27,6 +27,13 @@ export class MintError extends Error {
   }
 }
 
+export interface GoogleCapabilities {
+  mail_read: boolean;
+  mail_write: boolean;
+  calendar_read: boolean;
+  calendar_write: boolean;
+}
+
 /**
  * Every connected account's short-lived token, from one batch mint.
  *
@@ -36,7 +43,7 @@ export class MintError extends Error {
  * no-foreign-text rule as everything else that reaches a screen.
  */
 export interface MintedAccounts {
-  accounts: { account: string; token: string; isDefault: boolean }[];
+  accounts: { account: string; token: string; isDefault: boolean; capabilities: GoogleCapabilities }[];
   degraded: { account: string; reason: string }[];
 }
 

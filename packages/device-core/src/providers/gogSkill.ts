@@ -161,8 +161,9 @@ Their **help** still prints, though: \`["plow-gog","drive","--help"]\` returns
 usage for a group you cannot actually run. Usage that prints cleanly is not a
 surface that works.
 
-Each token carries four Google scopes (gmail.readonly, gmail.modify,
-calendar.readonly, calendar.events).
+Each account has only the Gmail and Calendar read/write access the owner
+granted. Reads skip accounts without access; a refused write needs the owner
+to reconnect Google and allow that access.
 
 The CLI's own aliases count as those groups on both sides: \`mail\` and
 \`email\` are \`gmail\`, \`cal\` is \`calendar\`, and all five spellings run. The

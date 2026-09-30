@@ -23,6 +23,7 @@ import {
   freeBusyAnswer,
   shownCalendars,
   gogExitReason,
+  gogCapabilityRefusal,
   mergeFanout,
   planPlowGog,
 } from "./providers/plowGog.js";
@@ -1594,7 +1595,14 @@ export class DeviceAgent {
         }
       }
       this.audit.record("exec_start", { intentId: intent.intentId, argv });
-      const runs = await runAcrossAccounts(targets, plan.gogArgv.slice(1));
+      const eligible: MintedAccounts["accounts"] = [];
+      const skipped: { account: string; reason: string }[] = [];
+      for (const a of targets) {
+        const reason = gogCapabilityRefusal(plan.gogArgv, a.capabilities);
+        if (reason === null) eligible.push(a);
+        else skipped.push({ account: a.account, reason });
+      }
+      const runs = await runAcrossAccounts(eligible, plan.gogArgv.slice(1));
       const ok: { account: string; stdout: string }[] = [];
       const failed: { account: string; reason: string }[] = [];
       // Accounts that answered with nothing: `--fail-empty` makes gog exit 3
@@ -1622,6 +1630,7 @@ export class DeviceAgent {
       const answered = ok.filter((o) => !unreadable.has(o.account)).length + empty;
       const allDegraded = [
         ...degraded,
+        ...skipped,
         ...failed,
         ...merged.unparsed.map((u) => ({ account: u.account, reason: u.error })),
       ];
@@ -1687,6 +1696,9 @@ export class DeviceAgent {
       target = minted.accounts[0]!;
     }
 
+    const capabilityRefusal = gogCapabilityRefusal(plan.gogArgv, target.capabilities);
+    if (capabilityRefusal !== null) return this.execError(intent.intentId, capabilityRefusal);
+
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     if (plan.conflictCheck !== null && !plan.confirmConflict) {
       const { from, to, calendar } = plan.conflictCheck;
@@ -1694,7 +1706,7 @@ export class DeviceAgent {
       // event lands on. A busy-time read, not `calendar conflicts`: that verb
       // pairs commitments on DIFFERENT calendars, so a lone one left it empty
       // and the gate booked straight over it.
-      const listed = await runAcrossAccounts(minted.accounts, [
+      const listed = await runAcrossAccounts(minted.accounts.filter((a) => a.capabilities.calendar_read), [
         "calendar", "calendars", "--json", "--results-only",
       ]);
       const probed: { account: string; busy: { start: string; end: string }[] }[] = [];

@@ -727,7 +727,7 @@ describe("mintAccountTokens", () => {
       },
     ]);
     expect(await run()).toEqual({
-      accounts: [{ account: "a@example.com", token: TOKEN, isDefault: true }],
+      accounts: [{ account: "a@example.com", token: TOKEN, isDefault: true, capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true } }],
       degraded: [],
     });
     expect(calls[0].url).toBe("https://api.plow.co/v1/connectors/gmail/access-token");
@@ -736,6 +736,40 @@ describe("mintAccountTokens", () => {
     // second copy of a fact the server owns.
     expect(calls[0].init.body).toBe('{"all":true}');
   });
+
+  it.each([
+    { mail_read: false, mail_write: false, calendar_read: true, calendar_write: true },
+    { mail_read: true, mail_write: false, calendar_read: false, calendar_write: false },
+    { mail_read: true, mail_write: false, calendar_read: true, calendar_write: false },
+  ])("preserves partial Google grants from the batch mint: %j", async (capabilities) => {
+    const result = await mint([{
+      status: 200,
+      body: { data: { accounts: [{ account: "a@example.com", access_token: TOKEN, is_default: true, capabilities }] } },
+    }]).run();
+    expect(result.accounts[0]).toMatchObject({ capabilities });
+  });
+
+  it("assumes full capabilities only when an older API omits the field", async () => {
+    const result = await mint([{
+      status: 200,
+      body: { data: { accounts: [{ account: "a@example.com", access_token: TOKEN, is_default: true }] } },
+    }]).run();
+    expect(result.accounts[0]).toMatchObject({
+      capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true },
+    });
+  });
+
+  it.each([null, {}, { mail_read: "true", mail_write: 1, calendar_read: false }])(
+    "does not turn malformed capabilities into a full grant: %j", async (capabilities) => {
+      const result = await mint([{
+        status: 200,
+        body: { data: { accounts: [{ account: "a@example.com", access_token: TOKEN, capabilities }] } },
+      }]).run();
+      expect(result.accounts[0]).toMatchObject({
+        capabilities: { mail_read: false, mail_write: false, calendar_read: false, calendar_write: false },
+      });
+    },
+  );
 
   it.each([
     ["no accounts in the body", { status: 200, body: { data: {} } }],

@@ -9,6 +9,8 @@
  * not by a caller remembering to redact.
  */
 
+import type { MintedAccounts } from "@domo/device-core";
+
 /** One API origin, e.g. `https://api.plow.co`. Everything else derives. */
 export type ApiBaseUrl = string;
 
@@ -703,10 +705,7 @@ export class PlowApi {
     token: string,
     prefix: string,
     action: string,
-  ): Promise<{
-    accounts: { account: string; token: string; isDefault: boolean }[];
-    degraded: { account: string; reason: string }[];
-  }> {
+  ): Promise<MintedAccounts> {
     const data = await this.call<{
       data?: { accounts?: unknown; degraded?: unknown };
     }>("POST", `${prefix}${action}`, { token, body: { all: true } });
@@ -715,9 +714,9 @@ export class PlowApi {
     // or free-text string cannot ride the account field.
     const rows = (v: unknown): Record<string, unknown>[] =>
       Array.isArray(v) ? v.map((row) => (row ?? {}) as Record<string, unknown>) : [];
-    const accounts: { account: string; token: string; isDefault: boolean }[] = [];
+    const accounts: MintedAccounts["accounts"] = [];
     const degraded: { account: string; reason: string }[] = [];
-    for (const { account, access_token, is_default } of rows(data.data?.accounts)) {
+    for (const { account, access_token, is_default, capabilities } of rows(data.data?.accounts)) {
       if (!plausibleEmail(account)) {
         degraded.push({ account: "(unrecognized account)", reason: "malformed entry" });
         continue;
@@ -734,7 +733,20 @@ export class PlowApi {
         degraded.push({ account, reason: "malformed entry" });
         continue;
       }
-      accounts.push({ account, token: minted, isDefault: is_default === true });
+      // Only an absent field means the older API's full grant. Malformed or
+      // incomplete metadata must never manufacture a permission.
+      const grants = capabilities !== null && typeof capabilities === "object"
+        ? capabilities as Record<string, unknown>
+        : {};
+      accounts.push({
+        account, token: minted, isDefault: is_default === true,
+        capabilities: {
+          mail_read: capabilities === undefined || grants.mail_read === true,
+          mail_write: capabilities === undefined || grants.mail_write === true,
+          calendar_read: capabilities === undefined || grants.calendar_read === true,
+          calendar_write: capabilities === undefined || grants.calendar_write === true,
+        },
+      });
     }
     for (const { account, reason } of rows(data.data?.degraded)) {
       if (!plausibleEmail(account)) {
