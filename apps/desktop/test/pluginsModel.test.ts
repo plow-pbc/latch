@@ -138,7 +138,7 @@ describe("the shipped plugins", () => {
     { granted: ["full_disk_access"], status: "ready" },
   ])("reads messages as $status with granted permissions $granted, carrying its summary", ({ granted, status }) => {
     const [row] = pluginRows({ plugins: [{ manifest: shipped("messages"), enabled: true }], connectedAccounts: [], grantedPermissions: granted, relaunchPending: [] });
-    expect(row).toMatchObject({ name: "messages", status, summary: "Find and read your texts, right on this Mac." });
+    expect(row).toMatchObject({ name: "messages", status, summary: "Find and read your texts and WhatsApp, right on this Mac." });
   });
 
   it.each([

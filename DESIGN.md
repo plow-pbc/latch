@@ -791,7 +791,7 @@ own `device/skills` files last, at launch, on every toggle and on every change
 to the connected accounts. A provider carries its skill
 on its registry row rather than being registered under a literal elsewhere, so
 the provider's name has one spelling and a rename cannot silently unpublish it.
-`whatsapp-history` is also why the registry takes a *built* skill and not only
+`imessage` is also why the registry takes a *built* skill and not only
 frozen constants: its body carries the store's resolved path, so no agent has
 to substitute one.
 Owner-authored skills in `$DOMO_HOME/device/skills` load **last** and win a
