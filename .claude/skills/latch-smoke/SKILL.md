@@ -145,14 +145,13 @@ scripts/latch-smoke --config ~/.latch/<client>.json --server plow-mbp \
   --home "~/Library/Application Support/Plow-Latch" -- plow-gog gmail search newer_than:1d --json
 ```
 
-Four things distinguish a working provider path from a broken one, all visible
-without touching Google:
+Four outcomes distinguish a working provider path from a broken one:
 
 | Output | Means |
 |---|---|
 | `FAILED — the executor threw` … `not installed` | the gog plugin is not staged — run `just stage-plugins gog` and repackage |
 | `FAILED — the executor threw` … `could not reach Plow` / `returned 4xx` | the mint failed; check that the owner's stored Plow login session is still live. Session authority does not grant Google access |
-| `FAILED — the executor threw` … `wasn't granted` | the selected account lacks the required Google read/write access; ask the owner to reconnect Google and allow it. The plugin and mint worked |
+| `FAILED — it ran and exited 6` | gog denied access. If the command reply or its `exec_error` says `wasn't granted`, ask the owner to reconnect Google and allow the missing access. The plugin and mint worked |
 | `OK` | an eligible account answered; inspect `degraded` for accounts skipped because they lack access |
 
 A `403` *inside* gog's own output comes from Google. Tokens carry only the

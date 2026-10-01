@@ -3,7 +3,7 @@
  *
  * What matters is that a provider's CLI is authorised and run WITHOUT anything
  * tool-shaped: the capability is the argv the owner approved, the token never
- * touches it, and a refusal or a failed mint never spawns a child.
+ * touches it, and a rejected argv or a failed mint never spawns a child.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -801,51 +801,43 @@ esac
     expect(JSON.stringify(response)).not.toContain("evt-1");
   });
 
-  it("refuses an explicitly selected read-only account rather than using a writable one", async () => {
-    const accounts = [
-      { ...AB[0]!, capabilities: FULL_CAPABILITIES },
-      { ...AB[1]!, capabilities: { ...FULL_CAPABILITIES, mail_write: false } },
-    ];
-    const d = device(accountsMinter(accounts), plowGogPlugin());
-    const response = await run(d, ["plow-gog", "gmail", "send", "--to", "x@example.com", "--account", "b@example.com"]);
-    expect(response).toMatchObject({ status: "error", error: expect.stringMatching(/reconnect/i) });
-    expectNeverSpawned(d);
-  });
-
-  it.each([
+  itSpawns.each([
     ["mail_read", ["mail", "get", "m1"]],
     ["mail_write", ["gmail", "send", "--to", "x@example.com"]],
-    ["mail_write", ["gmail", "reply", "m1"]],
-    ["mail_write", ["email", "fwd", "m1"]],
-    ["mail_write", ["gmail", "archive", "m1"]],
-    ["mail_write", ["gmail", "label", "modify", "t1"]],
-    ["mail_write", ["gmail", "draft", "new"]],
-    ["mail_write", ["gmail", "threads", "set", "t1"]],
-    ["mail_write", ["gmail", "msgs", "edit", "m1"]],
     ["calendar_read", ["cal", "event", "primary", "e1"]],
-    ["calendar_write", ["cal", "new", "primary", "--confirm-conflict"]],
-    ["calendar_write", ["calendar", "rsvp", "primary", "e1"]],
-    ["calendar_write", ["calendar", "focus-time"]],
-  ] as const)("refuses a single command lacking %s before spawning: %j", async (capability, tail) => {
-    const accounts = [{ ...AB[0]!, capabilities: { ...FULL_CAPABILITIES, [capability]: false } }];
-    const d = device(accountsMinter(accounts), plowGogPlugin());
-    const response = await run(d, ["plow-gog", ...tail]);
+    ["calendar_write", ["calendar", "create", "primary", "--confirm-conflict"]],
+    ["calendar_write", ["calendar", "create", "primary", "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z"]],
+  ] as const)("translates exit 6 for the selected account lacking %s", async (capability, tail) => {
+    const accounts = [AB[0]!, { ...AB[1]!, capabilities: { ...FULL_CAPABILITIES, [capability]: false } }];
+    const d = device(accountsMinter(accounts), stagedGog(`#!/bin/sh
+case "$*" in
+  *"calendar calendars"*) echo '[{"id":"primary","selected":true}]'; exit 0 ;;
+  *"calendar freebusy"*) echo '{"primary":{"busy":[]}}'; exit 0 ;;
+esac
+[ "$GOG_ACCESS_TOKEN" = tok-b ] && exit 6
+exit 0
+`));
+    const response = await run(d, ["plow-gog", ...tail, "--account", "b@example.com"], 0);
     expect(response).toMatchObject({ status: "error", error: expect.stringMatching(/reconnect/i) });
-    expectNeverSpawned(d);
+    expect(execEnd(d)).toBe(6);
   });
 
   itSpawns.each([
-    ["gmail", "get", "m1"],
-    ["gmail", "draft", "ls"],
-    ["gmail", "label", "show", "INBOX"],
-    ["gmail", "threads", "files", "t1"],
-    ["gmail", "msgs", "query", "q"],
-    ["calendar", "event", "primary", "e1"],
-  ])("allows single reads on read-only accounts: %j", async (...tail) => {
+    ["mail_write", 4, "gmail"],
+    ["calendar_write", 6, "gmail"],
+    ["mail_write", 6, "calendar"],
+    [null, 6, "gmail"],
+  ] as const)("preserves a %s grant / exit %s for %s when it is not a missing service grant", async (capability, code, group) => {
+    const capabilities = { ...FULL_CAPABILITIES, ...(capability === null ? {} : { [capability]: false }) };
+    const d = device(accountsMinter([{ ...AB[0]!, capabilities }]), stagedGog(`#!/bin/sh\nexit ${code}\n`));
+    expect(await run(d, ["plow-gog", group, "get", "item"])).toMatchObject({ status: "completed", exit_code: code });
+    expect(execEnd(d)).toBe(code);
+  });
+
+  itSpawns.each(["gmail", "cal"])("lets gog accept an unclassified %s command on a read-only account", async (group) => {
     const accounts = [{ ...AB[0]!, capabilities: { ...FULL_CAPABILITIES, mail_write: false, calendar_write: false } }];
-    const d = device(accountsMinter(accounts), plowGogPlugin());
-    const response = await run(d, ["plow-gog", ...tail]);
-    expect(response).toMatchObject({ status: "completed", exit_code: 0 });
+    const d = device(accountsMinter(accounts), gogPlugin());
+    expect(await run(d, ["plow-gog", group, "new-read"])).toMatchObject({ status: "completed", exit_code: 0 });
   });
 
   describe("calendar discovery", () => {
