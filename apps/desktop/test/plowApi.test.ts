@@ -749,25 +749,15 @@ describe("mintAccountTokens", () => {
     expect(result.accounts[0]).toMatchObject({ capabilities });
   });
 
-  it("degrades an account missing its required capabilities", async () => {
-    const result = await mint([{
-      status: 200,
-      body: { data: { accounts: [{ account: "a@example.com", access_token: TOKEN, is_default: true }] } },
-    }]).run();
-    expect(result).toEqual({
-      accounts: [],
-      degraded: [{ account: "a@example.com", reason: "malformed entry" }],
-    });
-  });
-
   it.each([
+    undefined,
     null,
     {},
     { ...CAPABILITIES, mail_read: "true" },
     { ...CAPABILITIES, calendar_read: 1 },
     { mail_read: true },
   ])(
-    "degrades an account with malformed capabilities: %j", async (capabilities) => {
+    "degrades an account with missing or malformed capabilities: %j", async (capabilities) => {
       const result = await mint([{
         status: 200,
         body: { data: { accounts: [{ account: "a@example.com", access_token: TOKEN, capabilities }] } },
