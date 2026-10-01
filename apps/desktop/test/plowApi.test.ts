@@ -498,8 +498,8 @@ describe("PlowApi", () => {
           connector: "gmail",
           account: "ada@example.com",
           accounts: [
-            { account: "ada@example.com", is_default: true },
-            { account: "grace@example.com", is_default: false },
+            { account: "ada@example.com", is_default: true, capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true } },
+            { account: "grace@example.com", is_default: false, capabilities: { mail_read: false, mail_write: false, calendar_read: true, calendar_write: false } },
           ],
         },
         slack: { connected: false, connector: "slack", account: null, accounts: [] },
@@ -512,8 +512,8 @@ describe("PlowApi", () => {
     ).resolves.toEqual({
       google: {
         accounts: [
-          { email: "ada@example.com", isDefault: true },
-          { email: "grace@example.com", isDefault: false },
+          { email: "ada@example.com", isDefault: true, capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true } },
+          { email: "grace@example.com", isDefault: false, capabilities: { mail_read: false, mail_write: false, calendar_read: true, calendar_write: false } },
         ],
       },
     });
@@ -523,6 +523,21 @@ describe("PlowApi", () => {
     expect((calls[0].init.headers as Record<string, string>).authorization)
       .toBe(`Bearer ${credential}`);
     expect(calls[0].url).not.toContain(credential);
+  });
+
+  it.each([
+    undefined,
+    null,
+    {},
+    { mail_read: true, mail_write: true, calendar_read: true },
+    { mail_read: "true", mail_write: true, calendar_read: true, calendar_write: true },
+  ])("rejects missing or malformed Google connector capabilities: %j", async (capabilities) => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: { gmail: { accounts: [{ account: "ada@example.com", is_default: true, capabilities }] } },
+    }]);
+    await expect(new PlowApi("https://api.plow.co", fetchImpl).listConnectors("plow_device"))
+      .rejects.toBeInstanceOf(PlowApiError);
   });
 
   it("uses the Google connector routes for connect, per-account removal, and default", async () => {

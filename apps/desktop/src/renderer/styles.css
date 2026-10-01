@@ -549,6 +549,8 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .cap-person .ico { width: 12px; height: 12px; }
 .cap-account-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cap-account-details { min-width: 0; }
+.cap-account-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 /* "Default": a quiet grey pill, no dot — a label, not a status. */
 .cap-default-pill { font-weight: 500; }
 .cap-account-email { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

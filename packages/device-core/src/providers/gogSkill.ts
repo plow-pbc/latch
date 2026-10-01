@@ -151,15 +151,13 @@ link to join, so do not call it a video call.
 
 ## What you can reach
 
-Most of Gmail and Calendar. **Drive, Docs, Sheets and the rest of the CLI are
-not connected at all** — it is launched with
+Only Gmail and Calendar are connected — it is launched with
 \`--enable-commands=${GOG_CANONICAL.join(",")}\`, and this Mac refuses any group
 that is not one of those or an alias for one, before approval, before any
 token is minted and before anything runs. Either way they never reach Google.
 
-Their **help** still prints, though: \`["plow-gog","drive","--help"]\` returns
-usage for a group you cannot actually run. Usage that prints cleanly is not a
-surface that works.
+**Help for other groups** still prints, though. Usage that prints cleanly is
+not a surface that works.
 
 Each account has only the Gmail and Calendar read/write access the owner
 granted. Fan-out reads skip accounts without access; ask the owner to reconnect

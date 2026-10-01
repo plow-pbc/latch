@@ -20,7 +20,9 @@ it.each([
     api: {
       listConnectors: () => hang
         ? new Promise(() => {})
-        : Promise.resolve({ google: { accounts: [{ email: "owner@example.com", isDefault: true }] } }),
+        : Promise.resolve({ google: { accounts: [{ email: "owner@example.com", isDefault: true,
+          capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true },
+        }] } }),
     } as unknown as PlowApi,
     credential: () => "plow_resumed_setup_credential",
     openExternal: async () => {},

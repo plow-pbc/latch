@@ -50,8 +50,10 @@ const CONNECTORS_POPULATED = {
   google: {
     connecting: false,
     accounts: [
-      { email: "mary@gmail.com", isDefault: true },
-      { email: "mary@work.com", isDefault: false },
+      { email: "mary@gmail.com", isDefault: true,
+        capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true } },
+      { email: "mary@work.com", isDefault: false,
+        capabilities: { mail_read: false, mail_write: false, calendar_read: true, calendar_write: false } },
     ],
   },
 };
@@ -350,15 +352,26 @@ const SCREENS = [
   {
     name: "capabilities-connected-accounts",
     connectors: CONNECTORS_POPULATED,
-    prepare: showSettings(`document.querySelectorAll(".cap-account-email").length === 2`),
+    prepare: async (win) => {
+      await showSettings(`document.querySelectorAll(".cap-account-email").length === 2`)(win);
+      const badges = await win.webContents.executeJavaScript(`
+        [...document.querySelectorAll(".cap-account-row")].map((row) =>
+          [...row.querySelectorAll(".cap-account-badges .badge")].map((badge) => badge.textContent))
+      `);
+      const expected = [["Mail: read", "Mail: write", "Calendar: read", "Calendar: write"], ["Calendar: read"]];
+      if (JSON.stringify(badges) !== JSON.stringify(expected)) {
+        throw new Error(`wrong connected-account badges: ${JSON.stringify(badges)}`);
+      }
+      await win.webContents.executeJavaScript(`document.querySelector(".cap-account-rows").closest(".item").scrollIntoView({ block: "start" })`);
+    },
     // Each account is a row under Google, the default's pill beside it, and
     // a "•••" menu (Set as Default / Remove Account) rather than inline
     // buttons; "Add another" carries the browser-hop arrow.
     expect: [
-      "Connected Accounts", "Google", "mary@gmail.com", "Default",
-      "mary@work.com", "Add another",
+      "Connected Accounts", "Google", "Gmail and Calendar, through accounts you connect.", "mary@gmail.com", "Default",
+      "mary@work.com", "Add another", "Mail: read", "Mail: write", "Calendar: read", "Calendar: write",
     ],
-    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE, "Set default"],
+    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE, "Set default", "Gmail, Calendar, and Drive"],
     expectAriaLabels: ["Account actions"],
   },
   {

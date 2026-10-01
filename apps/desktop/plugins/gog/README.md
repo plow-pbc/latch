@@ -45,13 +45,13 @@ than in the staging code, which knows nothing about any particular CLI.
    ```
    gmail|mail|email search q     exit 4 — dispatches (aliases count)
    calendar|cal list             exit 4 — dispatches
-   drive ls, chat spaces list    exit 2 — refused BEFORE any network
+   chat spaces list             exit 2 — refused BEFORE any network
    ```
 
    And that the bound constrains EXECUTION, not discovery — the shapes that
    test it are the out-of-scope ones. All exit 0 with full output at 0.36.0:
-   `--help`, `-h`, `drive --help`, `chat --help`, `drive ls --help`,
-   `calendar --help`, `gmail search -h`. Versus `drive ls`, which is
+   `--help`, `-h`, `chat --help`, `calendar --help`, `gmail search -h`.
+   Versus `chat spaces list`, which is
    refused. So an agent can read help for a group it cannot run — the skill
    says so, because usage that prints cleanly otherwise reads as a surface
    that works.

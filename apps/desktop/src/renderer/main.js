@@ -9,6 +9,7 @@ import { attentionMatches, createSerialAutosave, modeView } from "./gatekeeperSt
 
 import { el, icon, switchEl } from "./dom.js";
 import { singleFlight } from "./onboardingAction.js";
+import { googleCapabilityBadges } from "../connectorBadges.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 import {
   agentKind,
@@ -2424,6 +2425,7 @@ function permissionsPane() {
     // default's green pill beside the address, and a "…" menu on the right
     // holding the two things that can be done to it.
     const accounts = google.accounts.map((account) => {
+      const badges = googleCapabilityBadges(account.capabilities);
       const menuButton = el("button", { class: "btn cap-account-menu-btn", attrs: { type: "button", "aria-label": "Account actions", "aria-haspopup": "menu" } }, [
         el("span", { text: "•••" }),
       ]);
@@ -2437,10 +2439,15 @@ function permissionsPane() {
       });
       return el("div", { class: "cap-row cap-account-row" }, [
         el("span", { class: "cap-icon cap-person" }, [icon("user", { strokeWidth: "2" })]),
-        el("div", { class: "cap-account-line" }, [
-          // Server data is assigned through textContent by el().
-          el("span", { class: "cap-name cap-account-email", text: account.email }),
-          account.isDefault ? el("span", { class: "badge b-zinc cap-default-pill", text: "Default" }) : null,
+        el("div", { class: "cap-account-details" }, [
+          el("div", { class: "cap-account-line" }, [
+            // Server data is assigned through textContent by el().
+            el("span", { class: "cap-name cap-account-email", text: account.email }),
+            account.isDefault ? el("span", { class: "badge b-zinc cap-default-pill", text: "Default" }) : null,
+          ]),
+          badges.length ? el("div", { class: "cap-account-badges" }, badges.map((text) =>
+            el("span", { class: "badge b-zinc", text }),
+          )) : null,
         ]),
         menuButton,
       ]);
@@ -2450,7 +2457,7 @@ function permissionsPane() {
       googleMark(),
       el("div", {}, [
         el("div", { class: "cap-name", text: "Google" }),
-        el("div", { class: "cap-sub", text: "Gmail, Calendar, and Drive, through accounts you connect." }),
+        el("div", { class: "cap-sub", text: "Gmail and Calendar, through accounts you connect." }),
       ]),
       button,
     ]);

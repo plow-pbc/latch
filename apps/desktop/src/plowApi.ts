@@ -115,6 +115,12 @@ export interface RelayDeviceInfo {
 export interface ConnectorAccount {
   email: string;
   isDefault: boolean;
+  capabilities: {
+    mail_read: boolean;
+    mail_write: boolean;
+    calendar_read: boolean;
+    calendar_write: boolean;
+  };
 }
 
 export interface ConnectorsOverview {
@@ -609,17 +615,28 @@ export class PlowApi {
       const row = raw && typeof raw === "object" && !Array.isArray(raw)
         ? raw as Record<string, unknown>
         : null;
+      const capabilities = row?.capabilities && typeof row.capabilities === "object" && !Array.isArray(row.capabilities)
+        ? row.capabilities as Record<string, unknown>
+        : null;
       if (
         !row ||
         !plausibleEmail(row.account) ||
         valueEchoesSecret(row.account, token) ||
-        typeof row.is_default !== "boolean"
+        typeof row.is_default !== "boolean" ||
+        !capabilities ||
+        ["mail_read", "mail_write", "calendar_read", "calendar_write"].some((key) => typeof capabilities[key] !== "boolean")
       ) {
         throw new PlowApiError("http", "Plow did not return a usable connector list.");
       }
       return {
         email: row.account,
         isDefault: row.is_default,
+        capabilities: {
+          mail_read: capabilities.mail_read === true,
+          mail_write: capabilities.mail_write === true,
+          calendar_read: capabilities.calendar_read === true,
+          calendar_write: capabilities.calendar_write === true,
+        },
       };
     });
     return { google: { accounts } };

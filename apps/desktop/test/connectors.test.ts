@@ -28,6 +28,7 @@ const account = (
 ): ConnectorAccount => ({
   email,
   isDefault: false,
+  capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true },
   ...overrides,
 });
 
@@ -121,6 +122,24 @@ afterEach(() => {
 });
 
 describe("connecting a Google account", () => {
+  it("publishes changed grants when an existing account is reconnected", async () => {
+    const plow = new FakePlow();
+    const full = account("ada@example.com");
+    const readOnly = account("ada@example.com", {
+      capabilities: { mail_read: true, mail_write: false, calendar_read: true, calendar_write: false },
+    });
+    plow.listAnswers = [overview([full]), overview([readOnly])];
+    let published = 0;
+    const { connectors, audits } = build(plow, { onChange: () => { published++; } });
+
+    await connectors.poll();
+    await connectors.poll();
+
+    expect(connectors.state().google.accounts).toEqual([readOnly]);
+    expect(published).toBe(2);
+    expect(audits).toEqual([]);
+  });
+
   it("opens the checked browser URL and polls every three seconds until a new account appears", async () => {
     const plow = new FakePlow();
     plow.listAnswers = [
