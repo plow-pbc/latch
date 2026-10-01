@@ -145,14 +145,16 @@ scripts/latch-smoke --config ~/.latch/<client>.json --server plow-mbp \
   --home "~/Library/Application Support/Plow-Latch" -- plow-gog gmail search newer_than:1d --json
 ```
 
-Four outcomes distinguish a working provider path from a broken one:
+The example above is a fan-out. Smoke output omits its account-level `degraded`
+reasons; inspect the normal tool response for those details.
 
 | Output | Means |
 |---|---|
 | `FAILED — the executor threw` … `not installed` | the gog plugin is not staged — run `just stage-plugins gog` and repackage |
 | `FAILED — the executor threw` … `could not reach Plow` / `returned 4xx` | the mint failed; check that the owner's stored Plow login session is still live. Session authority does not grant Google access |
-| `FAILED — it ran and exited 6` | gog denied access. If the command reply or its `exec_error` says `wasn't granted`, ask the owner to reconnect Google and allow the missing access. The plugin and mint worked |
-| `OK` | an eligible account answered; inspect `degraded` for accounts skipped because they lack access |
+| `FAILED — it ran and exited 1` on a fan-out | no account answered; this includes every account lacking read access. Inspect `degraded` in the normal tool response |
+| `FAILED — it ran and exited 6` on a selected-account command | gog denied access. If the command reply or its `exec_error` says `wasn't granted`, ask the owner to reconnect Google and allow the missing access. The plugin and mint worked |
+| `OK` | an eligible account answered; smoke output does not show skipped accounts |
 
 A `403` *inside* gog's own output comes from Google. Tokens carry only the
 owner's grants: Gmail and Calendar read/write access differ per account.
