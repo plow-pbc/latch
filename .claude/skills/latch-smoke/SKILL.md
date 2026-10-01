@@ -133,10 +133,7 @@ Only success exits 0.
 gog is a bundled plugin on `main` (plow-pbc/latch#183), driven through
 `plow-gog` — a bare `gog` argv is refused with a sentence naming it. A build
 has the plugin staged; a from-source checkout needs `just stage-plugins gog`
-first. The mint also needs
-`gmail:access-token` in the device's scopes, which is plow-pbc/plow#1416 and is
-not landed — until it is, this section's commands reach gog and fail at the
-mint, not at the binary.
+first. The stored Plow credential must authorize `gmail:access-token`.
 
 Same command, its own argv:
 
