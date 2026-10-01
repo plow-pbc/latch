@@ -733,18 +733,19 @@ export class PlowApi {
         degraded.push({ account, reason: "malformed entry" });
         continue;
       }
-      // Only an absent field means the older API's full grant. Malformed or
-      // incomplete metadata must never manufacture a permission.
-      const grants = capabilities !== null && typeof capabilities === "object"
-        ? capabilities as Record<string, unknown>
-        : {};
+      const grants = capabilities as Record<string, unknown> | null | undefined;
+      if (grants === null || typeof grants !== "object" ||
+          ["mail_read", "mail_write", "calendar_read", "calendar_write"].some((key) => typeof grants[key] !== "boolean")) {
+        degraded.push({ account, reason: "malformed entry" });
+        continue;
+      }
       accounts.push({
         account, token: minted, isDefault: is_default === true,
         capabilities: {
-          mail_read: capabilities === undefined || grants.mail_read === true,
-          mail_write: capabilities === undefined || grants.mail_write === true,
-          calendar_read: capabilities === undefined || grants.calendar_read === true,
-          calendar_write: capabilities === undefined || grants.calendar_write === true,
+          mail_read: grants.mail_read === true,
+          mail_write: grants.mail_write === true,
+          calendar_read: grants.calendar_read === true,
+          calendar_write: grants.calendar_write === true,
         },
       });
     }

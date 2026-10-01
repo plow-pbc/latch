@@ -12,6 +12,7 @@ import { saveSettings } from "../src/settings.js";
 import { providerFor } from "@domo/device-core";
 
 const GOG = providerFor(["plow-gog"])!;
+const CAPABILITIES = { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true };
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
@@ -35,7 +36,7 @@ describe("buildMinter", () => {
       });
       return new Response(
         JSON.stringify({
-          data: { accounts: [{ account: "a@example.com", access_token: "ya29.token-value-here", is_default: true }] },
+          data: { accounts: [{ account: "a@example.com", access_token: "ya29.token-value-here", is_default: true, capabilities: CAPABILITIES }] },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
@@ -70,8 +71,8 @@ describe("buildMinter", () => {
       data: {
         access_token: "tok-default",
         accounts: [
-          { account: "a@example.com", access_token: "tok-a", is_default: true },
-          { account: "b@example.com", access_token: "tok-b", is_default: false },
+          { account: "a@example.com", access_token: "tok-a", is_default: true, capabilities: CAPABILITIES },
+          { account: "b@example.com", access_token: "tok-b", is_default: false, capabilities: CAPABILITIES },
         ],
         degraded: [
           { account: "c@example.com", reason: "needs_reauth" },
@@ -111,7 +112,7 @@ describe("buildMinter", () => {
         data: {
           access_token: "tok-a",
           accounts: [
-            { account: "a@example.com", access_token: "tok-a", is_default: true },
+            { account: "a@example.com", access_token: "tok-a", is_default: true, capabilities: CAPABILITIES },
             { account: "broken@example.com" }, // named, no token
             { account: "Bearer sk-fragment-abc123", access_token: "tok-x" }, // not an email
             // A "token" carrying the request's own bearer credential is the
