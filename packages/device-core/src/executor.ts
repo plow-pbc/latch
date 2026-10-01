@@ -618,6 +618,7 @@ export class Executor {
       // theirs to skip by throwing.
       try {
         buffer.finish(code);
+        this.groupAlive(handle);
       } finally {
         child.stdout?.destroy();
         child.stderr?.destroy();
@@ -777,7 +778,9 @@ export class Executor {
     return roots;
   }
 
-  /** Whether any process of the run's group still exists. */
+  /** Whether any process of the run's group still exists. A group seen empty
+   *  is forgotten: nothing can rejoin it, but macOS recycles pids, and a new
+   *  group under the old id would otherwise revive a long-finished run. */
   private groupAlive(handle: string): boolean {
     const pid = this.groups.get(handle);
     if (pid === undefined) return false;
@@ -787,7 +790,9 @@ export class Executor {
     } catch (error: unknown) {
       // ESRCH: no such group — every member is gone. Anything else (EPERM,
       // a member no longer ours) means something is still there.
-      return (error as { code?: unknown })?.code !== "ESRCH";
+      if ((error as { code?: unknown })?.code !== "ESRCH") return true;
+      this.groups.delete(handle);
+      return false;
     }
   }
 

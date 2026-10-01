@@ -8,12 +8,12 @@
  * it. These assert the reaper, on real sandboxed children: a writer-less FIFO
  * blocks in `open(2)` exactly as the TCC case does.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Capability, jv, KeyPair, makeIntent } from "@domo/protocol";
+import { canonicalize, Capability, jv, KeyPair, makeIntent } from "@domo/protocol";
 import { DeviceAgent, Executor, HeadlessPolicy, SandboxProfile } from "@domo/device-core";
 
 const cleanups: (() => void)[] = [];
@@ -321,5 +321,37 @@ describe.skipIf(!ON_MAC)("the audit record of a reaped run", () => {
       .filter((e) => jv(e).get("event").str === "exec_end");
     expect(ends).toHaveLength(1);
     expect(jv(ends[0]!).get("reaped").bool).toBe(true);
+  });
+});
+
+describe.skipIf(!ON_MAC)("a finished run's process group, once gone, stays gone", () => {
+  // macOS recycles pids: mba, 2026-10-01, refused every read under ~/Plow/wiki
+  // as `busy` for runs that had exited a day before, their pgids reused.
+  it.each([
+    ["exits with nothing left behind", "exit 0"],
+    ["left a job that has since ended", "sleep 1 & exit 0"],
+  ])("a run that %s", async (_name, script) => {
+    const root = canonicalize(tempDir());
+    const executor = new Executor(tempDir());
+    const result = await executor.run({
+      argv: ["/bin/sh", "-c", script],
+      readPaths: [],
+      writePaths: [root],
+      network: false,
+      appleEvents: false,
+      waitMs: 5_000,
+    });
+    expect(result.exitCode).toBe(0);
+    await until(() => !executor.mutableRoots().includes(root), 8_000);
+
+    // Every group probe now answers "exists": a recycled pgid, made deterministic.
+    const realKill = process.kill.bind(process);
+    const spy = vi.spyOn(process, "kill").mockImplementation(((pid: number, sig?: string | number) =>
+      pid < 0 && sig === 0 ? true : realKill(pid, sig)) as typeof process.kill);
+    try {
+      expect(executor.mutableRoots()).not.toContain(root);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
