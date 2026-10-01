@@ -115,11 +115,8 @@ const PLOW_GOG: Provider = {
   command: "plow-gog",
   plugin: "gog",
   mintAction: "access-token",
-  // Not a Gmail-only scope, though the prefix says gmail: checked against
-  // plow's GMAIL_DEFAULT_SCOPES, the mint covers calendar.readonly and
-  // calendar.events too, which is what gog's ~40 calendar leaves are spent on.
-  // The route was mounted on this prefix because the calendar routes already
-  // lived there — the name is Plow's history, not a narrower grant.
+  // The gmail prefix serves both Gmail and Calendar tokens. Each account's
+  // read/write capabilities reflect only the Google access the owner granted.
   mintPrefix: "/v1/connectors/gmail/",
   tokenEnv: "GOG_ACCESS_TOKEN",
   skill: GOG_SKILL,
