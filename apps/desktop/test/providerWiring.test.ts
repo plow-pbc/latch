@@ -93,8 +93,8 @@ describe("buildMinter", () => {
       ]);
       expect(minted).toEqual({
         accounts: [
-          { account: "a@example.com", token: "tok-a", isDefault: true, capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true } },
-          { account: "b@example.com", token: "tok-b", isDefault: false, capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true } },
+          { account: "a@example.com", token: "tok-a", isDefault: true, capabilities: { mail_read: true, calendar_read: true } },
+          { account: "b@example.com", token: "tok-b", isDefault: false, capabilities: { mail_read: true, calendar_read: true } },
         ],
         degraded: [
           { account: "c@example.com", reason: "needs_reauth" },
@@ -124,7 +124,7 @@ describe("buildMinter", () => {
       });
       const minted = await buildMinter({ api, home: homeWith("cred") }).mintAll(GOG);
       expect(minted).toEqual({
-        accounts: [{ account: "a@example.com", token: "tok-a", isDefault: true, capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true } }],
+        accounts: [{ account: "a@example.com", token: "tok-a", isDefault: true, capabilities: { mail_read: true, calendar_read: true } }],
         degraded: [
           { account: "broken@example.com", reason: "token refresh failed" },
           { account: "(unrecognized account)", reason: "malformed entry" },

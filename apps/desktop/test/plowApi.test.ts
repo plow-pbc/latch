@@ -728,7 +728,7 @@ describe("mintAccountTokens", () => {
       },
     ]);
     expect(await run()).toEqual({
-      accounts: [{ account: "a@example.com", token: TOKEN, isDefault: true, capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true } }],
+      accounts: [{ account: "a@example.com", token: TOKEN, isDefault: true, capabilities: { mail_read: true, calendar_read: true } }],
       degraded: [],
     });
     expect(calls[0].url).toBe("https://api.plow.co/v1/connectors/gmail/access-token");
@@ -739,10 +739,9 @@ describe("mintAccountTokens", () => {
   });
 
   it.each([
-    { mail_read: false, mail_write: false, calendar_read: true, calendar_write: true },
-    { mail_read: true, mail_write: false, calendar_read: false, calendar_write: false },
-    { mail_read: true, mail_write: false, calendar_read: true, calendar_write: false },
-  ])("preserves partial Google grants from the batch mint: %j", async (capabilities) => {
+    { mail_read: false, calendar_read: true },
+    { mail_read: true, calendar_read: false },
+  ])("preserves the read grants used by Latch: %j", async (capabilities) => {
     const result = await mint([{
       status: 200,
       body: { data: { accounts: [{ account: "a@example.com", access_token: TOKEN, is_default: true, capabilities }] } },
@@ -765,8 +764,8 @@ describe("mintAccountTokens", () => {
     null,
     {},
     { ...CAPABILITIES, mail_read: "true" },
-    { ...CAPABILITIES, mail_write: 1 },
-    { mail_read: true, mail_write: false, calendar_read: true },
+    { ...CAPABILITIES, calendar_read: 1 },
+    { mail_read: true },
   ])(
     "degrades an account with malformed capabilities: %j", async (capabilities) => {
       const result = await mint([{

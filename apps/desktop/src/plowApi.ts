@@ -735,7 +735,7 @@ export class PlowApi {
       }
       const grants = capabilities as Record<string, unknown> | null | undefined;
       if (grants === null || typeof grants !== "object" ||
-          ["mail_read", "mail_write", "calendar_read", "calendar_write"].some((key) => typeof grants[key] !== "boolean")) {
+          ["mail_read", "calendar_read"].some((key) => typeof grants[key] !== "boolean")) {
         degraded.push({ account, reason: "malformed entry" });
         continue;
       }
@@ -743,9 +743,7 @@ export class PlowApi {
         account, token: minted, isDefault: is_default === true,
         capabilities: {
           mail_read: grants.mail_read === true,
-          mail_write: grants.mail_write === true,
           calendar_read: grants.calendar_read === true,
-          calendar_write: grants.calendar_write === true,
         },
       });
     }

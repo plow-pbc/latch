@@ -43,7 +43,7 @@ const ON_MAC = process.platform === "darwin";
 const itSpawns = it.skipIf(!ON_MAC);
 
 const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
-const FULL_CAPABILITIES = { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true };
+const FULL_CAPABILITIES = { mail_read: true, calendar_read: true };
 /**
  * Neither end of the token appears in `text`.
  *
@@ -775,8 +775,8 @@ esac
   });
 
   itSpawns.each([
-    { why: "skips a Gmail-only account", capabilities: { ...FULL_CAPABILITIES, calendar_read: false, calendar_write: false }, blocked: false },
-    { why: "checks a read-only Calendar account", capabilities: { ...FULL_CAPABILITIES, calendar_write: false }, blocked: true },
+    { why: "skips a Gmail-only account", capabilities: { ...FULL_CAPABILITIES, calendar_read: false }, blocked: false },
+    { why: "checks a Calendar-readable account", capabilities: FULL_CAPABILITIES, blocked: true },
   ])("$why when booking a timed event", async ({ capabilities, blocked }) => {
     const accounts = [{ ...AB[0]!, capabilities }, { ...AB[1]!, capabilities: FULL_CAPABILITIES }];
     const d = device(accountsMinter(accounts), plowGogPlugin());
@@ -791,13 +791,10 @@ esac
   });
 
   itSpawns.each([
-    ["mail_read", ["mail", "get", "m1"]],
-    ["mail_write", ["gmail", "get", "m1"]],
-    ["calendar_read", ["cal", "event", "primary", "e1"]],
-    ["calendar_write", ["calendar", "event", "primary", "e1"]],
-    ["calendar_write", ["calendar", "create", "primary", "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z"]],
-  ] as const)("preserves gog's permission denial for the selected account lacking %s", async (capability, tail) => {
-    const accounts = [AB[0]!, { ...AB[1]!, capabilities: { ...FULL_CAPABILITIES, [capability]: false } }];
+    ["direct command", ["mail", "get", "m1"]],
+    ["timed create", ["calendar", "create", "primary", "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z"]],
+  ] as const)("preserves gog's permission denial for a selected-account %s", async (_why, tail) => {
+    const accounts = [AB[0]!, AB[1]!];
     const d = device(accountsMinter(accounts), stagedGog(`#!/bin/sh
 case "$*" in
   *"calendar calendars"*) echo '[{"id":"primary","selected":true}]'; exit 0 ;;
@@ -812,24 +809,6 @@ exit 0
     const response = await run(d, ["plow-gog", ...tail, "--account", "b@example.com"]);
     expect(response).toMatchObject({ status: "completed", exit_code: 6, output: expect.stringContaining("permission denied for resource") });
     expect(execEnd(d)).toBe(6);
-  });
-
-  itSpawns.each([
-    ["mail_write", 4, "gmail"],
-    ["calendar_write", 6, "gmail"],
-    ["mail_write", 6, "calendar"],
-    [null, 6, "gmail"],
-  ] as const)("preserves a %s grant / exit %s for %s when it is not a missing service grant", async (capability, code, group) => {
-    const capabilities = { ...FULL_CAPABILITIES, ...(capability === null ? {} : { [capability]: false }) };
-    const d = device(accountsMinter([{ ...AB[0]!, capabilities }]), stagedGog(`#!/bin/sh\nexit ${code}\n`));
-    expect(await run(d, ["plow-gog", group, "get", "item"])).toMatchObject({ status: "completed", exit_code: code });
-    expect(execEnd(d)).toBe(code);
-  });
-
-  itSpawns.each(["gmail", "cal"])("lets gog accept an unclassified %s command on a read-only account", async (group) => {
-    const accounts = [{ ...AB[0]!, capabilities: { ...FULL_CAPABILITIES, mail_write: false, calendar_write: false } }];
-    const d = device(accountsMinter(accounts), gogPlugin());
-    expect(await run(d, ["plow-gog", group, "new-read"])).toMatchObject({ status: "completed", exit_code: 0 });
   });
 
   describe("calendar discovery", () => {

@@ -17,7 +17,7 @@ import { CALENDAR_EVENTS_MAX } from "./plowGog.js";
 export const GOG_SKILL: Skill = {
   name: "google-workspace",
   description:
-    "Read and act on the owner's Gmail and Google Calendar — every connected account — by " +
+    "Read and act on the owner's Gmail and Google Calendar — connected accounts with access — by " +
     "running the bundled plow-gog CLI through plow_run_command.",
   body: `# Google Workspace, through the plow-gog CLI
 
@@ -31,7 +31,7 @@ through \`plow_run_command\`, like any other command. There is no Google tool in
 ## Every connected account
 
 **Reads fan out by default.** \`calendar calendars\`, \`gmail search\`, \`calendar events\`,
-\`calendar freebusy\` and \`calendar conflicts\` run once per connected account
+\`calendar freebusy\` and \`calendar conflicts\` run once per connected account with read access
 and come back as ONE merged JSON result: \`{items, degraded}\`, every item
 tagged with \`"account"\` (gmail sorted by date, newest first; calendar by
 start). \`degraded\` lists accounts that could not be reached — mention them
@@ -117,7 +117,7 @@ carries the owner's authority in this conversation — the owner, or
 anyone the conversation's own instructions give the owner's
 authority — never yours alone. A calendar create that overlaps an
 existing commitment is refused, never queued for approval: the
-check covers every connected account, and the refusal comes back to
+check covers every Calendar-readable account, and the refusal comes back to
 you. Ask them, naming the overlapping event; a plain "yes" is
 enough. Up-front consent counts only when they show they know about
 the overlap ("book it regardless", "I know it overlaps, hold those
@@ -209,9 +209,9 @@ Useful starting points:
     ["plow-gog","gmail","drafts","reply","<a message id from thread get>","--body","...","--account","..."]  # draft, for review
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--account","..."]
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--attach","/Users/me/Plow/receipt.jpg","--account","..."]
-    ["plow-gog","calendar","calendars"]   # every account's calendars; the shown ones carry selected
+    ["plow-gog","calendar","calendars"]   # readable accounts' calendars; the shown ones carry selected
     ["plow-gog","calendar","events","--calendars","<the shown ids>","--from","2026-09-01T00:00:00-07:00","--to","2026-09-08T00:00:00-07:00","--account","..."]
-    ["plow-gog","calendar","conflicts","--from","...","--to","..."]   # overlaps, every account
+    ["plow-gog","calendar","conflicts","--from","...","--to","..."]   # overlaps, Calendar-readable accounts
     ["plow-gog","calendar","create","primary","--summary","...","--from","...","--to","...","--account","..."]
 
 Each element is one argument. There is no shell here, so nothing is quoted or

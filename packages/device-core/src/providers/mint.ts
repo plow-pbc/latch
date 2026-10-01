@@ -29,9 +29,7 @@ export class MintError extends Error {
 
 export interface GoogleCapabilities {
   mail_read: boolean;
-  mail_write: boolean;
   calendar_read: boolean;
-  calendar_write: boolean;
 }
 
 /**
