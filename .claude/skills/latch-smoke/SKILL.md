@@ -150,7 +150,7 @@ reasons; inspect the normal tool response for those details.
 | `FAILED — the executor threw` … `not installed` | the gog plugin is not staged — run `just stage-plugins gog` and repackage |
 | `FAILED — the executor threw` … `could not reach Plow` / `returned 4xx` | the mint failed; check that the owner's stored Plow login session is still live. Session authority does not grant Google access |
 | `FAILED — it ran and exited 1` on a fan-out | no account answered; this includes every account lacking read access. Inspect `degraded` in the normal tool response |
-| `FAILED — it ran and exited 6` on a selected-account command | gog denied access. If the command reply or its `exec_error` says `wasn't granted`, ask the owner to reconnect Google and allow the missing access. The plugin and mint worked |
+| `FAILED — it ran and exited 6` on a selected-account command | gog denied access. Inspect the normal tool response for Google's error; this can be a resource permission denial, so do not infer a missing write grant |
 | `OK` | an eligible account answered; smoke output does not show skipped accounts |
 
 A `403` *inside* gog's own output comes from Google. Tokens carry only the

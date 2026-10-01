@@ -1598,7 +1598,7 @@ export class DeviceAgent {
       const eligible: MintedAccounts["accounts"] = [];
       const skipped: { account: string; reason: string }[] = [];
       for (const a of targets) {
-        const reason = gogCapabilityRefusal(plan.gogArgv, a.capabilities, false);
+        const reason = gogCapabilityRefusal(plan.gogArgv, a.capabilities);
         if (reason === null) eligible.push(a);
         else skipped.push({ account: a.account, reason });
       }
@@ -1696,13 +1696,6 @@ export class DeviceAgent {
       target = minted.accounts[0]!;
     }
 
-    const runSingle = async () => {
-      const result = await settled(await runGog(plan.gogArgv.slice(1), target.token));
-      const completed = await this.finishRun(intent.intentId, result);
-      const reason = result.exitCode === 6 ? gogCapabilityRefusal(plan.gogArgv, target.capabilities, true) : null;
-      return reason === null ? completed : this.execError(intent.intentId, reason);
-    };
-
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     if (plan.conflictCheck !== null && !plan.confirmConflict) {
       const { from, to, calendar } = plan.conflictCheck;
@@ -1762,12 +1755,12 @@ export class DeviceAgent {
       // exec_end green (viewModel.ts) — a refusal wearing a success badge.
       // The create child's own outcome gets the one exec_end, in finishRun.
       if (refusal !== null) return this.execError(intent.intentId, refusal);
-      const created = await runSingle();
+      const created = await this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
       return couldNotCheck.length > 0 && created !== null && typeof created === "object" && !Array.isArray(created)
         ? { ...created, could_not_check: couldNotCheck }
         : created;
     }
-    return runSingle();
+    return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
   }
 
   /** Read more output from a still-running (or finished) command. */

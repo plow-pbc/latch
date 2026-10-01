@@ -78,19 +78,13 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
 /** Account grants are server-owned. Refusals use only local sentences, never
  * argv values or provider-authored output. argv has already been planned, so
  * the account/confirmation flags are gone and the group comes first. */
-export function gogCapabilityRefusal(
-  argv: readonly string[], capabilities: GoogleCapabilities, requireWrite: boolean,
-): string | null {
+export function gogCapabilityRefusal(argv: readonly string[], capabilities: GoogleCapabilities): string | null {
   const group = GOG_ALIAS_OF[argv[1]!] ?? argv[1];
   const mail = group === "gmail";
   const read = mail ? "mail_read" : "calendar_read";
-  const write = mail ? "mail_write" : "calendar_write";
   const service = mail ? "Gmail" : "Calendar";
   if (!capabilities[read]) {
     return `this Google account wasn't granted ${service} access — ask the owner to reconnect Google and allow it`;
-  }
-  if (requireWrite && !capabilities[write]) {
-    return `this Google account wasn't granted ${service} write access — ask the owner to reconnect Google and allow it`;
   }
   return null;
 }

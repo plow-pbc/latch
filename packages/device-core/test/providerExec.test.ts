@@ -774,51 +774,43 @@ esac
     expect(response).toMatchObject({ degraded: [{ account: "a@example.com", reason: expect.stringMatching(/reconnect/i) }] });
   });
 
-  itSpawns("books a timed event with a Gmail-only account connected", async () => {
-    const accounts = [
-      { ...AB[0]!, capabilities: { ...FULL_CAPABILITIES, calendar_read: false, calendar_write: false } },
-      { ...AB[1]!, capabilities: FULL_CAPABILITIES },
-    ];
+  itSpawns.each([
+    { why: "skips a Gmail-only account", capabilities: { ...FULL_CAPABILITIES, calendar_read: false, calendar_write: false }, blocked: false },
+    { why: "checks a read-only Calendar account", capabilities: { ...FULL_CAPABILITIES, calendar_write: false }, blocked: true },
+  ])("$why when booking a timed event", async ({ capabilities, blocked }) => {
+    const accounts = [{ ...AB[0]!, capabilities }, { ...AB[1]!, capabilities: FULL_CAPABILITIES }];
     const d = device(accountsMinter(accounts), plowGogPlugin());
     const response = await run(d, [
       "plow-gog", "calendar", "create", "primary", "--summary", "X",
       "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", "--account", "b@example.com",
     ]);
-    expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
-  });
-
-  itSpawns("still checks a read-only calendar account for conflicts", async () => {
-    const accounts = [
-      { ...AB[0]!, capabilities: { ...FULL_CAPABILITIES, calendar_write: false } },
-      { ...AB[1]!, capabilities: FULL_CAPABILITIES },
-    ];
-    const d = device(accountsMinter(accounts), plowGogPlugin());
-    const response = await run(d, [
-      "plow-gog", "calendar", "create", "primary", "--summary", "X",
-      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", "--account", "b@example.com",
-    ]);
-    expect(response).toMatchObject({ status: "error", error: expect.stringContaining("a@example.com: busy") });
-    expect(JSON.stringify(response)).not.toContain("evt-1");
+    if (blocked) {
+      expect(response).toMatchObject({ status: "error", error: expect.stringContaining("a@example.com: busy") });
+      expect(JSON.stringify(response)).not.toContain("evt-1");
+    } else expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
   });
 
   itSpawns.each([
     ["mail_read", ["mail", "get", "m1"]],
-    ["mail_write", ["gmail", "send", "--to", "x@example.com"]],
+    ["mail_write", ["gmail", "get", "m1"]],
     ["calendar_read", ["cal", "event", "primary", "e1"]],
-    ["calendar_write", ["calendar", "create", "primary", "--confirm-conflict"]],
+    ["calendar_write", ["calendar", "event", "primary", "e1"]],
     ["calendar_write", ["calendar", "create", "primary", "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z"]],
-  ] as const)("translates exit 6 for the selected account lacking %s", async (capability, tail) => {
+  ] as const)("preserves gog's permission denial for the selected account lacking %s", async (capability, tail) => {
     const accounts = [AB[0]!, { ...AB[1]!, capabilities: { ...FULL_CAPABILITIES, [capability]: false } }];
     const d = device(accountsMinter(accounts), stagedGog(`#!/bin/sh
 case "$*" in
   *"calendar calendars"*) echo '[{"id":"primary","selected":true}]'; exit 0 ;;
   *"calendar freebusy"*) echo '{"primary":{"busy":[]}}'; exit 0 ;;
 esac
-[ "$GOG_ACCESS_TOKEN" = tok-b ] && exit 6
+if [ "$GOG_ACCESS_TOKEN" = tok-b ]; then
+  echo 'permission denied for resource' >&2
+  exit 6
+fi
 exit 0
 `));
-    const response = await run(d, ["plow-gog", ...tail, "--account", "b@example.com"], 0);
-    expect(response).toMatchObject({ status: "error", error: expect.stringMatching(/reconnect/i) });
+    const response = await run(d, ["plow-gog", ...tail, "--account", "b@example.com"]);
+    expect(response).toMatchObject({ status: "completed", exit_code: 6, output: expect.stringContaining("permission denied for resource") });
     expect(execEnd(d)).toBe(6);
   });
 

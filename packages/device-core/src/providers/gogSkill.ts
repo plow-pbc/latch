@@ -162,8 +162,9 @@ usage for a group you cannot actually run. Usage that prints cleanly is not a
 surface that works.
 
 Each account has only the Gmail and Calendar read/write access the owner
-granted. Fan-out reads skip accounts without access; a refused command needs the owner
-to reconnect Google and allow that access.
+granted. Fan-out reads skip accounts without access; ask the owner to reconnect
+Google and allow that access. Single commands keep Google's permission error;
+check the reported cause before asking the owner to reconnect.
 
 The CLI's own aliases count as those groups on both sides: \`mail\` and
 \`email\` are \`gmail\`, \`cal\` is \`calendar\`, and all five spellings run. The
