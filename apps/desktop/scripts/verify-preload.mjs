@@ -300,8 +300,10 @@ const connectorProbe = {
   google: {
     connecting: false,
     accounts: [
-      { email: "owner@probe.test", isDefault: true },
-      { email: "work@probe.test", isDefault: false },
+      { email: "owner@probe.test", isDefault: true,
+        capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true } },
+      { email: "work@probe.test", isDefault: false,
+        capabilities: { mail_read: false, mail_write: false, calendar_read: true, calendar_write: false } },
     ],
   },
 };
@@ -1781,6 +1783,8 @@ app.whenReady().then(async () => {
       // account with the address, the default's pill, and a labelled menu.
       hasConnectedAccounts: document.querySelector("#view").innerText.includes("Connected Accounts"),
       connectorAccounts: [...document.querySelectorAll(".cap-account-email")].map((e) => e.textContent.trim()),
+      connectorBadges: [...document.querySelectorAll(".cap-account-row")].map((row) =>
+        [...row.querySelectorAll(".cap-account-badges .badge")].map((badge) => badge.textContent)),
       connectorDefault: document.querySelector(".cap-account-row .cap-default-pill")?.textContent.trim(),
       connectorDefaultOnFirst: !!document.querySelector(".cap-account-row:first-child .cap-default-pill") &&
         !document.querySelector(".cap-account-row:nth-child(2) .cap-default-pill"),
@@ -1923,6 +1927,9 @@ app.whenReady().then(async () => {
     settings.hasConnectedAccountsHere &&
     capabilities.hasConnectedAccounts &&
     capabilities.connectorAccounts.join("|") === "owner@probe.test|work@probe.test" &&
+    JSON.stringify(capabilities.connectorBadges) === JSON.stringify([
+      ["Mail: read", "Mail: write", "Calendar: read", "Calendar: write"], ["Calendar: read"],
+    ]) &&
     capabilities.connectorDefault === "Default" &&
     capabilities.connectorDefaultOnFirst &&
     capabilities.connectorMenusLabelled &&
