@@ -33,7 +33,12 @@ export function pluginExamples(
   limit = 4,
 ): PluginExample[] {
   const titleByName = new Map(rows.map(({ name, title }) => [name, title]));
-  return ONBOARDING_QUERIES
+  const queries: readonly OnboardingQuery[] = [
+    ...ONBOARDING_QUERIES.slice(0, 3),
+    { id: "screenpipe-history", label: "Find what I worked on yesterday", icon: "history", plugins: ["screenpipe"] },
+    ...ONBOARDING_QUERIES.slice(3),
+  ];
+  return queries
     .filter(({ plugins }) => plugins.length > 0 && plugins.every((name) => titleByName.has(name)))
     .slice(0, limit)
     .map(({ label, plugins }) => ({
