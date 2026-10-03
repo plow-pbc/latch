@@ -998,9 +998,14 @@ through the `op` CLI. The decisions:
   raise the very prompt nobody is there to answer. Its writes are audited as
   `ONEPASSWORD`, never as the owner (docs/VAULT.md § Auditing). A pass reports
   counts only.
-- **What must never be filled here is never fetched.** `exclude` (item ids or
-  titles) drops an item at the list, before any `item get`, so a bank login or
-  another person's account in the same 1Password vault never leaves it.
+- **What must never be filled here is never fetched.** `exclude` (1Password
+  item ids; never titles, which a rename would slip past) drops an item at the
+  list, before any `item get`, so a bank login or another person's account in
+  the same 1Password vault never leaves it.
+- **One write section at a time.** The pass's reconcile-and-write and the
+  owner's import commits and saves share one lock in main; an import commit
+  re-marks against the live vault inside it (`commitAgainstLive`), so a login
+  the pass just landed is never created twice. The `op` fetches stay outside.
 - **Off unless set, re-read every pass.** No screen sets it yet; turning it on,
   off or at another vault needs no relaunch.
 

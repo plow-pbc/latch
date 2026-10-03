@@ -14,6 +14,7 @@ import { LocalVault } from "../src/browser/localVault.js";
 import { VaultKeyStore } from "../src/browser/vaultKeyStore.js";
 import { VaultStore } from "../src/browser/vaultStore.js";
 import { loginFromOpItem, syncFromOnePassword, type OpRunner } from "../src/browser/onePasswordSync.js";
+import { commitAgainstLive, markAgainstVault } from "../src/browser/passwordImport.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -109,7 +110,7 @@ describe("syncFromOnePassword", () => {
     expect(audit).not.toContain("lu-secret");
   });
 
-  it("an excluded item (by id or by title, any case) is never fetched, so its values never leave 1Password", async () => {
+  it("an excluded item id is never fetched, so its values never leave 1Password; a title excludes nothing", async () => {
     const { vault } = tempVault();
     const items = {
       mercury: opLogin("mercury", "Mercury", "bank-secret"),
@@ -117,7 +118,10 @@ describe("syncFromOnePassword", () => {
       luma: opLogin("luma", "Luma", "lu-secret"),
     };
     const calls: string[][] = [];
-    const result = await syncFromOnePassword(vault, "Agents", fakeOp(items, calls), ["mercury", " sam's reddit "]);
+    // "Luma" is a title: a rename would slip past it, so it must not count.
+    const result = await syncFromOnePassword(vault, "Agents", fakeOp(items, calls), {
+      exclude: ["mercury", " sam ", "Luma"],
+    });
     expect(result).toEqual(counts({ excluded: 2, saved: 1 }));
     expect(calls.filter((c) => c[1] === "get").map((c) => c[2])).toEqual(["luma"]);
     expect((await vault.list()).map((i) => i.title)).toEqual(["Luma"]);
@@ -138,6 +142,42 @@ describe("syncFromOnePassword", () => {
     expect(result).toEqual(counts({ saved: 1, skipped: 1 }));
     vault.onReprompt = async () => true;
     expect(await vault.reveal(held!.id, "password")).toBe("old-pw");
+  });
+
+  it("a rotated login it cannot pin to one item is skipped, never reported as unchanged", async () => {
+    const { vault } = tempVault();
+    for (const pw of ["a-pw", "b-pw"]) {
+      await vault.save({ type: "login", name: "Luma", urls: ["https://luma.example.com/login"], username: "luma@plow.co", password: pw });
+    }
+    const result = await syncFromOnePassword(vault, "Agents", fakeOp({ luma: opLogin("luma", "Luma", "new-pw") }));
+    expect(result).toEqual(counts({ skipped: 1 }));
+    expect((await vault.list()).length).toBe(2);
+  });
+
+  it("only the reconcile-and-write section runs inside serialize; every op fetch is before it", async () => {
+    const { vault } = tempVault();
+    const events: string[] = [];
+    const op = fakeOp({ luma: opLogin("luma", "Luma", "lu-secret") });
+    await syncFromOnePassword(vault, "Agents", async (args) => (events.push(`op ${args[1]}`), op(args)), {
+      serialize: async (fn) => {
+        events.push("enter");
+        const out = await fn();
+        events.push("leave");
+        return out;
+      },
+    });
+    expect(events).toEqual(["op list", "op get", "enter", "leave"]);
+  });
+
+  it("an import staged as new commits against the live vault: a login the sync landed meanwhile is not doubled", async () => {
+    const { vault } = tempVault();
+    const staged = [loginFromOpItem(opLogin("luma", "Luma", "lu-secret"))!];
+    await markAgainstVault(vault, staged); // the sheet's preview: new
+    expect(staged[0]!.duplicate).toBeUndefined();
+    await syncFromOnePassword(vault, "Agents", fakeOp({ luma: opLogin("luma", "Luma", "lu-secret") }));
+    const result = await commitAgainstLive(vault, staged);
+    expect(result).toEqual({ saved: 0, updated: 0, duplicates: 1, failed: [] });
+    expect((await vault.list()).length).toBe(1);
   });
 
   it("a password rotated in 1Password updates the same item, not a second one", async () => {

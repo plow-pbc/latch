@@ -38,7 +38,7 @@ import {
   PolicyDelegate,
   probeFullDiskAccess,
   requestFolderAccess,
-  importLogins,
+  commitAgainstLive,
   importPreview,
   loadPlugins,
   markAgainstVault,
@@ -78,6 +78,7 @@ import { resolveInstancePaths } from "./paths.js";
 import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
 import { findOp, opRunner, tokenFromEnvFile } from "./onePasswordSyncRunner.js";
+import { serialQueue } from "./vaultSerial.js";
 import { resolveTelemetryConfig, SimulatedError, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
@@ -1096,10 +1097,13 @@ ipcMain.handle("vault:deleteItem", async (_e, itemId: string) => {
   return result;
 });
 
+// The owner's saves and import commits and the 1Password pass write one at a time.
+const vaultSerial = serialQueue();
+
 ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  const result = await vault.save(input);
+  const result = await vaultSerial(() => vault.save(input));
   // After the save took, so a refused write is not counted. Counts and the
   // fixed type enum only — never the name, urls, or field values.
   const knownTypes = ["login", "card", "identity", "note"];
@@ -1234,7 +1238,8 @@ ipcMain.handle("vault:importCommit", async (_e, selected?: number[], ticket?: nu
   const chosen = Array.isArray(selected)
     ? logins.filter((_, i) => selected.includes(i))
     : logins;
-  return importLogins(vault, chosen);
+  // Marked at inspect; the vault may have moved since (the 1Password pass).
+  return vaultSerial(() => commitAgainstLive(vault, chosen));
 });
 
 // The sheet closed without importing: drop the staged passwords now rather
@@ -2655,7 +2660,10 @@ app.whenReady().then(async () => {
       const op = findOp();
       if (!op) throw new Error("the 1Password CLI (op) is not installed");
       const token = tokenFromEnvFile(cfg.tokenFile);
-      const r = await syncFromOnePassword(vault, cfg.vault, opRunner(op, token), cfg.exclude ?? []);
+      const r = await syncFromOnePassword(vault, cfg.vault, opRunner(op, token), {
+        exclude: cfg.exclude,
+        serialize: vaultSerial,
+      });
       console.log(
         `[1password-sync] ${r.saved} new, ${r.updated} updated, ${r.unchanged} unchanged, ` +
           `${r.excluded} excluded, ${r.skipped} skipped, ${r.failed} failed`,

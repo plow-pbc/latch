@@ -76,8 +76,11 @@ export function loginFromOpItem(raw: unknown): ImportedLogin | null {
 
 /**
  * One pass: every login in `vaultName`, reconciled into `vault`. An `exclude`
- * entry (an item id, or a title, case-insensitively) drops the item at the
- * list: it is never fetched, so its values never leave 1Password.
+ * entry is a 1Password item id (never a title: a rename would re-admit it) and
+ * drops the item at the list, so it is never fetched and its values never leave
+ * 1Password. `serialize` wraps the reconcile-and-write section, so the caller
+ * can keep it from interleaving with the owner's own imports and saves; the
+ * `op` fetches stay outside it.
  * ponytail: re-reads every login each pass (1 list + 1 get per login). Ceiling:
  * a 1Password Teams service account allows 1,000 reads an hour, so hundreds of
  * logins at the hourly pace the app uses; upgrade path is skipping items whose
@@ -87,9 +90,10 @@ export async function syncFromOnePassword(
   vault: LocalVault,
   vaultName: string,
   run: OpRunner,
-  exclude: string[] = [],
+  opts: { exclude?: string[]; serialize?: <T>(fn: () => Promise<T>) => Promise<T> } = {},
 ): Promise<SyncResult> {
-  const out = new Set(exclude.map((e) => e.trim().toLowerCase()));
+  const out = new Set((opts.exclude ?? []).map((id) => id.trim()));
+  const serialize = opts.serialize ?? (<T>(fn: () => Promise<T>) => fn());
   let listed: unknown;
   try {
     listed = JSON.parse(await run(["item", "list", "--vault", vaultName, "--categories", "Login", "--format", "json"]));
@@ -101,8 +105,7 @@ export async function syncFromOnePassword(
   let excluded = 0;
   let skipped = 0;
   for (const entry of Array.isArray(listed) ? (listed as Array<Record<string, unknown>>) : []) {
-    const title = typeof entry.title === "string" ? entry.title : "(untitled)";
-    if (out.has(String(entry.id).toLowerCase()) || out.has(title.trim().toLowerCase())) {
+    if (out.has(String(entry.id))) {
       excluded++;
       continue;
     }
@@ -117,7 +120,9 @@ export async function syncFromOnePassword(
     if (login) logins.push(login);
     else skipped++;
   }
-  const prompted = await markAgainstVault(vault, logins, { unattended: true });
-  const { saved, updated, duplicates, failed } = await importLogins(vault, logins, "ONEPASSWORD");
-  return { excluded, saved, updated, unchanged: duplicates - prompted, skipped: skipped + prompted, failed: failed.length };
+  return serialize(async () => {
+    const leftAlone = await markAgainstVault(vault, logins, { unattended: true });
+    const { saved, updated, duplicates, failed } = await importLogins(vault, logins, "ONEPASSWORD");
+    return { excluded, saved, updated, unchanged: duplicates - leftAlone, skipped: skipped + leftAlone, failed: failed.length };
+  });
 }

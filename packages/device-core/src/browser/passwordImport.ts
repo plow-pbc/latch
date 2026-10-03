@@ -397,7 +397,10 @@ export async function markAgainstVault(
   logins: ImportedLogin[],
   opts: { unattended?: boolean } = {},
 ): Promise<number> {
-  let protectedRows = 0;
+  // Rows marked `duplicate` without being identical to an item: ambiguous, or
+  // protected under `unattended`. Returned, so a caller never reports them as
+  // unchanged when what is here may be stale.
+  let leftAlone = 0;
   const itemGroups = new Map<string, VaultItemSummary[]>();
   for (const s of await vault.list()) {
     if (s.type !== "login") continue;
@@ -425,7 +428,7 @@ export async function markAgainstVault(
         row.duplicate = true;
         row.warnings.push("what it matches here asks for you to confirm it is you; left alone");
       }
-      protectedRows += rows.length;
+      leftAlone += rows.length;
       continue;
     }
     // Every row against every item, once. Groups are almost always 1×1.
@@ -460,6 +463,7 @@ export async function markAgainstVault(
       rows[r]!.update = { itemId: items[i]!.id, revision: diffs[r]![i]!.revision, fields: diffs[r]![i]!.fields };
       continue;
     }
+    leftAlone += unmatched.length;
     for (const r of unmatched) {
       rows[r]!.duplicate = true;
       rows[r]!.warnings.push(
@@ -467,7 +471,7 @@ export async function markAgainstVault(
       );
     }
   }
-  return protectedRows;
+  return leftAlone;
 }
 
 /** One preview row — everything the screen shows, and never a secret value. */
@@ -543,6 +547,21 @@ export interface ImportResult {
  * refusal, not an overwrite. One bad row must not sink the rest, so failures
  * are collected, not thrown.
  */
+/**
+ * Commit rows against the vault as it is NOW. A row staged as new may meet an
+ * item that landed after it was marked (the hourly 1Password sync, say), and
+ * committing the stale verdict would create a second item with that identity.
+ * Run inside the caller's vault write section, so nothing lands in between.
+ */
+export async function commitAgainstLive(vault: LocalVault, logins: ImportedLogin[]): Promise<ImportResult> {
+  for (const login of logins) {
+    delete login.duplicate;
+    delete login.update;
+  }
+  await markAgainstVault(vault, logins);
+  return importLogins(vault, logins);
+}
+
 export async function importLogins(vault: LocalVault, logins: ImportedLogin[], origin?: string): Promise<ImportResult> {
   let saved = 0;
   let updated = 0;
