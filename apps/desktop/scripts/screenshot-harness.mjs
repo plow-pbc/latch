@@ -60,6 +60,21 @@ export async function waitFor(win, expr, label, timeoutMs = 10_000) {
 }
 
 /**
+ * Wait out what is still moving: a capture mid-fade is a picture of a state
+ * the screen never rests in. Only finite animations count (a breathing dot
+ * never ends), and the wait is read off their own timing, so it holds in a
+ * hidden window whose frames are throttled. Capped, so a long entrance cannot
+ * stall a run.
+ */
+export async function settleMotion(win, capMs = 1000) {
+  const ms = await win.webContents.executeJavaScript(`Math.max(0, ...document.getAnimations().map((a) => {
+    const t = a.effect && a.effect.getComputedTiming();
+    return t && Number.isFinite(t.endTime) && a.playState === "running" ? t.endTime - (t.localTime ?? 0) : 0;
+  }))`);
+  if (ms > 0) await new Promise((r) => setTimeout(r, Math.min(ms, capMs) + 20));
+}
+
+/**
  * Shoot every screen, and exit non-zero if one of them lost its content.
  *
  * `expect` is matched against the page's text case-insensitively — several of
@@ -85,6 +100,7 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     await load(screen);
     await screen.prepare?.(win);
     await beforeShot?.(win, screen);
+    await settleMotion(win);
 
     const out = path.join(outDir, `${prefix}-${screen.name}.png`);
     fs.writeFileSync(out, (await win.webContents.capturePage()).toPNG());

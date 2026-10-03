@@ -7,11 +7,15 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
 #root { height: 100%; }
 
 .fda-panel {
+  /* It sits over System Settings, so it reads in the system's type — and
+     loads none, so its measured height never changes under the owner. */
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
   display: flex; flex-direction: column; gap: 6px;
   height: 100%; box-sizing: border-box;
   padding: 8px 12px 12px;
-  background: rgba(238, 238, 240, 0.94);
-  border: 1px solid rgba(0, 0, 0, 0.14);
+  /* The app's warm paper, translucent over the desktop. */
+  background: rgba(246, 246, 241, 0.94);
+  border: 1px solid rgba(18, 18, 17, 0.12);
   border-radius: 18px;
 }
 
@@ -21,8 +25,8 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
 
 /* PermissionFlow wiggles the arrow (±12°, fast alternate) until the grant
    lands; then it holds still. */
-.fda-arrow { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--fg);
-  animation: fda-wiggle 0.22s ease-in-out infinite alternate; }
+.fda-arrow { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--accent);
+  animation: fda-wiggle 0.22s var(--ease) infinite alternate; }
 .fda-arrow.granted { animation: none; color: var(--green-fg); }
 @keyframes fda-wiggle {
   from { transform: rotate(-12deg) translateY(1px); }
@@ -32,10 +36,11 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
 .fda-close {
   flex: none; width: 20px; height: 20px; padding: 0; margin: 0;
   border: none; border-radius: 50%;
-  background: rgba(0, 0, 0, 0.12); color: var(--fg);
+  background: rgba(18, 18, 17, 0.1); color: var(--fg);
   cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background-color var(--dur) var(--ease);
 }
-.fda-close:hover { background: rgba(0, 0, 0, 0.2); }
+.fda-close:hover { background: rgba(18, 18, 17, 0.18); }
 /* dom.js's close glyph fills its viewBox, so the box stays well inside the
    20px circle. */
 .fda-close-glyph { width: 10px; height: 10px; }
@@ -46,8 +51,8 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
   /* The tile's height is a constant the renderer measures against
      (fdapanel.js TILE_HEIGHT); the header is the part that varies. */
   flex: none; height: 46px; box-sizing: border-box; padding: 6px;
-  background: rgba(255, 255, 255, 0.65);
-  border: 1px solid rgba(0, 0, 0, 0.085);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(18, 18, 17, 0.08);
   border-radius: 16px;
   cursor: grab; -webkit-user-select: none; user-select: none;
 }
@@ -73,13 +78,16 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
    here, or the panel reads as a light-mode card on a dark desktop. */
 @media (prefers-color-scheme: dark) {
   .fda-panel {
-    background: rgba(38, 38, 42, 0.94);
-    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(20, 20, 19, 0.94);
+    border-color: rgba(240, 240, 232, 0.12);
   }
-  .fda-close { background: rgba(255, 255, 255, 0.14); }
-  .fda-close:hover { background: rgba(255, 255, 255, 0.24); }
+  .fda-close { background: rgba(240, 240, 232, 0.12); }
+  .fda-close:hover { background: rgba(240, 240, 232, 0.2); }
   .fda-drag-tile {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(240, 240, 232, 0.06);
+    border-color: rgba(240, 240, 232, 0.1);
   }
 }
+
+/* Held still for anyone who has asked the system for less motion. */
+@media (prefers-reduced-motion: reduce) { .fda-arrow { animation: none; } }

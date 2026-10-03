@@ -21,6 +21,7 @@ import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
 import { capabilitiesView } from "../dist/capabilitiesModel.js";
 import { grantList, pluginRows } from "../dist/pluginsModel.js";
 import { parseManifest } from "@domo/device-core";
+import { settleMotion } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -447,6 +448,7 @@ async function clickCloudButton(win, label) {
  * happen. `waitFor` cannot stand in for it; a poll sees state, not paint.
  */
 async function captureAfterPaint(win, outputPath) {
+  await settleMotion(win);
   await win.webContents.executeJavaScript(
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );

@@ -7,7 +7,7 @@ import {
 } from "./approvals.js";
 import { attentionMatches, createSerialAutosave, modeView } from "./gatekeeperState.js";
 
-import { el, icon, switchEl } from "./dom.js";
+import { el, icon, PLW_PATH, switchEl } from "./dom.js";
 import { singleFlight } from "./onboardingAction.js";
 import { googleCapabilityBadges } from "../connectorBadges.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
@@ -18,10 +18,22 @@ import {
   deployCards,
 } from "../cloudAgentViewModel.js";
 
+// Lift styles.css's hold on the first paint once the faces are in.
+Promise.race([
+  Promise.all([document.fonts.load('500 13px "DM Sans"'), document.fonts.load('11px "DM Mono"')]),
+  new Promise((resolve) => setTimeout(resolve, 400)),
+]).finally(() => document.documentElement.classList.add("fonts-ready"));
+
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
+
+// The chrome's glyphs come from the one icon registry, so the HTML carries
+// only words: the mark, and an icon beside each section's (always visible) label.
+const TAB_ICONS = { agents: "agent", audit: "activity", vault: "lock", plugins: "plug", settings: "sliders" };
+document.getElementById("brandMark").setAttribute("d", PLW_PATH);
+for (const b of seg.querySelectorAll("button")) b.prepend(icon(TAB_ICONS[b.dataset.tab]));
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
 // but boot must still RENDER that pane, and "already on this tab" now returns
@@ -96,7 +108,12 @@ function badge(tone, text) {
 async function refreshStatus() {
   const status = await window.domo.statusGet();
   statusDot.className = "status-dot" + (status.connected ? " on" : "");
-  statusText.textContent = status.connected ? `Connected · ${status.name}` : "Not connected";
+  statusDot.parentElement.classList.add("ready");
+  // Connected shows which Mac; the word is there for a screen reader, and the
+  // other state says itself in words, so the dot is never the only signal.
+  statusText.replaceChildren(...(status.connected && status.name
+    ? [el("span", { class: "sr-only", text: "Connected · " }), status.name]
+    : [status.connected ? "Connected" : "Not connected"]));
 }
 
 const gatekeeperNotice = document.getElementById("gatekeeperNotice");
@@ -164,7 +181,7 @@ async function refreshGatekeeperAttention() {
   drawGatekeeperNotice();
 }
 
-// ---- Audit (master–detail, mockup Alternative 1) ----
+// ---- Audit (master–detail) ----
 // Rows are grouped ACTIVITIES (one logical operation), each with a per-event
 // timeline in the detail pane — matching the Swift app's fine-grained view.
 
@@ -206,9 +223,17 @@ async function renderAudit() {
   const generation = ++auditRenderGeneration;
   await refreshGatekeeperAttention();
   if (currentTab !== "audit" || generation !== auditRenderGeneration) return;
+  // The strip is mounted complete: its mode, rules count and instructions all
+  // change its size, and arriving a beat after the list they would shove it down.
   const gatekeeper = createGatekeeperCard();
-  const search = el("div", { class: "search" }, [
-    el("input", { attrs: { placeholder: "Search activity, path, agent…" } }),
+  await gatekeeper.ready;
+  if (currentTab !== "audit" || generation !== auditRenderGeneration) {
+    gatekeeper.dispose();
+    return;
+  }
+  const search = el("label", { class: "search" }, [
+    icon("search"),
+    el("input", { attrs: { type: "search", placeholder: "Search activity, path, agent…", "aria-label": "Search activity" } }),
   ]);
   const searchInput = search.querySelector("input");
   searchInput.value = auditSearch;
@@ -218,7 +243,7 @@ async function renderAudit() {
   // is picked, then "Decision: Allowed". Rebuilt on every refresh.
   const chipsBox = el("div", { class: "chips" });
   const count = el("span", { class: "count" });
-  const clearBtn = el("button", { class: "btn small", text: "Clear Log" });
+  const clearBtn = el("button", { class: "btn small quiet", text: "Clear Log" });
   clearBtn.addEventListener("click", async () => {
     const cleared = await window.domo.auditClear();
     if (cleared) {
@@ -231,7 +256,14 @@ async function renderAudit() {
     search, chipsBox, el("div", { class: "spacer" }), count, clearBtn,
   ]);
 
-  const listBox = el("div", { class: "list" });
+  // Until the first page lands, the rows to come as a skeleton of the same
+  // height — the list fills in place rather than appearing from nothing.
+  const listBox = el("div", { class: "list" }, [
+    el("div", { class: "sk-shimmer", attrs: { "aria-hidden": "true" } }, Array.from({ length: 8 }, () =>
+      el("div", { class: "sk-row" }, [
+        el("span", { class: "sk sk-ic" }), el("span", { class: "sk" }), el("span", { class: "sk" }), el("span", { class: "sk" }),
+      ]))),
+  ]);
   // The line under the last loaded row while there are more; nearing it
   // asks main for the next page. Asked once per page: a further scroll
   // while that read is in flight finds the limit already past the rows.
@@ -320,13 +352,27 @@ async function renderAudit() {
   // The table (and its tbody) persist across refreshes so row nodes are reused,
   // not rebuilt — that keeps an in-progress insert animation alive and lets a
   // burst of streamed events update a row in place instead of recreating it.
-  const tbody = el("tbody");
-  const table = el("table", {}, [
-    el("thead", {}, [el("tr", {}, [
-      el("th", { text: "Time" }), el("th", { text: "Decision" }), el("th", { text: "Status" }), el("th", { text: "Activity" }),
-    ])]),
-    tbody,
-  ]);
+  //
+  // To assistive tech it is a listbox: one tab stop, each row an option whose
+  // name is its cells in reading order (activity, decision, status, time), and
+  // the arrow keys move the selection the detail pane follows.
+  const tbody = el("tbody", { attrs: { role: "presentation" } });
+  const table = el("table", {
+    class: "activity",
+    attrs: { role: "listbox", "aria-label": "Activity", tabindex: "0" },
+  }, [tbody]);
+  table.addEventListener("keydown", (e) => {
+    const step = { ArrowDown: 1, ArrowUp: -1, Home: -Infinity, End: Infinity }[e.key];
+    if (step === undefined || !tbody.children.length) return;
+    e.preventDefault();
+    const order = [...tbody.children];
+    const at = order.findIndex((tr) => tr.classList.contains("sel"));
+    const next = order[Math.max(0, Math.min(order.length - 1, at + step))];
+    next.scrollIntoView({ block: "nearest" });
+    selectedId = next.dataset.id;
+    dismissedGatekeeperDetailId = null;
+    refreshAudit();
+  });
 
   auditMounted = {
     listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
@@ -528,6 +574,7 @@ async function refreshAuditNow(opts) {
   }
 
   // Create/update each row, reusing existing nodes so animations survive.
+  const verdicts = [];
   shown.forEach((a) => {
     let r = rows.get(a.id);
     if (!r) {
@@ -535,9 +582,16 @@ async function refreshAuditNow(opts) {
       rows.set(a.id, r);
       if (animateNew) enterRows.push(r.tr);
     }
-    updateAuditRow(r, a);
-    r.tr.classList.toggle("sel", a.id === selectedId);
+    const verdict = updateAuditRow(r, a, !!opts.followTop && !reduceMotion);
+    if (verdict) verdicts.push({ tr: r.tr, verdict });
+    const sel = a.id === selectedId;
+    r.tr.classList.toggle("sel", sel);
+    r.tr.setAttribute("aria-selected", String(sel));
   });
+  sweepVerdicts(verdicts);
+  const active = rows.get(selectedId)?.tr;
+  if (active) table.setAttribute("aria-activedescendant", active.id);
+  else table.removeAttribute("aria-activedescendant");
 
   // Put the rows in the desired (newest-first) order with minimal DOM moves, so
   // nodes that don't move keep their running animations undisturbed.
@@ -608,6 +662,9 @@ function hostOf(url) {
 // can collapse to zero (a real table row won't shrink below its content) and
 // grow to push the rows below it down. Content is later updated IN PLACE so a
 // burst of streamed events never recreates (and thus never interrupts) the row.
+// Cells run in reading order — what happened, the verdict, the outcome, when —
+// which is also the order a screen reader speaks the option.
+let auditRowSeq = 0;
 function createAuditRow(id) {
   const timeCw = el("div", { class: "cw" });
   const decisionCw = el("div", { class: "cw" });
@@ -615,12 +672,13 @@ function createAuditRow(id) {
   const iconWrap = el("span", { class: "ic-wrap" });
   const titleSpan = el("span", { class: "t-title" });
   const actCw = el("div", { class: "cw" }, [el("div", { class: "t-act" }, [iconWrap, titleSpan])]);
-  const tr = el("tr", {}, [
-    el("td", { class: "t-time" }, [timeCw]),
+  const tr = el("tr", { attrs: { role: "option", id: `activity-row-${++auditRowSeq}`, "aria-selected": "false" } }, [
+    el("td", {}, [actCw]),
     el("td", {}, [decisionCw]),
     el("td", { class: "t-dec" }, [badgeCw]),
-    el("td", {}, [actCw]),
+    el("td", { class: "t-time" }, [timeCw]),
   ]);
+  tr.dataset.id = id;
   // Select on mouse down (feels immediate, before the click completes).
   tr.addEventListener("mousedown", () => {
     selectedId = id;
@@ -629,53 +687,117 @@ function createAuditRow(id) {
   });
   return {
     tr, timeCw, decisionCw, badgeCw, iconWrap, titleSpan,
-    time: null, decision: null, decisionTone: null, tone: null, status: null, title: null, kind: null,
+    time: null, today: null, decision: null, decisionTone: null, decisionKind: null,
+    tone: null, status: null, statusKind: null, title: null, kind: null,
   };
 }
 
-// The Decision cell: who let this happen, as a pill — without the dot the
-// other tabs' pills carry, since the fill already says it. Empty for a row
-// that had no authorization step.
-function decisionMark(a) {
+function isToday(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+}
+
+// The Decision cell: who let this happen, as setup's mark (a check allowed,
+// a cross refused) beside the word. Empty for a row that had no
+// authorization step. `fresh` draws the mark in: the verdict just landed.
+const DECISION_GLYPHS = { green: "checkmark", red: "close", amber: "clock" };
+function decisionMark(a, fresh = false) {
   if (!a.decision) return el("span", { class: "dec-none" });
-  return el("span", { class: `badge b-${a.decisionTone || "zinc"}`, text: a.decision });
+  const tone = a.decisionTone || "zinc";
+  // auditView's decided("Pending") is the one verdict still to come.
+  return el("span", { class: `mark mark-${tone}` + (a.decision === "Pending" ? " pending" : "") + (fresh ? " just-decided" : "") }, [
+    icon(DECISION_GLYPHS[tone] ?? "ring", { class: "ico mark-glyph" }),
+    el("span", { text: a.decision }),
+  ]);
 }
 
 // The Status cell: what happened to the work, as a colored word rather than
-// a second pill. Empty when nothing ran.
+// a second pill; running work gets a breathing dot. Empty when nothing ran.
 function statusPill(a) {
   if (!a.status) return el("span", { class: "dec dec-none" });
-  return el("span", { class: `dec dec-${a.tone || "zinc"}`, text: a.status });
+  return el("span", { class: `dec dec-${a.tone || "zinc"}` + (a.statusKind === "running" ? " live" : "") }, [
+    el("span", { class: "dec-dot", attrs: { "aria-hidden": "true" } }),
+    el("span", { text: a.status }),
+  ]);
 }
 
-// Update a row's content in place, touching only what changed.
-function updateAuditRow(r, a) {
+// Update a row's content in place, touching only what changed. `live` is a
+// change streaming in while the list is on screen (and motion is welcome).
+// Returns "allow" or "deny" when that change was this row's verdict landing.
+function updateAuditRow(r, a, live = false) {
+  let verdict = null;
   r.tr.classList.toggle("gatekeeper-denied-row", a.decisionKind === "denied");
-  if (r.time !== a.ts) { r.timeCw.textContent = fmtDayTime(a.ts); r.time = a.ts; }
+  const today = isToday(a.ts);
+  if (r.time !== a.ts || r.today !== today) {
+    // Today's rows say the time; older ones the day too. To the second either
+    // way: audit rows are often seconds apart.
+    r.timeCw.textContent = today ? fmtClock(a.ts) : fmtDayTime(a.ts);
+    r.time = a.ts;
+    r.today = today;
+  }
   if (r.decisionTone !== a.decisionTone || r.decision !== a.decision) {
-    r.decisionCw.replaceChildren(decisionMark(a));
+    // A verdict landing on a row that was waiting for one, while it is watched.
+    const decided = live && r.decision !== null &&
+      (r.decisionKind === "none" || r.decisionKind === "unanswered") &&
+      (a.decisionKind === "allowed" || a.decisionKind === "denied");
+    r.decisionCw.replaceChildren(decisionMark(a, decided));
+    if (decided) verdict = a.decisionKind === "denied" ? "deny" : "allow";
     r.decisionTone = a.decisionTone; r.decision = a.decision;
   }
-  if (r.tone !== a.tone || r.status !== a.status) {
+  r.decisionKind = a.decisionKind;
+  if (r.tone !== a.tone || r.status !== a.status || r.statusKind !== a.statusKind) {
     r.badgeCw.replaceChildren(statusPill(a));
-    r.tone = a.tone; r.status = a.status;
+    r.tone = a.tone; r.status = a.status; r.statusKind = a.statusKind;
   }
   if (r.kind !== a.kind) { r.iconWrap.replaceChildren(icon(a.kind)); r.kind = a.kind; }
   if (r.title !== a.title) { r.titleSpan.textContent = a.title; r.title = a.title; }
+  return verdict;
+}
+
+// The scan line is for a verdict that lands alone. Several in one refresh, or
+// one within SWEEP_QUIET_MS of the last, get their marks drawn and no sweep: a
+// busy Gatekeeper stays quiet instead of strobing the list. Five seconds is a
+// conservative start for a cadence nobody has watched yet (each review takes
+// seconds) — easy to lower once someone has. If it still reads busy, the next
+// step is sweeping denials only, not retuning this: a denial is the event
+// worth announcing, an allow is routine.
+const SWEEP_QUIET_MS = 5000;
+let lastVerdictAt = 0;
+function sweepVerdicts(verdicts) {
+  if (!verdicts.length) return;
+  const now = Date.now();
+  if (verdicts.length === 1 && now - lastVerdictAt > SWEEP_QUIET_MS) {
+    sweepRow(verdicts[0].tr, `sweep-${verdicts[0].verdict}`);
+  }
+  lastVerdictAt = now;
+}
+
+// The scan line across a row whose verdict just landed (styles.css .sweep).
+function sweepRow(tr, kind) {
+  tr.classList.remove("sweep", "sweep-allow", "sweep-deny");
+  void tr.offsetWidth; // a second verdict in a row restarts the sweep
+  tr.classList.add("sweep", kind);
+  const done = (e) => {
+    if (e.target !== tr) return; // the mark's own draw bubbles up first
+    tr.classList.remove("sweep", kind);
+    tr.removeEventListener("animationend", done);
+  };
+  tr.addEventListener("animationend", done);
 }
 
 // Insert animation: the row collapses to zero and grows (pushing the rows below
 // it down), then its content fades in once the push has mostly settled.
+const EASE = "cubic-bezier(0.2, 0.7, 0.2, 1)"; // styles.css --ease
 function animateRowEnter(tr) {
-  const push = 260;
-  const ease = "cubic-bezier(0.22, 1, 0.36, 1)";
+  const push = 200;
   for (const td of tr.children) {
     const cs = getComputedStyle(td);
     const pt = cs.paddingTop;
     const pb = cs.paddingBottom;
     td.animate(
       [{ paddingTop: "0px", paddingBottom: "0px" }, { paddingTop: pt, paddingBottom: pb }],
-      { duration: push, easing: ease },
+      { duration: push, easing: EASE },
     );
     const cw = td.firstElementChild;
     if (!cw) continue;
@@ -683,13 +805,13 @@ function animateRowEnter(tr) {
     cw.style.overflow = "hidden";
     const grow = cw.animate(
       [{ height: "0px" }, { height: h + "px" }],
-      { duration: push, easing: ease },
+      { duration: push, easing: EASE },
     );
     grow.onfinish = () => { cw.style.overflow = ""; };
-    // Fade the content in after the push is ~70% done.
+    // Fade the content in after the push is mostly done.
     cw.animate(
       [{ opacity: 0 }, { opacity: 1 }],
-      { duration: 200, delay: push * 0.7, easing: "ease-out", fill: "backwards" },
+      { duration: 160, delay: push * 0.6, easing: EASE, fill: "backwards" },
     );
   }
 }
@@ -817,8 +939,12 @@ function gatekeeperDenialDetail(a) {
   ]);
 }
 
+// What the detail pane last drew: the timeline steps beyond it are new.
+let detailSeen = { id: null, steps: 0 };
+
 function detailFor(a) {
   if (!a) return el("div", { class: "empty", text: "Select an activity." });
+  const running = a.statusKind === "running";
 
   const meta = el("dl", { class: "meta" });
   const addMeta = (k, v, mono) => {
@@ -829,24 +955,46 @@ function detailFor(a) {
   addMeta("Agent", a.agentDisplay ? `${a.agentDisplay}  ${a.agentId || ""}`.trim() : a.agentId, !a.agentDisplay);
   addMeta("Goal", a.goal);
   addMeta("Decided by", a.decidedBy);
+  addMeta("When", fmtDayTime(a.ts));
   addMeta("Intent", a.intentId, true);
   if (a.exitCode !== null && a.exitCode !== undefined) addMeta("Exit", a.exitCode);
 
-  // The header repeats the row's two cells: the decision, then the outcome.
+  // The header is the row again, in full: what happened, then the decision
+  // and the outcome — and, while it runs, for how long.
+  const head = el("div", { class: "detail-head" }, [
+    el("span", { class: "ic-wrap lg" }, [icon(a.kind)]),
+    el("div", { class: "detail-head-main" }, [
+      el("h2", { class: "detail-title", text: a.title }),
+      el("div", { class: "act-head" }, [
+        decisionMark(a),
+        statusPill(a),
+        running ? el("span", { class: "live-elapsed", attrs: { "data-since": a.ts }, text: elapsedSince(a.ts) }) : null,
+      ]),
+    ]),
+  ]);
   const children = [
     gatekeeperDenialDetail(a),
-    el("h3", { class: "act-head" }, [decisionMark(a), statusPill(a)]),
-    a.command ? el("div", { class: "cmd", text: a.command }) : null,
+    head,
+    // The exact command, unless the title already is it word for word.
+    a.command && a.command !== a.title ? el("div", { class: "cmd", text: a.command }) : null,
     meta,
   ];
   if (a.capabilities && a.capabilities.length) {
     children.push(el("div", { class: "section-label", text: "Capability bounds" }));
     children.push(el("div", { class: "capchips" }, a.capabilities.map((c) => el("span", { class: "cap", text: String(c) }))));
   }
-  if (a.timeline && a.timeline.length) {
+  // Steps that arrived since this activity was last drawn slide in; the
+  // newest step of running work breathes like its row.
+  const steps = a.timeline ?? [];
+  const seen = detailSeen.id === a.id ? detailSeen.steps : steps.length;
+  detailSeen = { id: a.id, steps: steps.length };
+  if (steps.length) {
     children.push(el("div", { class: "section-label", text: "Timeline" }));
-    children.push(el("div", { class: "timeline" }, a.timeline.map((s) =>
-      el("div", { class: "tl" + (s.state === "ok" ? " ok" : s.state === "bad" ? " bad" : "") }, [
+    children.push(el("div", { class: "timeline" }, steps.map((s, i) =>
+      el("div", {
+        class: "tl" + (s.state === "ok" ? " ok" : s.state === "bad" ? " bad" : "") +
+          (i >= seen ? " tl-new" : "") + (running && i === steps.length - 1 ? " tl-live" : ""),
+      }, [
         el("div", { class: "tt", text: s.text }),
         el("div", { class: "tm", text: fmtClock(s.at) }),
       ]),
@@ -854,6 +1002,18 @@ function detailFor(a) {
   }
   return el("div", {}, children.filter(Boolean));
 }
+
+/** How long running work has been at it: m:ss, or h:mm:ss past the hour. */
+function elapsedSince(iso) {
+  const total = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  const pad = (n) => String(n).padStart(2, "0");
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return h ? `${h}:${pad(m)}:${pad(total % 60)}` : `${m}:${pad(total % 60)}`;
+}
+setInterval(() => {
+  for (const node of document.querySelectorAll(".live-elapsed")) node.textContent = elapsedSince(node.dataset.since);
+}, 1000);
 
 // ---- Gatekeeper policy (Audit header) ----
 
@@ -936,13 +1096,13 @@ function createGatekeeperCard() {
     text: "Loading…",
     attrs: { type: "button", "aria-haspopup": "menu" },
   });
-  const modeDescription = el("p", { class: "faint gatekeeper-mode-description" });
-  const rulesButton = el("button", { class: "btn", text: "View rules" });
+  const modeDescription = el("p", { class: "gatekeeper-mode-description" });
+  const rulesButton = el("button", { class: "btn small quiet", text: "View rules" });
   rulesButton.addEventListener("click", () => openRulesModal(rulesButton));
 
   const purposeInput = el("textarea", {
     class: "text",
-    attrs: { placeholder: PURPOSE_PLACEHOLDER, "aria-label": "Gatekeeper instructions" },
+    attrs: { id: "gatekeeperPurpose", rows: "1", placeholder: PURPOSE_PLACEHOLDER, "aria-label": "Gatekeeper instructions" },
   });
   purposeInput.disabled = true;
   const saveText = el("span", { text: "" });
@@ -956,21 +1116,22 @@ function createGatekeeperCard() {
   });
   inactiveNote.hidden = true;
 
+  // Two lines: the setting and what it means, then the instructions it
+  // enforces — shown in full and edited where they are read.
   const node = el("section", { class: "audit-gatekeeper" }, [
     el("div", { class: "gatekeeper-head" }, [
+      el("span", { class: "gatekeeper-icon" }, [icon("shieldCheck")]),
       el("h2", { class: "gatekeeper-title", text: "Gatekeeper" }),
       modeButton,
-      el("div", { class: "spacer" }),
+      modeDescription,
       rulesButton,
     ]),
-    modeDescription,
     el("div", { class: "gatekeeper-purpose" }, [
       el("div", { class: "gatekeeper-field-head" }, [
-        el("label", { text: "Instructions" }),
-        el("div", { class: "spacer" }),
-        saveStatus,
+        el("label", { text: "Instructions", attrs: { for: "gatekeeperPurpose" } }),
       ]),
       purposeInput,
+      saveStatus,
       inactiveNote,
     ]),
   ]);
@@ -987,6 +1148,7 @@ function createGatekeeperCard() {
       el("span", { class: "filter-caret", text: "▾" }),
     );
     modeButton.dataset.mode = current.mode;
+    node.dataset.mode = current.mode;
     modeDescription.textContent = current.description;
     inactiveNote.hidden = current.mode === "adversarial";
   };
@@ -1184,13 +1346,33 @@ function openMenu(anchor, items, { align = "right" } = {}) {
   menu.querySelector("button:not(:disabled)")?.focus();
 }
 
-/** One titled card: a prominent title, an optional description, then the body.
-    Shared by Settings' groups and the Agents pane, which is one of them. */
+/** One group: a small label, an optional description, then one card holding
+    the body's rows. Settings' sections and the Plugins tab are built from it. */
 function group(title, desc, body) {
   return el("div", { class: "item" }, [
     el("div", { class: "group-title", text: title }),
     desc ? el("p", { class: "faint group-desc", text: desc }) : null,
-    ...body,
+    el("div", { class: "group-body" }, body),
+  ]);
+}
+
+/** A setting laid out the macOS way: what it is and what it does on the
+    left, its switch on the right. The checkbox stays the control; the switch
+    draws it. `sentence` names the switch for assistive tech by what turning
+    it on does; without one, the visible title names it. */
+let settingRowSeq = 0;
+function settingRow(title, desc, box, { sentence = null, note = null } = {}) {
+  const titleId = `setting-title-${++settingRowSeq}`;
+  const sw = switchEl(box);
+  if (sentence) sw.append(el("span", { class: "sr-only", text: sentence }));
+  else box.setAttribute("aria-labelledby", titleId);
+  return el("div", { class: "setting-row" }, [
+    el("div", { class: "setting-copy" }, [
+      el("div", { class: "setting-title", text: title, attrs: { id: titleId } }),
+      desc ? el("p", { class: "setting-desc", text: desc }) : null,
+      note,
+    ]),
+    sw,
   ]);
 }
 
@@ -1878,6 +2060,8 @@ function clientEntityRow(row, redraw) {
         el("span", { class: "entity-name", text: name }),
       ]),
       el("div", { class: "entity-context", text: context }),
+      // What this client may do, as words on the row — never icons, never a
+      // hover label: it is the one line here that must be read, not decoded.
       el("div", { class: "entity-perms" }, rosterPermissionCopy(row).map((text) =>
         el("span", { text }),
       )),
@@ -2202,7 +2386,7 @@ function whenText(iso) {
  * Returns the drawn container and how to refresh it; `display: contents`
  * keeps its cards in Settings' own column.
  */
-function permissionsPane() {
+function permissionsPane({ reveal = false } = {}) {
   // The inventory is a probe sweep — seconds on a Mac where a target app is
   // not answering Apple events — so the node is handed back at once with this
   // line in it, and the rows replace it when the read lands.
@@ -2305,6 +2489,11 @@ function permissionsPane() {
     }
     nodes.push(group("Connected Accounts", null, [connectorBox, connectorNote]));
     panel.replaceChildren(...nodes);
+    // Opened to show a blocked switch: the rows exist now, so bring them up.
+    if (reveal) {
+      reveal = false;
+      panel.firstElementChild?.scrollIntoView({ block: "start" });
+    }
   };
 
   const act = async (key, button) => {
@@ -2562,12 +2751,12 @@ function permissionsPane() {
 async function renderPlugins() {
   const panel = el("div", { class: "panel settings" });
   view.replaceChildren(panel);
-  // The three statuses, in the row's own vocabulary: the dot's class and the
-  // word beside the toggle. Amber for needs-setup — it is the owner's to fix.
+  // The three statuses, in the row's own vocabulary: the word beside the
+  // toggle and its tone. Amber for needs-setup — it is the owner's to fix.
   const STATUS = {
-    off: { dot: "", tone: "zinc", word: "Off" },
-    "needs-setup": { dot: " off", tone: "amber", word: "Needs setup" },
-    ready: { dot: " on", tone: "green", word: "Ready" },
+    off: { tone: "zinc", word: "Off" },
+    "needs-setup": { tone: "amber", word: "Needs setup" },
+    ready: { tone: "green", word: "Ready" },
   };
   const reload = async () => draw(await window.domo.pluginsGet());
 
@@ -2615,8 +2804,10 @@ async function renderPlugins() {
         box.disabled = false;
       }
     });
+    // Setup's plugin row: the kind's tile, the name with its kind beside it,
+    // what it does — then the status in words and the switch.
     const head = el("div", { class: "cap-row plugin-row" }, [
-      el("span", { class: "status-dot" + s.dot, attrs: { title: s.word } }),
+      el("span", { class: "plugin-tile" }, [icon(r.kind === "Browser" ? "browser" : "command")]),
       el("div", {}, [
         el("div", { class: "cap-name plugin-name" }, [
           el("span", { text: r.title }),
@@ -2624,7 +2815,7 @@ async function renderPlugins() {
         ]),
         r.description ? el("div", { class: "cap-sub", text: r.description }) : null,
       ]),
-      badge(s.tone, s.word),
+      el("span", { class: `dec dec-${s.tone}` }, [el("span", { class: "dec-dot", attrs: { "aria-hidden": "true" } }), el("span", { text: s.word })]),
       switchEl(box, { title: "Turn this plugin on or off" }),
     ]);
     // Every requirement, met or not, is on the row now — off hides them all
@@ -2664,7 +2855,7 @@ async function renderSettings() {
   // The machine's own name, for the one row this group keeps. Already on the
   // bridge for the titlebar; no new IPC and no API call for it.
   const status = await window.domo.statusGet();
-  const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
+  const relayNote = el("span", { text: relayStatusText(relay) });
   // The "Connect a Client" button that used to sit here is gone: connecting a
   // client is now a subsection of this same group, so a button navigating to it
   // would only point at itself. Signing in is still a real action — unreachable
@@ -2700,10 +2891,8 @@ async function renderSettings() {
     accountBox.replaceChildren(
       ...(relay.hasCredential
         ? [
-            el("div", { class: "field" }, [
-              el("label", { text: "This Mac" }),
-              el("div", { class: "mono faint", text: `Plow Latch (${status.name || "Mac"})` }),
-            ]),
+            el("div", { class: "setting-title", text: "This Mac" }),
+            el("div", { class: "setting-desc mono", text: `Plow Latch (${status.name || "Mac"})` }),
           ]
         : []),
     );
@@ -2716,7 +2905,7 @@ async function renderSettings() {
   // patch them in place (refreshUpdates below) rather than re-rendering the
   // pane, which would reset its scroll position on every phase change.
   let u = await window.domo.updatesGet();
-  const updateStatus = el("p", { class: "faint" });
+  const updateStatus = el("div", { class: "setting-title" });
   const updateAction = el("button", { class: "btn" });
   updateAction.addEventListener("click", async () => {
     if (u.phase === "ready") await window.domo.updatesRestart();
@@ -2725,16 +2914,10 @@ async function renderSettings() {
   });
   const autoCheckBox = el("input", { attrs: { type: "checkbox" } });
   autoCheckBox.addEventListener("change", () => window.domo.updatesSetAutoCheck(autoCheckBox.checked));
-  const autoCheckLabel = el("label", { class: "check block" }, [
-    autoCheckBox,
-    el("span", { text: "Automatically check for updates" }),
-  ]);
+  const autoCheckRow = settingRow("Automatically check for updates", null, autoCheckBox);
   const autoInstallBox = el("input", { attrs: { type: "checkbox" } });
   autoInstallBox.addEventListener("change", () => window.domo.updatesSetAutoInstall(autoInstallBox.checked));
-  const autoInstallLabel = el("label", { class: "check block" }, [
-    autoInstallBox,
-    el("span", { text: "Install downloaded updates when quitting Plow Latch" }),
-  ]);
+  const autoInstallRow = settingRow("Install downloaded updates when quitting Plow Latch", null, autoInstallBox);
   const applyUpdates = () => {
     const ready = u.phase === "ready";
     updateStatus.textContent = updateStatusText(u);
@@ -2745,8 +2928,6 @@ async function renderSettings() {
     autoCheckBox.disabled = !u.supported;
     autoInstallBox.checked = u.autoInstall;
     autoInstallBox.disabled = !u.supported;
-    autoCheckLabel.classList.toggle("disabled", !u.supported);
-    autoInstallLabel.classList.toggle("disabled", !u.supported);
   };
   applyUpdates();
 
@@ -2756,18 +2937,19 @@ async function renderSettings() {
   // what the OS answered, not what was clicked.
   let launch = await window.domo.launchGet();
   const launchBox = el("input", { attrs: { type: "checkbox" } });
-  const launchLabel = el("label", { class: "check" }, [
-    launchBox,
-    el("span", { text: "Open Plow Latch when you log in" }),
-  ]);
   // Why the toggle is dead, when it is: a disabled control that says nothing
   // is a dead end.
   const launchNote = el("p", { class: "faint cap-note", text:
     "Only the installed app can add itself as a login item, so this from-source run can't." });
+  const launchRow = settingRow(
+    "Launch at Login",
+    "Open Plow Latch automatically, so a restart doesn't take this Mac off the roster.",
+    launchBox,
+    { sentence: "Open Plow Latch when you log in", note: launchNote },
+  );
   const applyLaunch = () => {
     launchBox.checked = launch.openAtLogin;
     launchBox.disabled = !launch.supported;
-    launchLabel.classList.toggle("disabled", !launch.supported);
     launchNote.hidden = launch.supported;
   };
   launchBox.addEventListener("change", async () => {
@@ -2782,10 +2964,13 @@ async function renderSettings() {
   // than a hold that isn't held.
   let awake = await window.domo.keepAwakeGet();
   const awakeBox = el("input", { attrs: { type: "checkbox" } });
-  const awakeLabel = el("label", { class: "check" }, [
+  const awakeRow = settingRow(
+    "Keep Mac Awake",
+    "Prevent idle and display sleep while plugged in, so the screen never locks out work an agent is doing on it. " +
+      "On battery it sleeps normally to conserve power, and closing the lid still sleeps it.",
     awakeBox,
-    el("span", { text: "Keep this Mac awake while plugged in" }),
-  ]);
+    { sentence: "Keep this Mac awake while plugged in" },
+  );
   const applyAwake = () => { awakeBox.checked = awake.enabled; };
   awakeBox.addEventListener("change", async () => {
     try {
@@ -2804,10 +2989,14 @@ async function renderSettings() {
   // must not promise more privacy than the wire delivers.
   let stats = await window.domo.telemetryGet();
   const statsBox = el("input", { attrs: { type: "checkbox" } });
-  const statsLabel = el("label", { class: "check" }, [
+  const statsRow = settingRow(
+    "Usage Statistics",
+    "Help improve Plow Latch by sharing which features are used and when something breaks, " +
+      "linked to your Plow account. " +
+      "Never shared: file paths, commands, goal text, credentials, or anything an agent typed.",
     statsBox,
-    el("span", { text: "Share usage statistics and error reports" }),
-  ]);
+    { sentence: "Share usage statistics and error reports" },
+  );
   const applyStats = () => { statsBox.checked = stats.enabled; };
   statsBox.addEventListener("change", async () => {
     try {
@@ -2838,7 +3027,7 @@ async function renderSettings() {
   // tab of their own: the machine-configuration view, where it belongs. Not
   // awaited — selecting a tab never waits on a probe sweep (#446); the rows
   // fill in when the read lands.
-  const permissions = permissionsPane();
+  const permissions = permissionsPane({ reveal: revealPermissions });
   if (generation !== settingsRenderGeneration || currentTab !== "settings") return;
   permissionsMounted = permissions.mounted;
 
@@ -2869,47 +3058,27 @@ async function renderSettings() {
     // activation flow learns it server-side from the inbound SMS, so say what
     // is true of what is on screen.
     group("Plow Account", "The account agents reach this Mac through.", [
-      accountBox,
-      el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), viewAccount, signOut, signIn]),
+      el("div", { class: "setting-row" }, [
+        el("div", { class: "setting-copy" }, [
+          accountBox,
+          el("div", { class: "setting-desc" }, [relayNote]),
+        ]),
+        el("div", { class: "setting-actions" }, [viewAccount, signOut, signIn]),
+      ]),
     ]),
     group("Availability", "Agents can reach this Mac only while Plow Latch is running and the Mac is awake.", [
-      el("div", { class: "support-row" }, [
-        el("div", { class: "support-copy" }, [
-          el("div", { class: "support-title", text: "Launch at Login" }),
-          el("p", { class: "faint", text:
-            "Open Plow Latch automatically, so a restart doesn't take this Mac off the roster." }),
-          launchLabel,
-          launchNote,
-        ]),
-      ]),
-      el("div", { class: "support-row" }, [
-        el("div", { class: "support-copy" }, [
-          el("div", { class: "support-title", text: "Keep Mac Awake" }),
-          el("p", { class: "faint", text:
-            "Prevent idle and display sleep while plugged in, so the screen never locks out work an agent is doing on it. " +
-            "On battery it sleeps normally to conserve power, and closing the lid still sleeps it." }),
-          awakeLabel,
-        ]),
-      ]),
+      launchRow,
+      awakeRow,
     ]),
-    permissions.node,
     group("Software Updates", `Version ${u.currentVersion}`, [
-      el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
-      autoCheckLabel,
-      autoInstallLabel,
-    ]),
-    group("Privacy", null, [
-      el("div", { class: "support-row" }, [
-        el("div", { class: "support-copy" }, [
-          el("div", { class: "support-title", text: "Usage Statistics" }),
-          el("p", { class: "faint", text:
-            "Help improve Plow Latch by sharing which features are used and when something breaks, " +
-            "linked to your Plow account. " +
-            "Never shared: file paths, commands, goal text, credentials, or anything an agent typed." }),
-          statsLabel,
-        ]),
+      el("div", { class: "setting-row" }, [
+        el("div", { class: "setting-copy" }, [updateStatus]),
+        el("div", { class: "setting-actions" }, [updateAction]),
       ]),
+      autoCheckRow,
+      autoInstallRow,
     ]),
+    group("Privacy", null, [statsRow]),
     group("Support", null, [
       supportRow(
         discordIcon(),
@@ -2926,7 +3095,15 @@ async function renderSettings() {
         "website",
       ),
     ]),
+    // Last on the page because they land last: the permission sweep can take
+    // seconds, and nothing below it should move when it does.
+    permissions.node,
   ]));
+  if (revealPermissions) {
+    revealPermissions = false;
+    // Toward them now; the pane scrolls again once the slow sweep draws them.
+    permissions.node.firstElementChild?.scrollIntoView({ block: "start" });
+  }
 }
 
 function render() {
@@ -2961,7 +3138,12 @@ async function selectTab(tab) {
   if (tab !== "settings") settingsMounted = permissionsMounted = null;
   if (tab !== "plugins") pluginsMounted = null;
   if (tab !== "agents") agentsMounted = null;
-  for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
+  for (const b of seg.querySelectorAll("button")) {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle("active", on);
+    if (on) b.setAttribute("aria-current", "page");
+    else b.removeAttribute("aria-current");
+  }
   render();
   return true;
 }
@@ -2975,7 +3157,8 @@ async function confirmCurrentTabLeave() {
 // Let the headless preload probe drive the tabs without synthesising clicks.
 window.__domoSelectTab = selectTab;
 
-seg.addEventListener("mousedown", async (e) => {
+// Click, not mousedown: Return and Space press a focused section button too.
+seg.addEventListener("click", async (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
   if (await selectTab(btn.dataset.tab)) window.domo.uiSetTab(btn.dataset.tab); // persist across launches
@@ -3045,7 +3228,11 @@ window.domo.onShowSettings(async () => {
 });
 // A block by this Mac lands on its switch in Settings; one that named no
 // permission goes to onShowAuditBlocked instead.
+// The permission rows sit at the foot of Settings, so the pane opens there.
+let revealPermissions = false;
 window.domo.onShowCapabilities(async () => {
+  if (currentTab === "settings") view.querySelector(".permissions > *")?.scrollIntoView({ block: "start" });
+  else revealPermissions = true;
   if (await selectTab("settings")) window.domo.uiSetTab("settings");
 });
 window.domo.onShowAuditBlocked(() => showAuditBlocked());
@@ -3079,6 +3266,8 @@ async function boot() {
   const saved = await window.domo.uiGetTab();
   const known = ["agents", "audit", "vault", "plugins", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
+  // From here on the nav animates; the first selection above lands instantly.
+  requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.add("booted")));
   // A credential exchange can arrive before this window exists (the system
   // launches the app for it); the push above then had no listener, so ask.
   // Only when landing elsewhere: a boot onto the Vault tab found it already.

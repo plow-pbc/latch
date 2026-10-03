@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html class="await-fonts">
   <head>
     <meta charset="utf-8" />
     <!-- Strict CSP: no remote content, no inline event handlers; only our own
@@ -17,22 +17,29 @@
   </head>
   <body>
     <div class="titlebar">
-      <span class="wtitle">Plow Latch</span>
-      <span class="status-dot" id="statusDot"></span>
-      <span class="faint" id="statusText">…</span>
-      <div class="seg" id="seg">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 400 400" aria-hidden="true"><path id="brandMark" /></svg>
+        <span class="wtitle">Plow Latch</span>
+      </div>
+      <nav class="seg" id="seg" aria-label="Sections">
         <!-- First, and a place rather than an action: Agents is what has access
              to this Mac. The tab this replaces was called "Connect a client",
              and a setup verb made an odd permanent home; giving something
              access is one thing you do here, and the roster of what already has
-             it belongs in the same pane once the app can ask for it. -->
-        <button data-tab="agents">Agents</button>
-        <button data-tab="audit" class="active">Audit</button>
-        <button data-tab="vault">Browser Vault</button>
+             it belongs in the same pane once the app can ask for it.
+             Each label stays visible beside its icon (main.js adds the icon):
+             a bare glyph is a guess. -->
+        <button type="button" data-tab="agents">Agents</button>
+        <button type="button" data-tab="audit" class="active" aria-current="page">Audit</button>
+        <button type="button" data-tab="vault">Browser Vault</button>
         <!-- What is stopping this Mac's agents (pluginsModel.ts); the full
              permission inventory lives in Settings. -->
-        <button data-tab="plugins">Plugins</button>
-        <button data-tab="settings">Settings</button>
+        <button type="button" data-tab="plugins">Plugins</button>
+        <button type="button" data-tab="settings">Settings</button>
+      </nav>
+      <div class="conn" role="status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">…</span>
       </div>
     </div>
     <!-- Passive update notice: shown only when an update is staged and not

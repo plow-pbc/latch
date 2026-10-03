@@ -83,15 +83,42 @@ app.whenReady().then(async () => {
      })()`,
   );
 
+  // Always Allow is the most dangerous button on this card — a grant that never
+  // asks again — so it is never promoted: not filled, not the accent, and never
+  // where Return lands. Once both arming delays have run (arming.js), it must
+  // still wear Deny's plain face at Deny's width, and the focus must sit on
+  // Allow Once. A redesign that makes this screen "prettier" or "more
+  // balanced" by lifting it fails here.
+  await new Promise((r) => setTimeout(r, 2200));
+  const alwaysAllow = await win.webContents.executeJavaScript(
+    `(() => {
+       const buttons = [...document.querySelectorAll(".actions .btn")];
+       const named = (label) => buttons.find((b) => b.textContent.trim() === label);
+       const deny = named("Deny"), always = named("Always Allow"), once = named("Allow Once");
+       const face = (b) => { const s = getComputedStyle(b); return [s.backgroundColor, s.color === getComputedStyle(once).color, s.fontWeight, s.boxShadow].join("|"); };
+       return {
+         alwaysNotPrimary: !always.classList.contains("primary"),
+         alwaysPlainAsDeny: getComputedStyle(always).backgroundColor === getComputedStyle(deny).backgroundColor &&
+           getComputedStyle(always).fontWeight === getComputedStyle(deny).fontWeight &&
+           getComputedStyle(always).boxShadow === getComputedStyle(deny).boxShadow,
+         alwaysUnlikeAllowOnce: face(always) !== face(once),
+         alwaysSameWidthAsDeny: Math.round(always.getBoundingClientRect().width) === Math.round(deny.getBoundingClientRect().width),
+         focusOnAllowOnce: document.activeElement === once,
+       };
+     })()`,
+  );
+  const neverPromoted = Object.values(alwaysAllow).every(Boolean);
+
   console.log("SHOT:" + JSON.stringify({
     out,
     namesAgent: text.includes("Claude Code"),
     showsId: text.includes("sess_01HZX9K4M2QP"),
     ...metrics,
+    alwaysAllow,
   }));
   // A clipped enforced block FAILS the run rather than being noted in passing.
   // The capability list is this window's entire reason to exist, so a build
   // that hides part of it is a broken build — and this is the only check that
   // sees the real window at its real size.
-  app.exit(text.includes("Claude Code") && !metrics.enforcedClipped ? 0 : 1);
+  app.exit(text.includes("Claude Code") && !metrics.enforcedClipped && neverPromoted ? 0 : 1);
 });

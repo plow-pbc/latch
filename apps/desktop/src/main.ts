@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import { ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -419,6 +419,12 @@ type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewMod
  */
 const approvalQueue = new ApprovalQueue();
 
+/** A window's colour before its page paints — the page's own background
+ *  (styles.css --bg), so a dark Mac never flashes white while one opens. */
+function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? "#0c0c0b" : "#f2f2ec";
+}
+
 function openApprovalWindow(
   request: ApprovalRequest,
   // Resolves to what the adversarial agent had to say, or null when it is not
@@ -432,6 +438,7 @@ function openApprovalWindow(
       resizable: false,
       fullscreenable: false,
       title: "Plow Latch — Approve",
+      backgroundColor: windowBackground(),
       webPreferences: {
         preload: path.join(dirname, "preload.cjs"),
         contextIsolation: true,
@@ -520,6 +527,11 @@ function createMainWindow(): void {
     y: bounds?.y,
     title: "Plow Latch",
     titleBarStyle: "hiddenInset",
+    backgroundColor: windowBackground(),
+    // Five labelled sections, the traffic lights and the connection line need
+    // this much; narrower, they collide (the labels stay — a bare icon is a guess).
+    minWidth: 780,
+    minHeight: 520,
     webPreferences: {
       preload: path.join(dirname, "preload.cjs"),
       contextIsolation: true,

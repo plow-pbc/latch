@@ -112,10 +112,13 @@ async function sendTileImage() {
     // needs the two trees to still match child-for-child.)
     const hint = clone.querySelector(".fda-drag-hint");
     if (hint) hint.style.display = "none";
-    // On the panel the tile's translucent white sits over the panel's
-    // near-opaque gray; flatten that stack so the floating tile keeps the
-    // on-panel look instead of going see-through over System Settings.
-    clone.style.background = "rgb(249, 249, 250)";
+    // On the panel the tile's translucent face sits over the panel's
+    // near-opaque surface; flatten that stack (fdapanel.css, per theme) so the
+    // floating tile keeps the on-panel look instead of going see-through over
+    // System Settings — and in the dark theme stays dark under its light text.
+    clone.style.background = matchMedia("(prefers-color-scheme: dark)").matches
+      ? "rgb(33, 33, 32)"
+      : "rgb(252, 252, 250)";
     const svg =
       `<svg xmlns="http://www.w3.org/2000/svg" width="${rect.width}" height="${rect.height}">` +
       `<foreignObject width="100%" height="100%">` +

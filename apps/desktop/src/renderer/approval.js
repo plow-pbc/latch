@@ -87,6 +87,11 @@ async function render() {
 
   // "Allow Once" is the default (primary, rightmost, focused); "Always Allow"
   // is the more permissive option and sits in the middle.
+  //
+  // Always Allow is the most dangerous button on this card — a permanent grant
+  // — and it stays exactly this plain: never filled, never the accent, never
+  // the default focus, however the screen is restyled or "balanced".
+  // approval-screenshot.mjs fails the build if it is ever promoted.
   const deny = button("Deny", "btn danger", () => decide(v.intentId, "deny"));
   // No Always Allow on an Apple-event intent: it's a non-idempotent mutation
   // (a repeated byte-identical `make new address` duplicates data), and the

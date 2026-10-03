@@ -288,6 +288,15 @@ approval-screenshot: build
     @mkdir -p "{{outdir}}"
     DOMO_HOME="{{apphome}}" OUT="${OUT:-{{outdir}}/approval-dialog.png}" npx electron apps/desktop/scripts/approval-screenshot.mjs
 
+# Fails on a layout shift while it loads, a control with no accessible name, a
+# keyboard that cannot move the selection, or a verdict sweep that breaks its
+# rule (one landing alone sweeps; several together stay quiet).
+#
+# Screenshot the Audit tab, light and dark, and check how it loads, reads and moves.
+audit-screenshot: build
+    @mkdir -p "{{outdir}}"
+    DOMO_HOME="{{apphome}}" OUT_DIR="${OUT_DIR:-{{outdir}}}" npx electron apps/desktop/scripts/audit-screenshot.mjs
+
 # Screenshot every first-run login screen. Fails if a screen lost its content.
 onboarding-screenshots: build
     @mkdir -p "{{outdir}}"
