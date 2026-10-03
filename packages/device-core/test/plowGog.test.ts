@@ -655,16 +655,18 @@ describe("compactCalendarEvents", () => {
     });
   });
 
-  it("says when the owner organized an event, and keeps nothing of anyone else's organizer", () => {
-    const base = { summary: "s", startDayOfWeek: "Monday", startLocal: "2026-09-14T08:00:00-07:00", endLocal: "2026-09-14T09:00:00-07:00", account: "a", id: "e" };
+  it("says when the account's owner created an event, and keeps nothing of anyone's address", () => {
+    const base = { summary: "s", startDayOfWeek: "Monday", startLocal: "2026-09-14T08:00:00-07:00", endLocal: "2026-09-14T09:00:00-07:00", account: "Me@Example.com", id: "e" };
     const { items } = compactCalendarEvents([
-      { ...base, id: "mine", organizer: { email: "me@example.com", self: true } },
-      { ...base, id: "invited", organizer: { email: "boss@example.com" } },
-      { ...base, id: "shared", organizer: { email: "collab@example.com", self: false } },
+      { ...base, id: "mine", creator: { email: "me@example.com", self: true }, organizer: { email: "me@example.com", self: true } },
+      { ...base, id: "invited", creator: { email: "boss@example.com" }, organizer: { email: "boss@example.com" } },
+      // Written by a collaborator on the owner's own calendar: Google still reports organizer.self and creator.self true.
+      { ...base, id: "collab", creator: { email: "collab@example.com", self: true }, organizer: { email: "me@example.com", self: true } },
       { ...base, id: "none" },
     ]);
-    expect(items.map((e) => [e.id, e.organizer])).toEqual([["mine", { self: true }], ["invited", undefined], ["shared", undefined], ["none", undefined]]);
-    expect(JSON.stringify(items)).not.toContain("example.com");
+    expect(items.map((e) => [e.id, e.createdByOwner])).toEqual([["mine", true], ["invited", undefined], ["collab", undefined], ["none", undefined]]);
+    expect(JSON.stringify(items)).not.toContain("collab@");
+    expect(JSON.stringify(items)).not.toContain("boss@");
   });
 
   const timed = (local: string, summary = "x".repeat(200)) => ({
