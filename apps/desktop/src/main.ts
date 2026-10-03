@@ -2654,10 +2654,11 @@ app.whenReady().then(async () => {
     try {
       const op = findOp();
       if (!op) throw new Error("the 1Password CLI (op) is not installed");
-      const r = await syncFromOnePassword(vault, cfg.vault, opRunner(op, tokenFromEnvFile(cfg.tokenFile)));
+      const token = tokenFromEnvFile(cfg.tokenFile);
+      const r = await syncFromOnePassword(vault, cfg.vault, opRunner(op, token), cfg.exclude ?? []);
       console.log(
         `[1password-sync] ${r.saved} new, ${r.updated} updated, ${r.unchanged} unchanged, ` +
-          `${r.skipped.length} skipped, ${r.failed.length} failed`,
+          `${r.excluded} excluded, ${r.skipped} skipped, ${r.failed} failed`,
       );
     } catch (err) {
       console.log(`[1password-sync] ${err instanceof Error ? err.message : "failed"}`);

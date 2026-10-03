@@ -993,6 +993,14 @@ through the `op` CLI. The decisions:
   file, which settings only names; a file anyone else on the Mac can read is
   refused. It reaches `op` through its environment, never argv, and no log line
   or error quotes it or anything `op` printed.
+- **Unattended means it never asks.** A login matching an item the owner marked
+  "ask me first" is left alone, unread, and counted; comparing against it would
+  raise the very prompt nobody is there to answer. Its writes are audited as
+  `ONEPASSWORD`, never as the owner (docs/VAULT.md § Auditing). A pass reports
+  counts only.
+- **What must never be filled here is never fetched.** `exclude` (item ids or
+  titles) drops an item at the list, before any `item get`, so a bank login or
+  another person's account in the same 1Password vault never leaves it.
 - **Off unless set, re-read every pass.** No screen sets it yet; turning it on,
   off or at another vault needs no relaunch.
 

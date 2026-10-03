@@ -392,7 +392,12 @@ const dupKey = (title: string, username: string, url: string): string =>
  * alone, with the reason said out loud, because every guess here writes over
  * a password.
  */
-export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[]): Promise<void> {
+export async function markAgainstVault(
+  vault: LocalVault,
+  logins: ImportedLogin[],
+  opts: { unattended?: boolean } = {},
+): Promise<number> {
+  let protectedRows = 0;
   const itemGroups = new Map<string, VaultItemSummary[]>();
   for (const s of await vault.list()) {
     if (s.type !== "login") continue;
@@ -412,6 +417,17 @@ export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[
   for (const [k, rows] of rowGroups) {
     const items = itemGroups.get(k) ?? [];
     if (items.length === 0) continue; // every row is a new item
+    // Comparing against an item that asks for the owner raises that ask. With
+    // nobody at the Mac it goes unanswered, so the group is left alone, unread,
+    // and the rest of the pass carries on. Returned so the caller can say so.
+    if (opts.unattended && items.some((item) => vault.asksForOwner(item.id))) {
+      for (const row of rows) {
+        row.duplicate = true;
+        row.warnings.push("what it matches here asks for you to confirm it is you; left alone");
+      }
+      protectedRows += rows.length;
+      continue;
+    }
     // Every row against every item, once. Groups are almost always 1×1.
     const diffs: { fields: ("password" | "totp")[]; revision: string }[][] = [];
     for (const row of rows) {
@@ -451,6 +467,7 @@ export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[
       );
     }
   }
+  return protectedRows;
 }
 
 /** One preview row — everything the screen shows, and never a secret value. */
@@ -526,7 +543,7 @@ export interface ImportResult {
  * refusal, not an overwrite. One bad row must not sink the rest, so failures
  * are collected, not thrown.
  */
-export async function importLogins(vault: LocalVault, logins: ImportedLogin[]): Promise<ImportResult> {
+export async function importLogins(vault: LocalVault, logins: ImportedLogin[], origin?: string): Promise<ImportResult> {
   let saved = 0;
   let updated = 0;
   let duplicates = 0;
@@ -543,7 +560,7 @@ export async function importLogins(vault: LocalVault, logins: ImportedLogin[]): 
           revision: login.update.revision,
           ...(login.update.fields.includes("password") ? { password: login.password } : {}),
           ...(login.update.fields.includes("totp") ? { totp: login.totp } : {}),
-        });
+        }, origin);
         updated++;
         continue;
       }
@@ -555,7 +572,7 @@ export async function importLogins(vault: LocalVault, logins: ImportedLogin[]): 
         password: login.password,
         ...(login.totp ? { totp: login.totp } : {}),
         notes: login.notes,
-      });
+      }, origin);
       saved++;
     } catch (err) {
       failed.push({ title: login.title, reason: err instanceof Error ? err.message : String(err) });

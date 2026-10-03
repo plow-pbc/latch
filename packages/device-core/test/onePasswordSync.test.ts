@@ -12,6 +12,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { LocalVault } from "../src/browser/localVault.js";
 import { VaultKeyStore } from "../src/browser/vaultKeyStore.js";
+import { VaultStore } from "../src/browser/vaultStore.js";
 import { loginFromOpItem, syncFromOnePassword, type OpRunner } from "../src/browser/onePasswordSync.js";
 
 const cleanups: (() => void)[] = [];
@@ -19,12 +20,16 @@ afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-function tempVault(): { vault: LocalVault; auditPath: string } {
+function tempVault(): { vault: LocalVault; auditPath: string; dir: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "op-sync-"));
   cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
   const auditPath = path.join(dir, "credential-audit.log");
-  return { vault: new LocalVault(dir, new VaultKeyStore(dir, "test"), auditPath), auditPath };
+  return { vault: new LocalVault(dir, new VaultKeyStore(dir, "test"), auditPath), auditPath, dir };
 }
+
+const counts = (o: Partial<Record<string, number>>) => ({
+  excluded: 0, saved: 0, updated: 0, unchanged: 0, skipped: 0, failed: 0, ...o,
+});
 
 function opLogin(id: string, title: string, password: string, extra: Record<string, unknown> = {}) {
   return {
@@ -61,7 +66,7 @@ describe("loginFromOpItem", () => {
   it("reads username, password, site and one-time key from op's field purposes", () => {
     const otp = { id: "otp", type: "OTP", label: "one-time password", value: "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP" };
     const base = opLogin("restream", "Restream", "s3cret");
-    const { login } = loginFromOpItem({ ...base, fields: [...base.fields, otp] });
+    const login = loginFromOpItem({ ...base, fields: [...base.fields, otp] });
     expect(login).toMatchObject({
       title: "Restream",
       username: "restream@plow.co",
@@ -71,11 +76,9 @@ describe("loginFromOpItem", () => {
     expect(login!.totp).not.toBe("");
   });
 
-  it("sets aside what is not a fillable login, saying why without any value", () => {
-    expect(loginFromOpItem({ title: "Stripe Keys", category: "API_CREDENTIAL" }).skipped?.reason).toBe("not a login");
-    const noSite = loginFromOpItem({ ...opLogin("x", "Box", "pw-no-site"), urls: [] });
-    expect(noSite.login).toBeUndefined();
-    expect(JSON.stringify(noSite)).not.toContain("pw-no-site");
+  it("is null for what the vault could never fill: not a login, or no site", () => {
+    expect(loginFromOpItem({ title: "Stripe Keys", category: "API_CREDENTIAL" })).toBeNull();
+    expect(loginFromOpItem({ ...opLogin("x", "Box", "pw-no-site"), urls: [] })).toBeNull();
   });
 });
 
@@ -85,7 +88,7 @@ describe("syncFromOnePassword", () => {
     const items = { restream: opLogin("restream", "Restream", "rs-secret"), luma: opLogin("luma", "Luma", "lu-secret") };
     const calls: string[][] = [];
     const first = await syncFromOnePassword(vault, "Agents", fakeOp(items, calls));
-    expect(first).toEqual({ saved: 2, updated: 0, unchanged: 0, skipped: [], failed: [] });
+    expect(first).toEqual(counts({ saved: 2 }));
     expect(calls[0]).toEqual(["item", "list", "--vault", "Agents", "--categories", "Login", "--format", "json"]);
     expect(calls[1]).toContain("--reveal");
 
@@ -94,19 +97,54 @@ describe("syncFromOnePassword", () => {
     expect(await vault.reveal(luma.id, "password")).toBe("lu-secret");
 
     const second = await syncFromOnePassword(vault, "Agents", fakeOp(items));
-    expect(second).toEqual({ saved: 0, updated: 0, unchanged: 2, skipped: [], failed: [] });
+    expect(second).toEqual(counts({ unchanged: 2 }));
     expect((await vault.list()).length).toBe(2);
 
     const audit = fs.readFileSync(auditPath, "utf8");
+    // The sync's writes name it; the test's own reveal above is the owner's, and says so.
+    const writes = audit.split("\n").filter((line) => /-> (CREATED|UPDATED)$/.test(line));
+    expect(writes).toHaveLength(2);
+    expect(writes.every((line) => line.includes("page=ONEPASSWORD"))).toBe(true);
     expect(audit).not.toContain("rs-secret");
     expect(audit).not.toContain("lu-secret");
+  });
+
+  it("an excluded item (by id or by title, any case) is never fetched, so its values never leave 1Password", async () => {
+    const { vault } = tempVault();
+    const items = {
+      mercury: opLogin("mercury", "Mercury", "bank-secret"),
+      sam: opLogin("sam", "Sam's Reddit", "sam-secret"),
+      luma: opLogin("luma", "Luma", "lu-secret"),
+    };
+    const calls: string[][] = [];
+    const result = await syncFromOnePassword(vault, "Agents", fakeOp(items, calls), ["mercury", " sam's reddit "]);
+    expect(result).toEqual(counts({ excluded: 2, saved: 1 }));
+    expect(calls.filter((c) => c[1] === "get").map((c) => c[2])).toEqual(["luma"]);
+    expect((await vault.list()).map((i) => i.title)).toEqual(["Luma"]);
+  });
+
+  it("a match that asks for the owner is left alone, never prompted for, and the rest still lands", async () => {
+    const { vault, dir } = tempVault();
+    await syncFromOnePassword(vault, "Agents", fakeOp({ bank: opLogin("bank", "Bank", "old-pw") }));
+    const [held] = await vault.list();
+    const store = new VaultStore(dir);
+    store.upsert({ ...store.get(held!.id)!, reprompt: 1 }); // the owner marked it "ask me first"
+    let asked = 0;
+    vault.onReprompt = async () => (asked++, false);
+
+    const items = { bank: opLogin("bank", "Bank", "rotated-pw"), luma: opLogin("luma", "Luma", "lu-secret") };
+    const result = await syncFromOnePassword(vault, "Agents", fakeOp(items));
+    expect(asked).toBe(0);
+    expect(result).toEqual(counts({ saved: 1, skipped: 1 }));
+    vault.onReprompt = async () => true;
+    expect(await vault.reveal(held!.id, "password")).toBe("old-pw");
   });
 
   it("a password rotated in 1Password updates the same item, not a second one", async () => {
     const { vault } = tempVault();
     await syncFromOnePassword(vault, "Agents", fakeOp({ luma: opLogin("luma", "Luma", "old-pw") }));
     const result = await syncFromOnePassword(vault, "Agents", fakeOp({ luma: opLogin("luma", "Luma", "new-pw") }));
-    expect(result).toMatchObject({ saved: 0, updated: 1, unchanged: 0 });
+    expect(result).toEqual(counts({ updated: 1 }));
     const [only, ...rest] = await vault.list();
     expect(rest).toEqual([]);
     expect(await vault.reveal(only!.id, "password")).toBe("new-pw");
@@ -120,8 +158,6 @@ describe("syncFromOnePassword", () => {
     const listOnly: OpRunner = async (args) =>
       args[1] === "list" ? JSON.stringify([{ id: "gone", title: "Gone" }, { id: "luma", title: "Luma" }]) : flaky(args);
     const result = await syncFromOnePassword(vault, "Agents", listOnly);
-    expect(result.saved).toBe(1);
-    expect(result.skipped).toEqual([{ title: "Gone", reason: "1Password would not hand it over" }]);
-    expect(JSON.stringify(result)).not.toContain("lu-secret");
+    expect(result).toEqual(counts({ saved: 1, skipped: 1 }));
   });
 });

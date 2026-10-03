@@ -21,28 +21,34 @@ import {
   markAgainstVault,
   normalizeImportUrls,
   type ImportedLogin,
-  type SkippedRow,
 } from "./passwordImport.js";
 
 /** Runs `op <args>` with the service-account token in its environment and
  * resolves to stdout. Its errors must not carry stdout. */
 export type OpRunner = (args: string[]) => Promise<string>;
 
+/** Counts only: a pass reports how it went, never which item or why in its
+ * own words, so nothing here can carry what an item holds. */
 export interface SyncResult {
+  /** Listed, matched an `exclude` entry, and so never fetched. */
+  excluded: number;
   saved: number;
   updated: number;
   unchanged: number;
-  skipped: SkippedRow[];
-  failed: SkippedRow[];
+  /** Not a login, no site to fill on, refused by `op`, or matching an item
+   * here that asks for the owner (left alone, never prompted for). */
+  skipped: number;
+  failed: number;
 }
 
 type OpField = { id?: unknown; type?: unknown; purpose?: unknown; label?: unknown; value?: unknown };
 
-/** One `op item get --format json` login as an import row, or why it is not one. */
-export function loginFromOpItem(raw: unknown): { login?: ImportedLogin; skipped?: SkippedRow } {
+/** One `op item get --format json` login as an import row, or null when it is
+ * not one the vault can fill (not a login, or no site). */
+export function loginFromOpItem(raw: unknown): ImportedLogin | null {
   const item = (raw ?? {}) as Record<string, unknown>;
   const title = typeof item.title === "string" ? item.title.trim() : "";
-  if (item.category !== "LOGIN") return { skipped: { title: title || "(untitled)", reason: "not a login" } };
+  if (item.category !== "LOGIN") return null;
   const fields = Array.isArray(item.fields) ? (item.fields as OpField[]) : [];
   const value = (pick: (f: OpField) => boolean): string => {
     const f = fields.find(pick);
@@ -52,12 +58,10 @@ export function loginFromOpItem(raw: unknown): { login?: ImportedLogin; skipped?
     .map((u) => (typeof u.href === "string" ? u.href.trim() : ""))
     .filter(Boolean);
   const { urls, dropped } = normalizeImportUrls(raws);
-  if (urls.length === 0) {
-    // The vault refuses a login with no site: it could never be filled anyway.
-    return { skipped: { title: title || "(untitled)", reason: "has no website address it can be filled on" } };
-  }
+  // The vault refuses a login with no site: it could never be filled anyway.
+  if (urls.length === 0) return null;
   const warnings = dropped ? ["one of its website addresses could not be read and was left out"] : [];
-  const login = finishImportedLogin(
+  return finishImportedLogin(
     {
       title,
       urls,
@@ -68,17 +72,24 @@ export function loginFromOpItem(raw: unknown): { login?: ImportedLogin; skipped?
     },
     warnings,
   );
-  return { login };
 }
 
 /**
- * One pass: every login in `vaultName`, reconciled into `vault`.
+ * One pass: every login in `vaultName`, reconciled into `vault`. An `exclude`
+ * entry (an item id, or a title, case-insensitively) drops the item at the
+ * list: it is never fetched, so its values never leave 1Password.
  * ponytail: re-reads every login each pass (1 list + 1 get per login). Ceiling:
  * a 1Password Teams service account allows 1,000 reads an hour, so hundreds of
  * logins at the hourly pace the app uses; upgrade path is skipping items whose
  * `updated_at` matches the previous pass.
  */
-export async function syncFromOnePassword(vault: LocalVault, vaultName: string, run: OpRunner): Promise<SyncResult> {
+export async function syncFromOnePassword(
+  vault: LocalVault,
+  vaultName: string,
+  run: OpRunner,
+  exclude: string[] = [],
+): Promise<SyncResult> {
+  const out = new Set(exclude.map((e) => e.trim().toLowerCase()));
   let listed: unknown;
   try {
     listed = JSON.parse(await run(["item", "list", "--vault", vaultName, "--categories", "Login", "--format", "json"]));
@@ -87,21 +98,26 @@ export async function syncFromOnePassword(vault: LocalVault, vaultName: string, 
     throw new Error("1Password's list of logins could not be read");
   }
   const logins: ImportedLogin[] = [];
-  const skipped: SkippedRow[] = [];
+  let excluded = 0;
+  let skipped = 0;
   for (const entry of Array.isArray(listed) ? (listed as Array<Record<string, unknown>>) : []) {
     const title = typeof entry.title === "string" ? entry.title : "(untitled)";
-    let item: unknown;
-    try {
-      item = JSON.parse(await run(["item", "get", String(entry.id), "--vault", vaultName, "--format", "json", "--reveal"]));
-    } catch {
-      skipped.push({ title, reason: "1Password would not hand it over" });
+    if (out.has(String(entry.id).toLowerCase()) || out.has(title.trim().toLowerCase())) {
+      excluded++;
       continue;
     }
-    const row = loginFromOpItem(item);
-    if (row.login) logins.push(row.login);
-    else if (row.skipped) skipped.push(row.skipped);
+    let login: ImportedLogin | null = null;
+    try {
+      login = loginFromOpItem(
+        JSON.parse(await run(["item", "get", String(entry.id), "--vault", vaultName, "--format", "json", "--reveal"])),
+      );
+    } catch {
+      /* refused by `op` or unreadable: counted below, quoted nowhere */
+    }
+    if (login) logins.push(login);
+    else skipped++;
   }
-  await markAgainstVault(vault, logins);
-  const { saved, updated, duplicates, failed } = await importLogins(vault, logins);
-  return { saved, updated, unchanged: duplicates, skipped, failed };
+  const prompted = await markAgainstVault(vault, logins, { unattended: true });
+  const { saved, updated, duplicates, failed } = await importLogins(vault, logins, "ONEPASSWORD");
+  return { excluded, saved, updated, unchanged: duplicates - prompted, skipped: skipped + prompted, failed: failed.length };
 }
