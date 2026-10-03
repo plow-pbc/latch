@@ -65,6 +65,13 @@ export class LocalVault {
    */
   onReprompt: (() => Promise<boolean>) | null = null;
 
+  /** Whether reading this item asks for the owner (see `cleared`). Metadata
+   * only: nothing is decrypted and nobody is asked, so an unattended caller can
+   * leave the item alone instead of raising a prompt nobody will answer. */
+  asksForOwner(itemId: string): boolean {
+    return !!this.cipher(itemId).reprompt;
+  }
+
   /** Refuse an item that asks for the owner, unless the owner answers. */
   private async cleared(cipher: Cipher): Promise<Cipher> {
     if (!cipher.reprompt) return cipher;
@@ -168,7 +175,9 @@ export class LocalVault {
   }
 
   /** Create an item, or change one that is already there. */
-  async save(input: VaultItemInput): Promise<{ id: string; title: string }> {
+  /** `origin` is who the audit line names: the owner unless a background
+   * import says otherwise (docs/VAULT.md § Auditing). */
+  async save(input: VaultItemInput, origin = "OWNER"): Promise<{ id: string; title: string }> {
     const key = this.open();
     const existing = input.itemId ? await this.cleared(this.cipher(input.itemId)) : null;
     const type = existing?.type ?? TYPE_CODE[input.type ?? "login"];
@@ -213,7 +222,7 @@ export class LocalVault {
     // against a snapshot taken before an await, and the store re-checks it
     // against the live row atomically (see VaultStore.upsert).
     const saved = this.store.upsert(encryptCipher(input, existing, key), input.itemId ? input.revision : undefined);
-    this.audit(String(saved.id ?? ""), "(item)", input.itemId ? "UPDATED" : "CREATED");
+    this.audit(String(saved.id ?? ""), "(item)", input.itemId ? "UPDATED" : "CREATED", origin);
     return { id: String(saved.id ?? ""), title: String(input.name ?? "") };
   }
 
@@ -225,13 +234,13 @@ export class LocalVault {
     this.audit(itemId, "(item)", "DELETED");
   }
 
-  private audit(itemId: string, field: string, outcome: string): void {
+  private audit(itemId: string, field: string, outcome: string, origin = "OWNER"): void {
     if (!this.auditPath) return;
     try {
       fs.mkdirSync(path.dirname(this.auditPath), { recursive: true, mode: 0o700 });
       fs.appendFileSync(
         this.auditPath,
-        `${new Date().toISOString()}  item=${itemId}  field=${field}  page=OWNER  -> ${outcome}\n`,
+        `${new Date().toISOString()}  item=${itemId}  field=${field}  page=${origin}  -> ${outcome}\n`,
       );
     } catch {
       /* an audit that cannot be written must not fail the owner's action */

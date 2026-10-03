@@ -323,6 +323,9 @@ The audit log is the vault's oracle, in tests and in production:
 
 - Owner actions (`localVault.ts`): `CREATED` / `UPDATED` / `DELETED` /
   `SHOWN in app` / `CODE READ in app`, page recorded as `OWNER`.
+- Background imports from a 1Password service account (`onePasswordSync.ts`):
+  `CREATED` / `UPDATED`, page recorded as `ONEPASSWORD`, so an unattended write
+  never reads as something the owner did.
 - Broker actions (`brokerCore.ts`): `DESCRIBED`, `RELEASED`,
   `DENIED origin mismatch`, `DENIED no site on item`, `ERROR <type>`, against
   the releasing page or `SEM-URL`.
