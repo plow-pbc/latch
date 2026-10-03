@@ -175,9 +175,22 @@ describe("syncFromOnePassword", () => {
     await markAgainstVault(vault, staged); // the sheet's preview: new
     expect(staged[0]!.duplicate).toBeUndefined();
     await syncFromOnePassword(vault, "Agents", fakeOp({ luma: opLogin("luma", "Luma", "lu-secret") }));
-    const result = await commitAgainstLive(vault, staged);
+    const result = await commitAgainstLive(vault, staged, staged);
     expect(result).toEqual({ saved: 0, updated: 0, duplicates: 1, failed: [] });
     expect((await vault.list()).length).toBe(1);
+  });
+
+  it("commit re-marks the whole staged batch: committing one of two same-identity rows never overwrites its twin's item", async () => {
+    const { vault } = tempVault();
+    await syncFromOnePassword(vault, "Agents", fakeOp({ a: opLogin("luma", "Luma", "first-pw") }));
+    const batch = [opLogin("luma", "Luma", "first-pw"), opLogin("luma", "Luma", "second-pw")].map((i) => loginFromOpItem(i)!);
+    await markAgainstVault(vault, batch); // preview: the twin is a duplicate, the other is new
+    expect(batch.map((l) => !!l.duplicate)).toEqual([true, false]);
+    const result = await commitAgainstLive(vault, batch, [batch[1]!]); // the sheet submits the new one
+    expect(result).toEqual({ saved: 1, updated: 0, duplicates: 0, failed: [] });
+    vault.onReprompt = async () => true;
+    const passwords = await Promise.all((await vault.list()).map((i) => vault.reveal(i.id, "password")));
+    expect(passwords.sort()).toEqual(["first-pw", "second-pw"]);
   });
 
   it("a password rotated in 1Password updates the same item, not a second one", async () => {

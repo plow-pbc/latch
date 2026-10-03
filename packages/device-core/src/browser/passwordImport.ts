@@ -548,18 +548,26 @@ export interface ImportResult {
  * are collected, not thrown.
  */
 /**
- * Commit rows against the vault as it is NOW. A row staged as new may meet an
- * item that landed after it was marked (the hourly 1Password sync, say), and
- * committing the stale verdict would create a second item with that identity.
- * Run inside the caller's vault write section, so nothing lands in between.
+ * Commit `chosen` (rows of `batch`, by reference) against the vault as it is
+ * NOW. A row staged as new may meet an item that landed after it was marked
+ * (the hourly 1Password sync, say); committing the stale verdict would create
+ * a second item with that identity. The WHOLE staged batch is re-marked, not
+ * just the chosen rows: same-identity rows settle as a batch, an exact twin
+ * claiming its item first, and a chosen row re-marked alone could read as an
+ * update and overwrite its twin's item. Run inside the caller's vault write
+ * section, so nothing lands in between.
  */
-export async function commitAgainstLive(vault: LocalVault, logins: ImportedLogin[]): Promise<ImportResult> {
-  for (const login of logins) {
+export async function commitAgainstLive(
+  vault: LocalVault,
+  batch: ImportedLogin[],
+  chosen: ImportedLogin[],
+): Promise<ImportResult> {
+  for (const login of batch) {
     delete login.duplicate;
     delete login.update;
   }
-  await markAgainstVault(vault, logins);
-  return importLogins(vault, logins);
+  await markAgainstVault(vault, batch);
+  return importLogins(vault, chosen);
 }
 
 export async function importLogins(vault: LocalVault, logins: ImportedLogin[], origin?: string): Promise<ImportResult> {

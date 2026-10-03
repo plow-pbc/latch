@@ -1239,7 +1239,7 @@ ipcMain.handle("vault:importCommit", async (_e, selected?: number[], ticket?: nu
     ? logins.filter((_, i) => selected.includes(i))
     : logins;
   // Marked at inspect; the vault may have moved since (the 1Password pass).
-  return vaultSerial(() => commitAgainstLive(vault, chosen));
+  return vaultSerial(() => commitAgainstLive(vault, logins, chosen));
 });
 
 // The sheet closed without importing: drop the staged passwords now rather
