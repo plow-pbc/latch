@@ -50,6 +50,7 @@ import {
   pluginRoots,
   readCredentialsState,
   resolveBrowserRuntime,
+  syncFromOnePassword,
   totpCode,
   VaultItemInput,
 } from "@domo/device-core";
@@ -76,6 +77,7 @@ import { buildMinter } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
+import { findOp, opRunner, tokenFromEnvFile } from "./onePasswordSyncRunner.js";
 import { resolveTelemetryConfig, SimulatedError, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
@@ -2640,6 +2642,31 @@ app.whenReady().then(async () => {
     });
     updates.start();
   }
+  // 1Password sync: off unless settings name a vault and its token file. First pass a minute in, so
+  // the vault is up, then hourly; one pass at a time. Re-read per pass, so turning it on, off or
+  // pointing it elsewhere needs no relaunch. Logged as counts and fixed sentences only.
+  let onePasswordSyncing = false;
+  const syncOnePassword = async () => {
+    const cfg = loadSettings(home).onePasswordSync;
+    const vault = device?.vaultClient;
+    if (!cfg || !vault || onePasswordSyncing) return;
+    onePasswordSyncing = true;
+    try {
+      const op = findOp();
+      if (!op) throw new Error("the 1Password CLI (op) is not installed");
+      const r = await syncFromOnePassword(vault, cfg.vault, opRunner(op, tokenFromEnvFile(cfg.tokenFile)));
+      console.log(
+        `[1password-sync] ${r.saved} new, ${r.updated} updated, ${r.unchanged} unchanged, ` +
+          `${r.skipped.length} skipped, ${r.failed.length} failed`,
+      );
+    } catch (err) {
+      console.log(`[1password-sync] ${err instanceof Error ? err.message : "failed"}`);
+    } finally {
+      onePasswordSyncing = false;
+    }
+  };
+  setTimeout(() => void syncOnePassword(), 60_000);
+  setInterval(() => void syncOnePassword(), 60 * 60_000);
   setupAppMenu();
 
   setupTray();

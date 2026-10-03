@@ -976,6 +976,26 @@ What no mark reaches is the field's own page reading what was typed into it,
 which was never what the mark was for — and a page that plants the token is
 that same page, already holding the value.
 
+### 11a-iv. Keeping logins in step with a 1Password vault, unattended
+
+The owner is often away from this Mac, and an agent that needs a login must not
+wait on a fingerprint. A 1Password service account reads one vault with no
+biometric, so `settings.onePasswordSync` (`{vault, tokenFile}`) turns on an
+hourly pass (device-core `onePasswordSync.ts`) that pulls that vault's logins
+through the `op` CLI. The decisions:
+
+- **The flow IS the import flow.** Rows land through `markAgainstVault` and
+  `importLogins`: an unchanged login is left alone, a rotated password or key
+  updates its item in place (pinned to the revision read), a new one is saved,
+  each with its audit line. Two passes in a row change nothing. Nothing is ever
+  deleted: an item gone from 1Password stays until the owner removes it.
+- **The token is never ours to hold.** It stays in the owner's own `0600` env
+  file, which settings only names; a file anyone else on the Mac can read is
+  refused. It reaches `op` through its environment, never argv, and no log line
+  or error quotes it or anything `op` printed.
+- **Off unless set, re-read every pass.** No screen sets it yet; turning it on,
+  off or at another vault needs no relaunch.
+
 ### 11a-iii. Receiving an Apple Passwords export app-to-app
 
 macOS 26's credential exchange (Apple Passwords 26.4+, "Export to Another

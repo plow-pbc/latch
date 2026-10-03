@@ -235,6 +235,11 @@ export interface Settings {
    * an allowlist of audit events with paths, argv, goal text and credential
    * material never sent. */
   telemetryEnabled: boolean;
+  /** Keep the vault's logins in step with one 1Password vault, hourly, through
+   * a service account (device-core onePasswordSync.ts). The token stays in
+   * `tokenFile`, the owner's own 0600 env file: this names the file and never
+   * holds the token. Absent means off; no screen sets it yet. */
+  onePasswordSync?: { vault: string; tokenFile: string };
   /** The first-run setup has reached its final screen. Kept separately from
    * the credential because the data choice happens after sign-in. */
   setupComplete: boolean;
