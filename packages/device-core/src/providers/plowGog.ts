@@ -429,6 +429,9 @@ function compactEvent(item: Record<string, unknown>): Record<string, unknown> {
   // count said a meeting had people without saying who.
   const others = attendees.filter((a) => a.self !== true && a.resource !== true && a.responseStatus !== "declined");
   if (others.length > 0) event.attendees = others.map((a) => a.email);
+  // Whether the owner organized it: the one thing that tells an event they made from an invitation or from something a
+  // collaborator put on a shared calendar. Only the fact is kept, never the organizer's address.
+  if ((item.organizer as Record<string, unknown> | undefined)?.self === true) event.organizer = { self: true };
   // The two ways an event on the calendar leaves the owner free.
   if (item.transparency === "transparent") event.transparency = "transparent";
   if (attendees.find((a) => a.self === true)?.responseStatus === "declined") event.declined = true;

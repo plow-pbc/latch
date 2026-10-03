@@ -655,6 +655,18 @@ describe("compactCalendarEvents", () => {
     });
   });
 
+  it("says when the owner organized an event, and keeps nothing of anyone else's organizer", () => {
+    const base = { summary: "s", startDayOfWeek: "Monday", startLocal: "2026-09-14T08:00:00-07:00", endLocal: "2026-09-14T09:00:00-07:00", account: "a", id: "e" };
+    const { items } = compactCalendarEvents([
+      { ...base, id: "mine", organizer: { email: "me@example.com", self: true } },
+      { ...base, id: "invited", organizer: { email: "boss@example.com" } },
+      { ...base, id: "shared", organizer: { email: "collab@example.com", self: false } },
+      { ...base, id: "none" },
+    ]);
+    expect(items.map((e) => [e.id, e.organizer])).toEqual([["mine", { self: true }], ["invited", undefined], ["shared", undefined], ["none", undefined]]);
+    expect(JSON.stringify(items)).not.toContain("example.com");
+  });
+
   const timed = (local: string, summary = "x".repeat(200)) => ({
     summary,
     start: { dateTime: local },
