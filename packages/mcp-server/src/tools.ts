@@ -111,11 +111,7 @@ export interface ToolSpec {
 const strings = (value: JSONValue[] | null): string[] =>
   (value ?? []).filter((v): v is string => typeof v === "string");
 
-/**
- * A string argument the tool's schema lists in `required`. The SDK refuses a
- * call without it before `run`, so this throws only if the schema and the read
- * drift apart — loudly, rather than defaulting.
- */
+/** Schema-required string: the SDK refuses a call without it, so this throws only if schema and read drift apart. */
 const requiredStr = (a: JV, key: string): string => {
   const v = a.get(key).str;
   if (v === null) throw new ToolError(`missing '${key}'`);
