@@ -106,7 +106,7 @@ const act = (server: DomoMcpServer, session: string, action: string, extra: Reco
   callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
 
 describe("browser tools (fake runtime)", () => {
-  it("returns a click_at result", async () => {
+  it("returns a click_at result and lets a fill clear a field", async () => {
     const { server } = makeServer();
     const session = await open(server, ["pizza.example"]);
     await act(server, session, "goto", { url: "https://pizza.example/verify" });
@@ -114,6 +114,11 @@ describe("browser tools (fake runtime)", () => {
     const clicked = await act(server, session, "click_at", { x: 120, y: 80 });
     expect(clicked.isError, JSON.stringify(clicked.payload)).toBe(false);
     expect(clicked.payload).toMatchObject({ ok: true, x: 120, y: 80 });
+
+    // An empty value is how a field clears, so it is not a missing argument.
+    const cleared = await act(server, session, "fill", { selector: "#q", value: "" });
+    expect(cleared.isError, JSON.stringify(cleared.payload)).toBe(false);
+    expect(cleared.payload).toMatchObject({ ok: true });
   });
 
   // Each of these once reached the browser and came back as something else:
