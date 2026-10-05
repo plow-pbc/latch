@@ -21,6 +21,7 @@ import {
   canonicalJSON,
   Intent,
   JSONValue,
+  JV,
   jv,
   makeIntent,
 } from "@domo/protocol";
@@ -109,6 +110,17 @@ export interface ToolSpec {
 
 const strings = (value: JSONValue[] | null): string[] =>
   (value ?? []).filter((v): v is string => typeof v === "string");
+
+/**
+ * A string argument the tool's schema lists in `required`. The SDK refuses a
+ * call without it before `run`, so this throws only if the schema and the read
+ * drift apart — loudly, rather than defaulting.
+ */
+const requiredStr = (a: JV, key: string): string => {
+  const v = a.get(key).str;
+  if (v === null) throw new ToolError(`missing '${key}'`);
+  return v;
+};
 
 /**
  * Resolve a path the agent supplied to the real path the kernel will see,
@@ -309,8 +321,7 @@ export const TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
-      const raw = a.get("path").str;
-      if (raw === null) throw new ToolError("missing 'path'");
+      const raw = requiredStr(a, "path");
       const path = await resolved(raw);
       const response = await decideAndRun(
         ctx,
@@ -356,11 +367,9 @@ export const TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
-      const raw = a.get("path").str;
-      if (raw === null) throw new ToolError("missing 'path'");
+      const raw = requiredStr(a, "path");
       const path = await resolved(raw);
-      const content = a.get("content").str;
-      if (content === null) throw new ToolError("missing 'content'");
+      const content = requiredStr(a, "content");
       // Refuse before encoding: the point of the ceiling is to bound the work,
       // and encoding an oversized string is the work.
       if (content.length > MAX_FILE_BYTES) {
@@ -750,8 +759,7 @@ export const TOOLS: ToolSpec[] = [
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
-      const handle = jv(args).get("handle").str;
-      if (handle === null) throw new ToolError("missing 'handle'");
+      const handle = requiredStr(jv(args), "handle");
       // Another agent's job is indistinguishable from one that never existed.
       ctx.jobs.assertOwner(ctx.agent.agentId, handle);
       return ctx.device.getOutput(handle, jv(args).get("since").int ?? 0);
@@ -787,8 +795,7 @@ export const TOOLS: ToolSpec[] = [
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
-      const name = jv(args).get("name").str;
-      if (name === null) throw new ToolError("missing 'name'");
+      const name = requiredStr(jv(args), "name");
       const skill = ctx.device.skills.skill(name);
       if (skill === null) throw new ToolError(`no skill named '${name}' on this Mac`);
       return {
@@ -943,8 +950,7 @@ export const TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       const a = jv(args);
-      const session = a.get("session").str;
-      if (session === null) throw new ToolError("missing 'session'");
+      const session = requiredStr(a, "session");
       // Same chokepoint as plow_browser_open: refused by name before an
       // intent exists, so nobody is asked to approve a call this Mac was
       // always going to refuse.
@@ -1083,10 +1089,8 @@ export const TOOLS: ToolSpec[] = [
     deferrable: false,
     async run(args, ctx) {
       const a = jv(args);
-      const session = a.get("session").str;
-      if (session === null) throw new ToolError("missing 'session'");
-      const action = a.get("action").str;
-      if (action === null) throw new ToolError("missing 'action'");
+      const session = requiredStr(a, "session");
+      const action = requiredStr(a, "action");
       const params: { [k: string]: JSONValue } = { action };
       for (const key of ["url", "selector", "x", "y", "selectors", "value", "expression", "index", "item", "field", "format", "direction", "seconds", "frame", "timeout_ms"]) {
         const v = a.get(key).value;
@@ -1199,8 +1203,7 @@ export const TOOLS: ToolSpec[] = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
-      const session = jv(args).get("session").str;
-      if (session === null) throw new ToolError("missing 'session'");
+      const session = requiredStr(jv(args), "session");
       // The device answers with an error for a handle it does not know, and
       // saying "closed" anyway would tell the caller it worked.
       const result = jv(await ctx.device.browserCommand(session, { action: "close" }));
@@ -1250,8 +1253,7 @@ export const TOOLS: ToolSpec[] = [
     annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
-      const handle = jv(args).get("handle").str;
-      if (handle === null) throw new ToolError("missing 'handle'");
+      const handle = requiredStr(jv(args), "handle");
       return ctx.deferred.get(ctx.agent.agentId, handle);
     },
   },
