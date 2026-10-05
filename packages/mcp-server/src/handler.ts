@@ -19,7 +19,7 @@ import {
   fromJsonSchema,
   McpServer,
 } from "@modelcontextprotocol/server";
-import { JSONValue } from "@domo/protocol";
+import { JSONValue, jv } from "@domo/protocol";
 import { DeviceAgent, INTERACTIVE_VERIFICATION, LIVE_WEB_ROUTING } from "@domo/device-core";
 import { BlockedError, CALL_BUDGET_MS, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
@@ -28,6 +28,7 @@ import {
   MACOS_TOOLING,
   TOOLS,
   ToolContext,
+  ToolSpec,
   toolBlocks,
   toolContent,
 } from "./tools.js";
@@ -146,6 +147,22 @@ export function toAuthInfo(auth: RelayAuth): AuthInfo {
     scopes: auth.scopes ?? [],
     extra: { agent_name: auth.agent_name, user_uid: auth.user_uid },
   };
+}
+
+/**
+ * The error for an action called without an argument it cannot run without, or
+ * null. Absent and empty are the same here: an empty selector or url would
+ * otherwise reach the browser and fail as something else ("no frame has
+ * undefined", a scope refusal, a timeout) — or, for `eval`, succeed at nothing.
+ */
+function missingActionArgs(spec: ToolSpec, args: JSONValue): string | null {
+  const a = jv(args);
+  const action = a.get("action").str ?? "";
+  const missing = (spec.actionArgs?.[action] ?? []).filter((key) => {
+    const v = a.get(key).value;
+    return v === null || v === undefined || v === "";
+  });
+  return missing.length ? `${action} requires ${missing.map((k) => `'${k}'`).join(" and ")}` : null;
 }
 
 /**
@@ -273,6 +290,10 @@ export function createDomoMcpServer(
                 content: [toolContent({ error: "no authenticated agent on this request" })],
                 isError: true,
               };
+            }
+            const missing = missingActionArgs(spec, (args ?? null) as JSONValue);
+            if (missing !== null) {
+              return { content: [toolContent({ error: missing })], isError: true };
             }
             const toolCtx: ToolContext = {
               device,

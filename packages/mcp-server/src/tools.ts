@@ -92,6 +92,13 @@ export interface ToolSpec {
   annotations: ToolAnnotations;
   inputSchema: JSONValue;
   /**
+   * For a tool whose `action` picks the operation: the arguments each action
+   * cannot run without. The advertised schema stays flat (a per-action schema
+   * is a shape some model providers refuse), so this is where that contract is
+   * enforced — once, before `run`, naming what is missing.
+   */
+  actionArgs?: Readonly<Record<string, readonly string[]>>;
+  /**
    * Whether this tool constructs an intent and can therefore block on a human.
    * The three that cannot — retrieving output, listing tools, polling a handle
    * — must never be deferred: deferring the poller would be absurd.
@@ -1060,6 +1067,15 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
+    actionArgs: {
+      goto: ["url"],
+      click: ["selector"],
+      click_at: ["x", "y"],
+      fill: ["selector"],
+      fill_secret: ["item", "field"],
+      eval: ["expression"],
+      use_page: ["index"],
+    },
     // Rides the session grant — no new intent, no approval. Non-deferrable so a
     // screenshot's image block reaches the agent directly (a deferred result
     // would be re-serialized as text by plow_get_result).
@@ -1072,16 +1088,7 @@ export const TOOLS: ToolSpec[] = [
       const action = a.get("action").str;
       if (action === null) throw new ToolError("missing 'action'");
       const params: { [k: string]: JSONValue } = { action };
-      if (action === "click_at") {
-        const x = a.get("x").int;
-        const y = a.get("y").int;
-        if (x === null || y === null) {
-          throw new ToolError("click_at requires integer viewport coordinates 'x' and 'y'");
-        }
-        params.x = x;
-        params.y = y;
-      }
-      for (const key of ["url", "selector", "selectors", "value", "expression", "index", "item", "field", "format", "direction", "seconds", "frame", "timeout_ms"]) {
+      for (const key of ["url", "selector", "x", "y", "selectors", "value", "expression", "index", "item", "field", "format", "direction", "seconds", "frame", "timeout_ms"]) {
         const v = a.get(key).value;
         if (v !== null && v !== undefined) params[key] = v;
       }
@@ -1168,6 +1175,7 @@ export const TOOLS: ToolSpec[] = [
       },
       additionalProperties: false,
     },
+    actionArgs: { describe: ["item"] },
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     deferrable: false,
     async run(args, ctx) {
