@@ -151,16 +151,17 @@ export function toAuthInfo(auth: RelayAuth): AuthInfo {
 
 /**
  * The error for an action called without an argument it cannot run without, or
- * null. Absent only — an empty `value` is how a field gets cleared. An absent
- * one would otherwise reach the browser and fail as something else ("no frame
- * has undefined", a scope refusal, a timeout) or type the word "undefined".
+ * null. A missing one would otherwise reach the browser and fail as something
+ * else ("no frame has undefined", a scope refusal, a timeout) or type the word
+ * "undefined". Empty counts as missing for what names a target (a url, a
+ * selector, an expression); `value` is content, and empty is how a field clears.
  */
 function missingActionArgs(spec: ToolSpec, args: JSONValue): string | null {
   const a = jv(args);
   const action = a.get("action").str ?? "";
   const missing = (spec.actionArgs?.[action] ?? []).filter((key) => {
     const v = a.get(key).value;
-    return v === null || v === undefined;
+    return v === null || v === undefined || (v === "" && key !== "value");
   });
   return missing.length ? `${action} requires ${missing.map((k) => `'${k}'`).join(" and ")}` : null;
 }

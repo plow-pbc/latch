@@ -122,6 +122,7 @@ describe("browser tools (fake runtime)", () => {
   // enforces before run().
   it.each([
     ["plow_browser", { action: "goto" }, "goto requires 'url'"],
+    ["plow_browser", { action: "goto", url: "" }, "goto requires 'url'"],
     ["plow_browser", { action: "click", timeout_ms: 5000 }, "click requires 'selector'"],
     ["plow_browser", { action: "fill", value: "jon" }, "fill requires 'selector'"],
     ["plow_browser", { action: "fill", selector: "#q" }, "fill requires 'value'"],
