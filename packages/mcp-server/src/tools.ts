@@ -1071,8 +1071,8 @@ export const TOOLS: ToolSpec[] = [
       goto: ["url"],
       click: ["selector"],
       click_at: ["x", "y"],
-      fill: ["selector"],
-      fill_secret: ["item", "field"],
+      // fill_secret's selector-or-selectors, item and field are checked where it runs.
+      fill: ["selector", "value"],
       eval: ["expression"],
       use_page: ["index"],
     },

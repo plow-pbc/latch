@@ -124,12 +124,12 @@ describe("browser tools (fake runtime)", () => {
     ["plow_browser", { action: "goto" }, "goto requires 'url'"],
     ["plow_browser", { action: "click", timeout_ms: 5000 }, "click requires 'selector'"],
     ["plow_browser", { action: "fill", value: "jon" }, "fill requires 'selector'"],
-    ["plow_browser", { action: "eval", expression: "" }, "eval requires 'expression'"],
+    ["plow_browser", { action: "fill", selector: "#q" }, "fill requires 'value'"],
+    ["plow_browser", { action: "eval" }, "eval requires 'expression'"],
     ["plow_browser", { action: "click_at", x: 120 }, "click_at requires 'y'"],
     ["plow_browser", { action: "click_at", x: "120", y: 80 }, "Input validation error: Invalid arguments for tool plow_browser: data/x must be integer"],
     ["plow_browser", { action: "click_at", x: 12.5, y: 80 }, "Input validation error: Invalid arguments for tool plow_browser: data/x must be integer"],
     ["plow_browser", { action: "use_page" }, "use_page requires 'index'"],
-    ["plow_browser", { action: "fill_secret", selector: "#pw" }, "fill_secret requires 'item' and 'field'"],
     ["plow_vault", { action: "describe" }, "describe requires 'item'"],
   ])("%s %j names what is missing and does nothing", async (tool, args, error) => {
     const { server, device, cmdLog } = makeServer();

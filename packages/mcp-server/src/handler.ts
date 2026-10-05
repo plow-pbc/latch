@@ -151,16 +151,16 @@ export function toAuthInfo(auth: RelayAuth): AuthInfo {
 
 /**
  * The error for an action called without an argument it cannot run without, or
- * null. Absent and empty are the same here: an empty selector or url would
- * otherwise reach the browser and fail as something else ("no frame has
- * undefined", a scope refusal, a timeout) — or, for `eval`, succeed at nothing.
+ * null. Absent only — an empty `value` is how a field gets cleared. An absent
+ * one would otherwise reach the browser and fail as something else ("no frame
+ * has undefined", a scope refusal, a timeout) or type the word "undefined".
  */
 function missingActionArgs(spec: ToolSpec, args: JSONValue): string | null {
   const a = jv(args);
   const action = a.get("action").str ?? "";
   const missing = (spec.actionArgs?.[action] ?? []).filter((key) => {
     const v = a.get(key).value;
-    return v === null || v === undefined || v === "";
+    return v === null || v === undefined;
   });
   return missing.length ? `${action} requires ${missing.map((k) => `'${k}'`).join(" and ")}` : null;
 }
