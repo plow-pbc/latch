@@ -907,6 +907,9 @@ describe("review findings", () => {
   // chokepoint shape as providerRefusal, just above in this file's tools.ts.
   describe("a staged plugin's own argv belt gates before an intent exists too", () => {
     const ECHOER = { name: "echoer", command: "echoer", argv: { read: [["say"]], write: [] } };
+    const MESSAGES = JSON.parse(fs.readFileSync(
+      new URL("../../../apps/desktop/plugins/messages/latch-plugin.json", import.meta.url), "utf8",
+    )) as typeof ECHOER;
     function stagePlugin(root: string, plugin = ECHOER): void {
       const dir = path.join(root, plugin.name);
       fs.mkdirSync(dir, { recursive: true });
@@ -949,6 +952,27 @@ describe("review findings", () => {
       expect(String(payload.error ?? payload)).toContain("echoer allows: say");
       // The refusal never became an approval decision, and nothing was audited.
       expect(decided).toBe(false);
+      expect(events(device)).not.toContain("exec_start");
+    });
+
+    it.each([
+      ["--store", "/other-store", "chats"],
+      ["chats", "--store", "/other-store"],
+      ["chats", "--app", "whatsapp"],
+      ["--app", "whatsapp", "chats", "--app", "imessage"],
+      ["--app", "whatsapp", "chats", "--store", "/other-store"],
+    ])("refuses archive selectors before an intent: %j", async (...tail) => {
+      let decided = false;
+      const { server, device } = makePluginServer({
+        async decideIntent() { decided = true; return "allow_once" as const; },
+      }, MESSAGES);
+      const { isError, payload } = await callTool(server, "plow_run_command", {
+        argv: ["plow-messages", ...tail],
+      }, AGENT);
+      expect(isError).toBe(true);
+      expect(String(payload.error ?? payload)).toContain("plow-messages allows:");
+      expect(decided).toBe(false);
+      expect(events(device)).not.toContain("intent_received");
       expect(events(device)).not.toContain("exec_start");
     });
 
