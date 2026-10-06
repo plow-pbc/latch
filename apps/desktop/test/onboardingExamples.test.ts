@@ -4,6 +4,17 @@ import { pluginExamples } from "../src/onboardingExampleCatalog.js";
 import { GATEKEEPER_DECKS, ONBOARDING_EXAMPLES } from "../src/onboardingExamples.js";
 
 describe("onboarding example catalog", () => {
+  it("includes a history query only when the Screenpipe plugin is present", () => {
+    expect(pluginExamples([{ name: "screenpipe", title: "Screenpipe history" }])).toEqual([
+      { query: "Find what I worked on yesterday", plugins: ["Screenpipe history"] },
+    ]);
+    expect(pluginExamples([
+      { name: "gog", title: "Mail" }, { name: "messages", title: "Messages" },
+      { name: "browser", title: "Browser" }, { name: "screenpipe", title: "Screenpipe history" },
+    ]).map(({ query }) => query)).toEqual([
+      "Check the family calendar", "Text Mary “Running late”", "Sign in to Instacart with your password", "Find what I worked on yesterday",
+    ]);
+  });
   it("tags the unchanged ten-query Gatekeeper catalog for plugin filtering", () => {
     expect(ONBOARDING_EXAMPLES.map(({ plugins }) => plugins)).toEqual([
       ["gog"],
