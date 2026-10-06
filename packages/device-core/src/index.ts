@@ -11,6 +11,7 @@ export * from "./browser/brokerCore.js";
 export * from "./browser/credentialClassify.js";
 export * from "./browser/localVault.js";
 export * from "./browser/passwordImport.js";
+export * from "./browser/onePasswordSync.js";
 export * from "./browser/onePux.js";
 export * from "./browser/credentialExchange.js";
 export * from "./browser/dateFormat.js";

@@ -392,7 +392,15 @@ const dupKey = (title: string, username: string, url: string): string =>
  * alone, with the reason said out loud, because every guess here writes over
  * a password.
  */
-export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[]): Promise<void> {
+export async function markAgainstVault(
+  vault: LocalVault,
+  logins: ImportedLogin[],
+  opts: { unattended?: boolean } = {},
+): Promise<number> {
+  // Rows marked `duplicate` without being identical to an item: ambiguous, or
+  // protected under `unattended`. Returned, so a caller never reports them as
+  // unchanged when what is here may be stale.
+  let leftAlone = 0;
   const itemGroups = new Map<string, VaultItemSummary[]>();
   for (const s of await vault.list()) {
     if (s.type !== "login") continue;
@@ -412,6 +420,17 @@ export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[
   for (const [k, rows] of rowGroups) {
     const items = itemGroups.get(k) ?? [];
     if (items.length === 0) continue; // every row is a new item
+    // Comparing against an item that asks for the owner raises that ask. With
+    // nobody at the Mac it goes unanswered, so the group is left alone, unread,
+    // and the rest of the pass carries on. Returned so the caller can say so.
+    if (opts.unattended && items.some((item) => vault.asksForOwner(item.id))) {
+      for (const row of rows) {
+        row.duplicate = true;
+        row.warnings.push("what it matches here asks for you to confirm it is you; left alone");
+      }
+      leftAlone += rows.length;
+      continue;
+    }
     // Every row against every item, once. Groups are almost always 1×1.
     const diffs: { fields: ("password" | "totp")[]; revision: string }[][] = [];
     for (const row of rows) {
@@ -444,6 +463,7 @@ export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[
       rows[r]!.update = { itemId: items[i]!.id, revision: diffs[r]![i]!.revision, fields: diffs[r]![i]!.fields };
       continue;
     }
+    leftAlone += unmatched.length;
     for (const r of unmatched) {
       rows[r]!.duplicate = true;
       rows[r]!.warnings.push(
@@ -451,6 +471,7 @@ export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[
       );
     }
   }
+  return leftAlone;
 }
 
 /** One preview row — everything the screen shows, and never a secret value. */
@@ -526,7 +547,30 @@ export interface ImportResult {
  * refusal, not an overwrite. One bad row must not sink the rest, so failures
  * are collected, not thrown.
  */
-export async function importLogins(vault: LocalVault, logins: ImportedLogin[]): Promise<ImportResult> {
+/**
+ * Commit `chosen` (rows of `batch`, by reference) against the vault as it is
+ * NOW. A row staged as new may meet an item that landed after it was marked
+ * (the hourly 1Password sync, say); committing the stale verdict would create
+ * a second item with that identity. The WHOLE staged batch is re-marked, not
+ * just the chosen rows: same-identity rows settle as a batch, an exact twin
+ * claiming its item first, and a chosen row re-marked alone could read as an
+ * update and overwrite its twin's item. Run inside the caller's vault write
+ * section, so nothing lands in between.
+ */
+export async function commitAgainstLive(
+  vault: LocalVault,
+  batch: ImportedLogin[],
+  chosen: ImportedLogin[],
+): Promise<ImportResult> {
+  for (const login of batch) {
+    delete login.duplicate;
+    delete login.update;
+  }
+  await markAgainstVault(vault, batch);
+  return importLogins(vault, chosen);
+}
+
+export async function importLogins(vault: LocalVault, logins: ImportedLogin[], origin?: string): Promise<ImportResult> {
   let saved = 0;
   let updated = 0;
   let duplicates = 0;
@@ -543,7 +587,7 @@ export async function importLogins(vault: LocalVault, logins: ImportedLogin[]): 
           revision: login.update.revision,
           ...(login.update.fields.includes("password") ? { password: login.password } : {}),
           ...(login.update.fields.includes("totp") ? { totp: login.totp } : {}),
-        });
+        }, origin);
         updated++;
         continue;
       }
@@ -555,7 +599,7 @@ export async function importLogins(vault: LocalVault, logins: ImportedLogin[]): 
         password: login.password,
         ...(login.totp ? { totp: login.totp } : {}),
         notes: login.notes,
-      });
+      }, origin);
       saved++;
     } catch (err) {
       failed.push({ title: login.title, reason: err instanceof Error ? err.message : String(err) });
