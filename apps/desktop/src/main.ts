@@ -2295,16 +2295,18 @@ app.whenReady().then(async () => {
   // admin account, not the owner's own processes: `safeStorage` decrypts for
   // anything running as them. It matters more than it did, because the stored
   // credential is the owner's login session rather than a scoped device key.
-  // Appearance before any window exists, so the first paint is already in
-  // the owner's mode; a switch while running repaints every window through
-  // its CSS, and the main window's own background follows.
-  nativeTheme.themeSource = appearanceOf(loadSettings(home).appearance);
-  nativeTheme.on("updated", () => mainWindow?.setBackgroundColor(windowBackground()));
   useCredentialCodec({
     available: () => electronSafeStorage.isEncryptionAvailable(),
     encrypt: (plain) => electronSafeStorage.encryptString(plain).toString("base64"),
     decrypt: (cipher) => electronSafeStorage.decryptString(Buffer.from(cipher, "base64")),
   });
+  // Appearance before any window exists, so the first paint is already in
+  // the owner's mode; a switch while running repaints every window through
+  // its CSS, and the main window's own background follows. AFTER the codec:
+  // a settings read without it sees the login as unreadable, signs the owner
+  // out and queues that login for revocation.
+  nativeTheme.themeSource = appearanceOf(loadSettings(home).appearance);
+  nativeTheme.on("updated", () => mainWindow?.setBackgroundColor(windowBackground()));
   pendingRevokeRetrier = new PendingRevokeRetrier(
     home,
     (credential) => new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
