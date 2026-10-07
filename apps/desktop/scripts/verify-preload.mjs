@@ -205,6 +205,7 @@ ipcMain.handle("launch:set", async (_e, on) => setLaunchAtLogin(launchSupported,
 // keepAwake.test.ts owns the lifecycle. No caffeinate child in the probe.
 let keepAwakeOn = false;
 ipcMain.handle("power:getKeepAwake", async () => ({ enabled: keepAwakeOn }));
+ipcMain.handle("settings:getAppearance", async () => "system");
 ipcMain.handle("power:setKeepAwake", async (_e, on) => ({ enabled: (keepAwakeOn = !!on) }));
 // The Privacy toggle: same boolean-stub shape as Keep Mac Awake. The probe
 // proves the pane renders; telemetry.test.ts owns what the setting gates.

@@ -37,9 +37,10 @@
 :root {
   /* plow.co's design system (build-system.css), so the app and the site read
      as one product: a taupe canvas, white hairline cards, warm ink, volt used
-     as a small chip and a deep-volt accent. Light in every appearance — the
-     site has one look, and a dark Mac still gets the taupe app. */
-  color-scheme: light;
+     as a small chip and a deep-volt accent. Dark mode (below) is the site's
+     own dark band. Which one shows is Settings → Appearance, through
+     nativeTheme.themeSource: System follows the Mac. */
+  color-scheme: light dark;
   --bg: #f4f4ef;
   --card: #ffffff;
   --chrome: #fafaf8;
@@ -92,6 +93,40 @@
   --switch-on-knob: var(--volt-ink);
   --switch-on-shadow: none;
   --switch-focus: var(--focus);
+}
+@media (prefers-color-scheme: dark) {
+  /* plow.co's dark band: near-black ink, warm off-white type, hairlines of
+     that same off-white, Volt unchanged on buttons and switches — and, on
+     dark, readable as text, so it is also the accent here. */
+  :root {
+    --bg: #0e0e0b;
+    --card: #161613;
+    --chrome: #121210;
+    --raised: #1c1c19;
+    --fg: #f4f3ec;
+    --muted: #b1b0a7;
+    --faint: #908f87;
+    --border: rgba(244, 243, 236, 0.08);
+    --border-strong: rgba(244, 243, 236, 0.15);
+    --hover: rgba(244, 243, 236, 0.05);
+    --press: rgba(244, 243, 236, 0.09);
+    --sel: rgba(213, 239, 138, 0.08);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 40px -16px rgba(0, 0, 0, 0.75);
+    --scrim: rgba(0, 0, 0, 0.5);
+    --volt-dim: rgba(213, 239, 138, 0.14);
+    --volt-glow: rgba(213, 239, 138, 0.3);
+    --accent: #d5ef8a;
+    --live: #d5ef8a;
+    --green-bg: rgba(213, 239, 138, 0.1); --green-fg: #d5ef8a; --green-bd: rgba(213, 239, 138, 0.3);
+    --red-bg: rgba(192, 115, 85, 0.13); --red-fg: #e9967a; --red-bd: rgba(216, 148, 120, 0.38);
+    --amber-bg: rgba(254, 188, 46, 0.1); --amber-fg: #f7c04a; --amber-bd: rgba(254, 188, 46, 0.3);
+    --blue-bg: rgba(213, 239, 138, 0.1); --blue-fg: #d5ef8a; --blue-bd: rgba(213, 239, 138, 0.3);
+    --zinc-bg: rgba(244, 243, 236, 0.06); --zinc-fg: #b1b0a7; --zinc-bd: rgba(244, 243, 236, 0.12);
+    /* Ink would vanish on ink: focus rings go Volt. */
+    --focus: #d5ef8a;
+    --switch-knob: rgba(244, 243, 236, 0.6);
+    --switch-on-border: #d5ef8a;
+  }
 }
 
 * { box-sizing: border-box; }

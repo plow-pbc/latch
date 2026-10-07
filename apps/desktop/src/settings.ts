@@ -182,6 +182,10 @@ export interface Settings {
    * updates only install when the human clicks "Restart to Update". Never a
    * surprise restart either way. */
   autoInstallUpdates: boolean;
+  /** Light, dark, or follow the Mac (default). Applied as Electron's
+   * nativeTheme.themeSource, which every window's CSS follows. Read it
+   * through appearanceOf: the file is hand-editable. */
+  appearance: Appearance;
   /** When the last update check completed (ISO-8601) — display only. */
   updatesLastCheckedAt?: string;
   /**
@@ -247,6 +251,13 @@ function settingsPath(home: string): string {
   return path.join(home, "app/settings.json");
 }
 
+export type Appearance = "system" | "light" | "dark";
+
+/** A stored or requested appearance, or "system" for anything else. */
+export function appearanceOf(value: unknown): Appearance {
+  return value === "light" || value === "dark" ? value : "system";
+}
+
 export function loadSettings(home: string): Settings {
   const defaults: Settings = {
     relayCredential: "",
@@ -258,6 +269,7 @@ export function loadSettings(home: string): Settings {
     agentPurpose: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
+    appearance: "system",
     keepAwakeWhileRunning: false,
     telemetryEnabled: true,
     setupComplete: false,

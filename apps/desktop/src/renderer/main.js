@@ -3033,6 +3033,24 @@ async function renderSettings() {
   // dropped — and a missed final transition (say, update-downloaded) would
   // otherwise leave this pane stale with no later event to correct it.
   if (generation !== settingsRenderGeneration || currentTab !== "settings") return;
+  // Appearance: the Mac's own setting unless the owner pins one, chosen in
+  // the app's pick-one menu (as Audit's filters are); main applies it to
+  // every window. Read before the pane mounts, so nothing moves in after.
+  const APPEARANCES = [["system", "System"], ["light", "Light"], ["dark", "Dark"]];
+  let appearance = await window.domo.appearanceGet();
+  const appearanceBtn = el("button", { class: "btn", attrs: { type: "button", "aria-haspopup": "menu" } });
+  const drawAppearance = () => {
+    const label = APPEARANCES.find(([key]) => key === appearance)?.[1] ?? "System";
+    appearanceBtn.replaceChildren(el("span", { text: label }), el("span", { class: "filter-caret", text: "▾" }));
+    appearanceBtn.setAttribute("aria-label", `Theme: ${label}`);
+  };
+  drawAppearance();
+  appearanceBtn.addEventListener("click", () => openMenu(appearanceBtn, APPEARANCES.map(([key, label]) => ({
+    label,
+    checked: key === appearance,
+    run: async () => { appearance = await window.domo.appearanceSet(key); drawAppearance(); },
+  }))));
+
   settingsMounted = mounted;
   await mounted.refreshUpdates();
 
@@ -3053,6 +3071,15 @@ async function renderSettings() {
     group("Availability", "Agents can reach this Mac only while Plow Latch is running and the Mac is awake.", [
       launchRow,
       awakeRow,
+    ]),
+    group("Appearance", null, [
+      el("div", { class: "setting-row" }, [
+        el("div", { class: "setting-copy" }, [
+          el("div", { class: "setting-title", text: "Theme" }),
+          el("p", { class: "setting-desc", text: "System follows your Mac's Light or Dark appearance." }),
+        ]),
+        el("div", { class: "setting-actions" }, [appearanceBtn]),
+      ]),
     ]),
     group("Software Updates", `Version ${u.currentVersion}`, [
       el("div", { class: "setting-row" }, [
