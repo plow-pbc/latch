@@ -599,13 +599,14 @@ app.whenReady().then(async () => {
   // main, the button names it, and the page repaints in that mode's canvas.
   const theme = {};
   const themeButton = `document.querySelector('.panel.settings button[aria-label^="Theme:"]')`;
+  // Fixed literals, quoted in place: none of them holds a quote.
   for (const [pick, canvas] of [["Dark", "rgb(14, 14, 11)"], ["Light", "rgb(244, 244, 239)"], ["System", null]]) {
     await win.webContents.executeJavaScript(`${themeButton}.click()`);
-    await waitFor(win, `[...document.querySelectorAll(".menu-label")].some((n) => n.textContent === ${JSON.stringify(pick)})`, `the Theme menu (${pick})`);
+    await waitFor(win, `[...document.querySelectorAll(".menu-label")].some((n) => n.textContent === "${pick}")`, `the Theme menu (${pick})`);
     await win.webContents.executeJavaScript(
-      `[...document.querySelectorAll(".menu-label")].find((n) => n.textContent === ${JSON.stringify(pick)}).closest("button").click()`);
+      `[...document.querySelectorAll(".menu-label")].find((n) => n.textContent === "${pick}").closest("button").click()`);
     await waitFor(win, `${themeButton}.getAttribute("aria-label") === "Theme: ${pick}"`, `Theme to read ${pick}`);
-    if (canvas) await waitFor(win, `getComputedStyle(document.body).backgroundColor === ${JSON.stringify(canvas)}`, `the ${pick} canvas`);
+    if (canvas) await waitFor(win, `getComputedStyle(document.body).backgroundColor === "${canvas}"`, `the ${pick} canvas`);
     theme[pick] = { stored: appearanceNow, source: nativeTheme.themeSource };
   }
 
