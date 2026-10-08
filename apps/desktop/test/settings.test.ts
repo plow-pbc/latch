@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings, useCredentialCodec } from "../src/settings.js";
+import { appearanceOf, loadSettings, saveSettings, useCredentialCodec } from "../src/settings.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -119,6 +119,18 @@ describe("settings storage", () => {
     settings.telemetryEnabled = false;
     saveSettings(home, settings);
     expect(loadSettings(home).telemetryEnabled).toBe(false);
+  });
+
+  it("defaults appearance to the Mac's own, keeps a pinned one, and reads anything else as System", () => {
+    expect(appearanceOf(loadSettings(tempHome()).appearance)).toBe("system");
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.appearance = "dark";
+    saveSettings(home, settings);
+    expect(appearanceOf(loadSettings(home).appearance)).toBe("dark");
+    write(home, JSON.stringify({ appearance: "midnight" }));
+    expect(appearanceOf(loadSettings(home).appearance)).toBe("system");
+    for (const value of [undefined, null, "", "Dark", 1]) expect(appearanceOf(value)).toBe("system");
   });
 
   it("defaults setup completion off, and persists completion", () => {

@@ -3,7 +3,7 @@
 // without throwing. Loads the REAL html with the REAL preload.cjs in offscreen
 // windows, then reads back the DOM state.
 // Run: DOMO_HOME=/tmp/x npx electron apps/desktop/scripts/verify-preload.mjs
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -205,6 +205,15 @@ ipcMain.handle("launch:set", async (_e, on) => setLaunchAtLogin(launchSupported,
 // keepAwake.test.ts owns the lifecycle. No caffeinate child in the probe.
 let keepAwakeOn = false;
 ipcMain.handle("power:getKeepAwake", async () => ({ enabled: keepAwakeOn }));
+// Stateful like main's: a pick is stored and drives the REAL nativeTheme, so
+// the page's own media query repaints it.
+let appearanceNow = "system";
+ipcMain.handle("settings:getAppearance", async () => appearanceNow);
+ipcMain.handle("settings:setAppearance", async (_e, value) => {
+  appearanceNow = value === "light" || value === "dark" ? value : "system";
+  nativeTheme.themeSource = appearanceNow;
+  return appearanceNow;
+});
 ipcMain.handle("power:setKeepAwake", async (_e, on) => ({ enabled: (keepAwakeOn = !!on) }));
 // The Privacy toggle: same boolean-stub shape as Keep Mac Awake. The probe
 // proves the pane renders; telemetry.test.ts owns what the setting gates.
@@ -585,6 +594,21 @@ app.whenReady().then(async () => {
     };
   }})()`);
   settings.paintedBeforeInventory = paintedAfterMs < CAPABILITIES_DELAY_MS;
+
+  // Appearance, switched while the window stays open: each menu pick reaches
+  // main, the button names it, and the page repaints in that mode's canvas.
+  const theme = {};
+  const themeButton = `document.querySelector('.panel.settings button[aria-label^="Theme:"]')`;
+  // Fixed literals, quoted in place: none of them holds a quote.
+  for (const [pick, canvas] of [["Dark", "rgb(14, 14, 11)"], ["Light", "rgb(244, 244, 239)"], ["System", null]]) {
+    await win.webContents.executeJavaScript(`${themeButton}.click()`);
+    await waitFor(win, `[...document.querySelectorAll(".menu-label")].some((n) => n.textContent === "${pick}")`, `the Theme menu (${pick})`);
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll(".menu-label")].find((n) => n.textContent === "${pick}").closest("button").click()`);
+    await waitFor(win, `${themeButton}.getAttribute("aria-label") === "Theme: ${pick}"`, `Theme to read ${pick}`);
+    if (canvas) await waitFor(win, `getComputedStyle(document.body).backgroundColor === "${canvas}"`, `the ${pick} canvas`);
+    theme[pick] = { stored: appearanceNow, source: nativeTheme.themeSource };
+  }
 
   // Settings changed with first-run login, and every UI change gets an image.
   const settingsShot = process.env.SETTINGS_OUT ?? "/tmp/settings-account.png";
@@ -1939,6 +1963,9 @@ app.whenReady().then(async () => {
     capabilities.connectorMenusLabelled &&
     capabilities.connectorAddIsArrowed &&
     capabilities.fdaButtonIsHandoff &&
+    theme.Dark.stored === "dark" && theme.Dark.source === "dark" &&
+    theme.Light.stored === "light" && theme.Light.source === "light" &&
+    theme.System.stored === "system" && theme.System.source === "system" &&
     settings.noReviewerGroup &&
     settings.noPasswordField &&
     settings.noSuggestionsCheckbox &&

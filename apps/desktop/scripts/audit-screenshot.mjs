@@ -1,6 +1,6 @@
-// Render the REAL main window on the Audit tab on a light and a dark Mac, on
-// the real preload with stubbed IPC — and fail the run when the page is not
-// the same plow.co taupe on both, the screen shifts while
+// Render the REAL main window on the Audit tab in light and dark mode, on the
+// real preload with stubbed IPC — and fail the run when a mode does not paint
+// its own canvas (plow.co's taupe, or its dark band), the screen shifts while
 // loading, a control has no accessible name, the keyboard cannot move the
 // selection, a verdict landing alone does not sweep its row, or verdicts
 // landing together sweep at all (a burst draws its marks and stays quiet).
@@ -212,7 +212,7 @@ app.on("window-all-closed", () => {});
 app.whenReady().then(async () => {
   const results = [await shoot("light"), await shoot("dark")];
   const ok = results.every((r) =>
-    r.bg === "rgb(244, 244, 239)" && r.cls < 0.01 && r.rows === ROWS.length && r.unnamed.length === 0 &&
+    r.bg === { light: "rgb(244, 244, 239)", dark: "rgb(14, 14, 11)" }[r.theme] && r.cls < 0.01 && r.rows === ROWS.length && r.unnamed.length === 0 &&
     r.before === "act-00" && r.after === "act-01" && r.listFocusable && r.current === "Audit" &&
     r.activeDescendant && r.moment.sweeping && r.moment.drawn && r.moment.newStep && r.moment.liveStep &&
     r.burst.most === 0 && r.burst.marks === 3 &&

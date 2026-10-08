@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import { ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -75,7 +75,7 @@ import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
-import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
+import { appearanceOf, loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
 import { resolveTelemetryConfig, SimulatedError, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
@@ -420,9 +420,11 @@ type ApprovalRequest = { kind: "intent"; view: ReturnType<typeof approvalViewMod
 const approvalQueue = new ApprovalQueue();
 
 /** A window's colour before its page paints — the page's own background
- *  (styles.css --bg, plow.co's taupe in every appearance), so nothing flashes
- *  while one opens. */
-const WINDOW_BACKGROUND = "#f4f4ef";
+ *  (styles.css --bg: plow.co's taupe, or its dark band in dark mode), so
+ *  nothing flashes while one opens. */
+function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? "#0e0e0b" : "#f4f4ef";
+}
 
 function openApprovalWindow(
   request: ApprovalRequest,
@@ -437,7 +439,7 @@ function openApprovalWindow(
       resizable: false,
       fullscreenable: false,
       title: "Plow Latch — Approve",
-      backgroundColor: WINDOW_BACKGROUND,
+      backgroundColor: windowBackground(),
       webPreferences: {
         preload: path.join(dirname, "preload.cjs"),
         contextIsolation: true,
@@ -526,7 +528,7 @@ function createMainWindow(): void {
     y: bounds?.y,
     title: "Plow Latch",
     titleBarStyle: "hiddenInset",
-    backgroundColor: WINDOW_BACKGROUND,
+    backgroundColor: windowBackground(),
     // Five labelled sections, the traffic lights and the connection line need
     // this much; narrower, they collide (the labels stay — a bare icon is a guess).
     minWidth: 780,
@@ -2074,6 +2076,14 @@ ipcMain.handle("updates:setAutoCheck", async (_e, on: boolean) => {
   settings.autoCheckUpdates = !!on;
   saveSettings(home, settings);
 });
+ipcMain.handle("settings:getAppearance", async () => appearanceOf(loadSettings(home).appearance));
+ipcMain.handle("settings:setAppearance", async (_e, value: unknown) => {
+  const settings = loadSettings(home);
+  settings.appearance = appearanceOf(value);
+  saveSettings(home, settings);
+  nativeTheme.themeSource = settings.appearance;
+  return settings.appearance;
+});
 ipcMain.handle("updates:setAutoInstall", async (_e, on: boolean) => {
   const settings = loadSettings(home);
   settings.autoInstallUpdates = !!on;
@@ -2290,6 +2300,13 @@ app.whenReady().then(async () => {
     encrypt: (plain) => electronSafeStorage.encryptString(plain).toString("base64"),
     decrypt: (cipher) => electronSafeStorage.decryptString(Buffer.from(cipher, "base64")),
   });
+  // Appearance before any window exists, so the first paint is already in
+  // the owner's mode; a switch while running repaints every window through
+  // its CSS, and the main window's own background follows. AFTER the codec:
+  // a settings read without it sees the login as unreadable, signs the owner
+  // out and queues that login for revocation.
+  nativeTheme.themeSource = appearanceOf(loadSettings(home).appearance);
+  nativeTheme.on("updated", () => mainWindow?.setBackgroundColor(windowBackground()));
   pendingRevokeRetrier = new PendingRevokeRetrier(
     home,
     (credential) => new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),

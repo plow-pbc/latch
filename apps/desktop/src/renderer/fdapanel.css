@@ -73,5 +73,21 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
 .fda-drag-hint span { font-size: 8px; font-weight: 300; }
 .fda-hand { width: 15px; height: 15px; }
 
+/* Dark mode. styles.css flips the tokens (--fg, --muted, --green-fg) on its
+   own; the translucent light surfaces above are what must flip here, or the
+   panel reads as a light card on a dark desktop. */
+@media (prefers-color-scheme: dark) {
+  .fda-panel {
+    background: rgba(20, 20, 19, 0.94);
+    border-color: rgba(244, 243, 236, 0.12);
+  }
+  .fda-close { background: rgba(244, 243, 236, 0.12); }
+  .fda-close:hover { background: rgba(244, 243, 236, 0.2); }
+  .fda-drag-tile {
+    background: rgba(244, 243, 236, 0.06);
+    border-color: rgba(244, 243, 236, 0.1);
+  }
+}
+
 /* Held still for anyone who has asked the system for less motion. */
 @media (prefers-reduced-motion: reduce) { .fda-arrow { animation: none; } }

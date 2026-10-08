@@ -317,6 +317,7 @@ async function setUp() {
   ipcMain.handle("capabilities:bannerSeen", async () => capabilities().view);
   ipcMain.handle("launch:get", async () => ({ supported: false, openAtLogin: false }));
   ipcMain.handle("power:getKeepAwake", async () => ({ enabled: false }));
+  ipcMain.handle("settings:getAppearance", async () => "system");
   ipcMain.handle("telemetry:get", async () => ({ enabled: true }));
   ipcMain.handle("ui:getTab", async () => "agents");
   ipcMain.handle("ui:setTab", async () => {});

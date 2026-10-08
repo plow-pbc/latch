@@ -113,10 +113,12 @@ async function sendTileImage() {
     const hint = clone.querySelector(".fda-drag-hint");
     if (hint) hint.style.display = "none";
     // On the panel the tile's translucent face sits over the panel's
-    // near-opaque surface; flatten that stack (fdapanel.css) so the floating
-    // tile keeps the on-panel look instead of going see-through over System
-    // Settings, light or dark.
-    clone.style.background = "rgb(252, 252, 250)";
+    // near-opaque surface; flatten that stack (fdapanel.css, per mode) so the
+    // floating tile keeps the on-panel look instead of going see-through over
+    // System Settings — and in dark mode stays dark under its light text.
+    clone.style.background = matchMedia("(prefers-color-scheme: dark)").matches
+      ? "rgb(33, 33, 32)"
+      : "rgb(252, 252, 250)";
     const svg =
       `<svg xmlns="http://www.w3.org/2000/svg" width="${rect.width}" height="${rect.height}">` +
       `<foreignObject width="100%" height="100%">` +

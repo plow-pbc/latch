@@ -174,6 +174,8 @@ contextBridge.exposeInMainWorld("domo", {
   updatesDismiss: () => ipcRenderer.invoke("updates:dismiss"),
   updatesSetAutoCheck: (on: boolean) => ipcRenderer.invoke("updates:setAutoCheck", on),
   updatesSetAutoInstall: (on: boolean) => ipcRenderer.invoke("updates:setAutoInstall", on),
+  appearanceGet: () => ipcRenderer.invoke("settings:getAppearance"),
+  appearanceSet: (value: string) => ipcRenderer.invoke("settings:setAppearance", value),
   onUpdatesChanged: (cb: () => void) => ipcRenderer.on("updates:changed", cb),
   // The menu-bar "Check for Updates…" lands the window on the Settings tab.
   onShowSettings: (cb: () => void) => ipcRenderer.on("ui:showSettings", cb),
