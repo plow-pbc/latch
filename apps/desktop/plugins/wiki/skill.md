@@ -30,6 +30,7 @@ fails with EPERM:
 - `plow_run_command(argv=["wiki", "validate", "--writer", "<writer>"])`
 - `plow_run_command(argv=["wiki", "index"], write_paths=["~/Plow/wiki"])`
 - `plow_run_command(argv=["wiki", "snapshot", "--author", "<your agent name>"], write_paths=["~/Plow/wiki", "~/Plow/wiki.git"])`
+- `plow_run_command(argv=["wiki", "restore", "--writer", "<writer>"], write_paths=["~/Plow/wiki", "~/Plow/wiki.git"])`
 
 A command that runs long returns `pending` with a handle: poll
 `plow_get_result(handle)` until it is ready, then call `plow_get_output` with
@@ -81,7 +82,9 @@ https://github.com/plow-pbc/plow-wiki#agent-skills
 Whichever agent runs the nightly calls, in order:
 `wiki validate --writer <your agent name>`, `wiki index`,
 `wiki snapshot --author <your agent name>`. `--writer` checks only the roots
-wiki.toml gives you: a page another writer owns is theirs to fix. A page that
-fails validation is named in the digest to the owner, never guessed at. If the wiki
+wiki.toml gives you: a page another writer owns is theirs to fix. A night that
+fails validation is not snapshotted: `wiki restore --writer <your agent name>`
+puts your roots back to the last snapshot, and the failing pages are named in
+the digest to the owner, never guessed at. If the wiki
 was unreachable (the owner's Mac asleep), the next digest says so: "no wiki
 refresh since <date>".

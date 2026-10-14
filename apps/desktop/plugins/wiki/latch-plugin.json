@@ -2,19 +2,19 @@
   "name": "wiki",
   "title": "Obsidian-style wiki",
   "summary": "A notebook your agents keep about the people and projects in your life.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "command": "wiki",
   "runtime": {
     "binaries": [
       {
         "name": "wiki",
         "url": {
-          "arm64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.1/wiki_0.2.1_darwin_arm64.tar.gz",
-          "x64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.1/wiki_0.2.1_darwin_amd64.tar.gz"
+          "arm64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.2/wiki_0.2.2_darwin_arm64.tar.gz",
+          "x64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.2/wiki_0.2.2_darwin_amd64.tar.gz"
         },
         "sha256": {
-          "arm64": "8c312fa630257ba7ea6e74ef5a66ada38cbb321ea2e0e648234d2afd95f299fd",
-          "x64": "7c9dc76c7ac8376e963a06a941d07b5c438c415a1ed7e7f5a4bd9e6f3011131c"
+          "arm64": "29e7d38f7a304b5e60908835ea6d2a0e10a08f32d729c17873f1894292bdcad9",
+          "x64": "6fd916551ceffd71166dce7a01dc313a60ca9c4e5949db7c109ca5aa48954cca"
         }
       }
     ]
@@ -23,7 +23,7 @@
   "env": { "WIKI_PATH": { "fixed": "${owner_home}/Plow/wiki" } },
   "argv": {
     "read": [["validate"], ["history"]],
-    "write": [["init"], ["index"], ["snapshot"]]
+    "write": [["init"], ["index"], ["snapshot"], ["restore"]]
   },
   "skill": "skill.md"
 }

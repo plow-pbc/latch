@@ -23,9 +23,10 @@ CLI never needs a `--wiki` flag (which the allowlist refuses anyway).
 | `wiki index` | Regenerates `index.md`, each root's declared tables, and the facts recall embeds — a write, per upstream: it rewrites files on disk |
 | `wiki snapshot` | Commits the wiki into `~/Plow/wiki.git` after a credential scan |
 | `wiki history <path>` | Commits touching a page |
+| `wiki restore --writer NAME` | Puts NAME's roots back to the last snapshot: files changed since restored, files created since deleted; other roots untouched |
 
-`validate` and `history` are read-only; `init`, `index` and `snapshot` write,
-per the manifest's `argv` allowlist (`init`/`index`/`snapshot` in
+`validate` and `history` are read-only; `init`, `index`, `snapshot` and `restore` write,
+per the manifest's `argv` allowlist (`init`/`index`/`snapshot`/`restore` in
 `argv.write`) — this matches upstream's own classification, which counts
 `index` as a write since it regenerates files rather than only reading them.
 
