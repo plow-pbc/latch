@@ -485,9 +485,9 @@ TOFU key pinning, broker holds agent private keys, no revocation UI.
 
 The transport is abstracted behind `Connection`/`ConnectionListener`/
 `ConnectionDialer` (with a `PeerTrustEvaluator`/`SPKIPin` security seam) so the
-networked transport is a drop-in below `LineRPC`. The step-by-step plan to build
-the network and security layers was **`docs/network-security-runbook.md`**, now
-marked superseded — it plans the removed broker and must not be executed.
+networked transport is a drop-in below `LineRPC`. The runbook that planned the
+network and security layers planned the removed broker; it is deleted, and git
+history has it.
 
 **Status (remote milestone) — historical; this records the broker-era security
 model, which was removed with the broker.** Runbook Phases 1–6 were implemented
