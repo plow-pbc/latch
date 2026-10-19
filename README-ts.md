@@ -249,7 +249,10 @@ account-flow state owner, and `src/plowApi.ts` is the only place that talks HTTP
 to Plow. The window (`renderer/onboarding.html`) draws whatever state the main
 process hands it and owns no copy of its own.
 
-- **Activation handoff:** Get started on Welcome calls `POST /v1/auth/activate`.
+- **Gatekeeper first:** setup opens on the Gatekeeper, before sign-in. Its live
+  verdicts come from Plow's public `POST /v1/latch/gatekeeper/demo`, which takes
+  no credential.
+- **Activation handoff:** Continue on the Gatekeeper calls `POST /v1/auth/activate`.
   Plow returns the display code, the destination number, and a main-process-only
   activation secret. The user sends the displayed `Plow Activate: …` message;
   the main process polls `POST /v1/auth/activate/redeem`, then calls

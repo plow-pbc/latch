@@ -27,9 +27,11 @@ import {
 } from "./onboardingSteps.js";
 
 /**
- * The verification sub-steps retain their existing mechanics. A successful
- * login moves straight to Privacy, which doubles as the confirmation screen
- * before the gatekeeper's instructions and the post-login plugin choice.
+ * The Gatekeeper comes first, before there is an account: the owner writes
+ * its instructions and watches them judged, then signs in. The verification
+ * sub-steps retain their existing mechanics. A successful login moves straight
+ * to Privacy, which doubles as the confirmation screen before the post-login
+ * plugin choice.
  *
  * The dotted screens come from `SETUP_STEPS`; `welcome` and `done` own no dot,
  * and `waiting` shares the activation screen's.
@@ -145,7 +147,7 @@ export interface OnboardingState {
   /** The plugins screen's pending choice. It is persisted only on Continue. */
   telemetryEnabled: boolean;
   /** The gatekeeper's instructions the step opens on. The owner's draft is
-   * saved (trimmed) only on Continue from that step. */
+   * saved (trimmed) only on Continue from that step, before sign-in. */
   purpose: string;
 }
 
@@ -240,6 +242,14 @@ export class Onboarding {
   async advance(draft?: unknown): Promise<OnboardingState> {
     if (this.busy) return this.state();
     if (this.step === "welcome") {
+      this.step = "gatekeeper";
+      return this.publish();
+    }
+    if (this.step === "gatekeeper") {
+      const settings = this.settings();
+      settings.agentPurpose = (typeof draft === "string" ? draft : this.purpose).trim();
+      this.save(settings);
+      this.purpose = settings.agentPurpose;
       // Returning from verification keeps the live activation and its watcher.
       // Re-entering therefore shows the same code without another network call.
       if (this.activation) {
@@ -249,14 +259,6 @@ export class Onboarding {
       return this.newActivationCode();
     }
     if (this.step === "privacy") {
-      this.step = "gatekeeper";
-      return this.publish();
-    }
-    if (this.step === "gatekeeper") {
-      const settings = this.settings();
-      settings.agentPurpose = (typeof draft === "string" ? draft : this.purpose).trim();
-      this.save(settings);
-      this.purpose = settings.agentPurpose;
       this.step = "plugins";
       return this.publish();
     }
@@ -314,7 +316,7 @@ export class Onboarding {
   /** Retry a mint only when the activation view is already waiting for one. */
   async begin(): Promise<OnboardingState> {
     // Renderer boot is intentionally a read-like no-op on the presentational
-    // steps. The first activation is minted only by Get started on Welcome.
+    // steps. The first activation is minted only by Continue on the Gatekeeper.
     if (this.step !== "activate" || this.activation) {
       return this.state();
     }
@@ -642,10 +644,10 @@ export class Onboarding {
     // The checkpoint rides THIS write, not `publish()`'s, because the step only
     // becomes `privacy` after the `relayInfo` await below — and a quit inside
     // that network call would otherwise leave a durable credential with no
-    // checkpoint, which `initialStep` reads as Plugins, skipping Privacy and
-    // Gatekeeper (so `agentPurpose` is never set). `checkpoint()` still owns
-    // every step change; this makes the one write that creates a durable
-    // credential atomic with the screen that credential implies.
+    // checkpoint, which `initialStep` reads as Plugins, skipping Privacy.
+    // `checkpoint()` still owns every step change; this makes the one write
+    // that creates a durable credential atomic with the screen that
+    // credential implies.
     accepted.onboardingResumeStep = "privacy";
     this.save(accepted);
     this.deps.applyAvailabilityDefault?.();
@@ -759,7 +761,7 @@ export class Onboarding {
     // does real harm: a throw after the credential lands (see
     // `finishWithSession`) unwinds through `run()`'s publish with the step
     // still on the code screen, and clearing there would drop the relaunch
-    // back on Plugins, skipping Privacy and Gatekeeper.
+    // back on Plugins, skipping Privacy.
     if (!isResumableStep(this.step)) return;
     const settings = this.settings();
     if (settings.onboardingResumeStep === this.step) return;

@@ -193,8 +193,8 @@ contextBridge.exposeInMainWorld("domo", {
   onboardingBack: (draft?: string) => ipcRenderer.invoke("onboarding:back", draft),
   onboardingSetTelemetry: (on: boolean) => ipcRenderer.invoke("onboarding:setTelemetry", on),
   gatekeeperPresets: () => ipcRenderer.invoke("onboarding:gatekeeperPresets"),
-  gatekeeperPreview: (preset: string, index: number, draft: string) =>
-    ipcRenderer.invoke("onboarding:gatekeeperPreview", preset, index, draft),
+  gatekeeperPreview: (preset: string, draft: string) =>
+    ipcRenderer.invoke("onboarding:gatekeeperPreview", preset, draft),
   // The renderer is sandboxed and cannot open a URL; main owns the `sms:` one,
   // so the renderer never has to build it or be trusted with it.
   onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
