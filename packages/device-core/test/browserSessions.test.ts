@@ -347,7 +347,7 @@ describe("file upload", () => {
     // Pinned to the document whose origin was checked.
     expect(sent.at(-1)).toEqual({
       id: sent.at(-1)!.id, action: "upload", selector: "input[type=file]", path: "/Users/o/clip.mov",
-      frame: 0, frame_token: "doc-top",
+      frame: 0, frame_token: "doc-top", origins: ["pizza.example"],
     });
     expect(ctx.events.filter((e) => e.event === "browser_command").at(-1)?.fields)
       .toMatchObject({ action: "upload", path: "/Users/o/clip.mov" });

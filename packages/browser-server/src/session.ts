@@ -12,7 +12,7 @@
  * A filled value is never traced, logged, or returned; masking keeps it out of
  * screenshots and `forms`.
  */
-import { JSONValue } from "@domo/protocol";
+import { JSONValue, originMatches } from "@domo/protocol";
 import {
   DOC_TOKEN_JS,
   FIELD_CAP_JS,
@@ -146,6 +146,15 @@ export function origin(url: string): string {
 export function asReceived(value: string, kind: string): string {
   const received = value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   return kind === "multiline" ? received : received.replace(/\n/g, "");
+}
+
+/** A url's host, or "" — which matches no approved origin. */
+function hostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
 }
 
 /** What `maxlength` counts: UTF-16 code units, not code points. */
@@ -538,11 +547,16 @@ export class Session {
       }
       if (el === null) continue;
       // A document the site swapped in since the device checked its origin is
-      // not the one approved, and gets nothing.
+      // not the one approved, and gets nothing. The token alone cannot say so —
+      // a page can plant the one it wants — so the frame's url, which the page
+      // cannot write, is held to the approved origins here too. A navigation
+      // after this detaches `el`, and setInputFiles then throws.
       const expected = cmd.frame_token;
       if (expected !== undefined && expected !== null && (await el.evaluate(DOC_TOKEN_JS)) !== expected) {
         return { ok: false, mask: "moved", frame: i };
       }
+      const origins = Array.isArray(cmd.origins) ? cmd.origins.map(String) : [];
+      if (!originMatches(hostname(fr.url()), origins)) return { ok: false, mask: "moved", frame: i };
       // 0 would mean no timeout at all to Playwright.
       await el.setInputFiles(String(cmd.path), { timeout: Math.max(1, deadline - now()) });
       await this.page.waitForTimeout(SETTLE_MS);

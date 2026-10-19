@@ -819,6 +819,8 @@ export class BrowserSessions {
               path: file,
               frame: typeof l.frame === "number" ? l.frame : 0,
               ...(typeof l.frame_token === "string" ? { frame_token: l.frame_token } : {}),
+              // Checked again by the browser at the moment the file goes in.
+              origins: s.origins,
             },
             { path: file },
           );
