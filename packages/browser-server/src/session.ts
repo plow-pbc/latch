@@ -517,25 +517,38 @@ export class Session {
    * Put a file on a page's file input without opening the native picker, which
    * nothing driving this browser can operate (#163). Sites hide the input
    * behind a button, so it is found attached, not visible. The device only
-   * sends a file the owner approved for this session.
+   * sends a file the owner approved for this session, to the frame whose
+   * origin it checked.
    */
   private async upload(cmd: Obj): Promise<Obj> {
     const sel = String(cmd.selector);
+    // One budget for finding the input and handing it the file, so the upload
+    // is over before the device stops waiting and lets go of the file.
+    const deadline = now() + DEFAULT_ACTION_TIMEOUT_MS;
     let last: Error | null = null;
     for (const [i, fr] of this.indexedFrames(cmd)) {
+      const left = deadline - now();
+      if (left <= 0) break;
       let el: HandleLike | null;
       try {
-        el = await fr.waitForSelector(sel, { state: "attached", timeout: DEFAULT_ACTION_TIMEOUT_MS });
+        el = await fr.waitForSelector(sel, { state: "attached", timeout: left });
       } catch (exc) {
         last = exc as Error;
         continue;
       }
       if (el === null) continue;
-      await el.setInputFiles(String(cmd.path), { timeout: DEFAULT_ACTION_TIMEOUT_MS });
+      // A document the site swapped in since the device checked its origin is
+      // not the one approved, and gets nothing.
+      const expected = cmd.frame_token;
+      if (expected !== undefined && expected !== null && (await el.evaluate(DOC_TOKEN_JS)) !== expected) {
+        return { ok: false, mask: "moved", frame: i };
+      }
+      // 0 would mean no timeout at all to Playwright.
+      await el.setInputFiles(String(cmd.path), { timeout: Math.max(1, deadline - now()) });
       await this.page.waitForTimeout(SETTLE_MS);
       return { ok: true, frame: i };
     }
-    throw last ?? new Error(`selector not found: ${sel}`);
+    throw last ?? new Error(`no frame has ${sel}`);
   }
 
   private async clickAt(cmd: Obj): Promise<Obj> {

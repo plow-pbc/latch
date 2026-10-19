@@ -797,10 +797,38 @@ export class BrowserSessions {
               error: `${file || "that file"} is not approved for upload in this session — ask for it with plow_browser_request's 'files'`,
             };
           }
-          const forwarded: { [k: string]: JSONValue } = { action, selector: p.get("selector").str ?? "", path: file };
-          const frame = p.get("frame").value;
-          if (frame !== null && frame !== undefined) forwarded.frame = frame;
-          return await this.serverAction(s, forwarded, { path: file });
+          // The file goes to whichever document holds the input, so THAT
+          // document must be on an approved origin, as a credential's must:
+          // an approved page can embed an iframe from anywhere.
+          const selector = p.get("selector").str ?? "";
+          const l = await s.host.sendAction({ action: "locate", selector });
+          const frameUrl = typeof l.frame_url === "string" ? l.frame_url : "";
+          const frameHost = hostOf(frameUrl);
+          if (frameHost === null || !originMatches(frameHost, s.origins)) {
+            this.audit("browser_scope_violation", { session: s.auditId, action, origin: frameHost ?? stripQuery(frameUrl) });
+            return {
+              status: "error",
+              error: `that file input is in a frame on ${frameHost ?? frameUrl}, outside the approved origins; nothing was uploaded`,
+            };
+          }
+          const sent = await this.serverAction(
+            s,
+            {
+              action,
+              selector,
+              path: file,
+              frame: typeof l.frame === "number" ? l.frame : 0,
+              ...(typeof l.frame_token === "string" ? { frame_token: l.frame_token } : {}),
+            },
+            { path: file },
+          );
+          if (jv(sent).get("mask").str === "moved") {
+            return {
+              status: "error",
+              error: "the frame holding that file input was replaced before the file went in; nothing was uploaded — screenshot and try again",
+            };
+          }
+          return sent;
         }
         case "goto": {
           const target = p.get("url").str ?? "";

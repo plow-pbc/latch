@@ -285,7 +285,10 @@ function handle(cmd) {
   if (a === "links") return { links: [] };
   if (a === "forms") return { forms: [{ tag: "input", name: "q", frame: 0, frame_url: current().url }] };
   if (a === "tables") return { tables: [] };
-  if (a === "upload") return { ok: true, frame: cmd.frame ?? 0 };
+  if (a === "upload") {
+    if (process.env.FAKE_FRAME_MOVED === "1" && cmd.frame_token) return { ok: false, mask: "moved", frame: cmd.frame ?? 0 };
+    return { ok: true, frame: cmd.frame ?? 0 };
+  }
   throw new Error("unknown action: " + a);
 }
 

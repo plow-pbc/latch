@@ -344,9 +344,41 @@ describe("file upload", () => {
     expect(r.get("status").str).toBe("completed");
     const sent = fs.readFileSync(ctx.cmdLog, "utf8").trim().split("\n")
       .map((line) => JSON.parse(line) as Record<string, JSONValue>);
-    expect(sent.at(-1)).toEqual({ id: sent.at(-1)!.id, action: "upload", selector: "input[type=file]", path: "/Users/o/clip.mov" });
+    // Pinned to the document whose origin was checked.
+    expect(sent.at(-1)).toEqual({
+      id: sent.at(-1)!.id, action: "upload", selector: "input[type=file]", path: "/Users/o/clip.mov",
+      frame: 0, frame_token: "doc-top",
+    });
     expect(ctx.events.filter((e) => e.event === "browser_command").at(-1)?.fields)
       .toMatchObject({ action: "upload", path: "/Users/o/clip.mov" });
+  });
+
+  // An approved page can embed an iframe from anywhere; the file must not go
+  // to a document on an origin nobody approved.
+  it("refuses an input that sits in a frame on an unapproved origin", async () => {
+    const s = await openSession(["pizza.example"]);
+    ctx.sessions.extend("int-2", s, [], [], ["/Users/o/clip.mov"]);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
+
+    const r = jv(await ctx.sessions.command(s, { action: "upload", selector: "#card-file", path: "/Users/o/clip.mov" }));
+
+    expect(r.get("status").str).toBe("error");
+    expect(r.get("error").str).toContain("payframe.example, outside the approved origins");
+    const sent = fs.readFileSync(ctx.cmdLog, "utf8").trim().split("\n").map((line) => JSON.parse(line).action);
+    expect(sent).not.toContain("upload");
+  });
+
+  it("says nothing was uploaded when the frame was swapped after its origin was checked", async () => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
+    const s = await openSession(["pizza.example"]);
+    ctx.sessions.extend("int-2", s, [], [], ["/Users/o/clip.mov"]);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
+
+    const r = jv(await ctx.sessions.command(s, { action: "upload", selector: "input[type=file]", path: "/Users/o/clip.mov" }));
+
+    expect(r.get("status").str).toBe("error");
+    expect(r.get("error").str).toContain("nothing was uploaded");
   });
 
   it("is locked out like any content action on an out-of-scope page", async () => {
