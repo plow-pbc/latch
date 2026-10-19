@@ -33,6 +33,7 @@ import {
   DATE_LABELS,
   DeviceAgent,
   LIVE_WEB_ROUTING,
+  MAX_BINARY_WRITE_BYTES,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
   PAYMENT_AUTHORIZATION,
@@ -351,12 +352,21 @@ export const TOOLS: ToolSpec[] = [
       "not for your own working files. They may be asked to approve, so this can return a " +
       "pending handle. Paths inside ~/Plow (the shared Plow folder — see the plow-folder " +
       "skill) approve automatically unless this Mac is set to deny everything; prefer it " +
-      "for files you produce for the user. " +
+      "for files you produce for the user. Text goes in 'content'; a binary file you hold — " +
+      "an attachment, an image, a PDF — goes in 'content_base64' as its bytes, never retyped. " +
       BLOCKED_COPY,
     inputSchema: {
       type: "object",
-      required: ["path", "content"],
-      properties: { path: { type: "string" }, content: { type: "string" }, goal: GOAL },
+      required: ["path"],
+      properties: {
+        path: { type: "string" },
+        content: { type: "string", description: "Text to write. Give this or content_base64." },
+        content_base64: {
+          type: "string",
+          description: `The file's bytes, base64 (up to ${MAX_BINARY_WRITE_BYTES} bytes decoded). Give this or content.`,
+        },
+        goal: GOAL,
+      },
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
@@ -365,15 +375,27 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const raw = requiredStr(a, "path");
       const path = await resolved(raw);
-      const content = requiredStr(a, "content");
-      // Refuse before encoding: the point of the ceiling is to bound the work,
-      // and encoding an oversized string is the work.
-      if (content.length > MAX_FILE_BYTES) {
-        throw new ToolError(
-          `content is ${content.length} bytes, over the ${MAX_FILE_BYTES}-byte single-call limit`,
-        );
+      const content = a.get("content").str;
+      const encoded = a.get("content_base64").str;
+      if ((content === null) === (encoded === null)) {
+        throw new ToolError("plow_write_file takes 'content' or 'content_base64', exactly one");
       }
-      const data = Buffer.from(content, "utf8");
+      // Refuse before encoding or decoding: the point of the ceiling is to
+      // bound the work, and converting an oversized string is the work.
+      const [size, limit] =
+        content !== null
+          ? [content.length, MAX_FILE_BYTES]
+          : [(encoded!.length / 4) * 3 - encoded!.match(/={0,2}$/)![0].length, MAX_BINARY_WRITE_BYTES];
+      if (size > limit) {
+        throw new ToolError(`content is ${size} bytes, over the ${limit}-byte single-call limit`);
+      }
+      // Node's decoder skips what it cannot read, so a garbled string would be
+      // written as a quietly different file. Refused instead. Flat checks: a
+      // repeated-group pattern overflows V8's stack on a few MiB.
+      if (encoded !== null && (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))) {
+        throw new ToolError("content_base64 is not base64 (A–Z, a–z, 0–9, + and /, padded with =)");
+      }
+      const data = content !== null ? Buffer.from(content, "utf8") : Buffer.from(encoded!, "base64");
       const response = await decideAndRun(
         ctx,
         progress,
