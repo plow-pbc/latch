@@ -250,6 +250,11 @@ export class Onboarding {
       settings.agentPurpose = (typeof draft === "string" ? draft : this.purpose).trim();
       this.save(settings);
       this.purpose = settings.agentPurpose;
+      // Signed in while the owner was back here revising: on to Privacy.
+      if (settings.relayCredential.trim()) {
+        this.step = "privacy";
+        return this.publish();
+      }
       // Returning from verification keeps the live activation and its watcher.
       // Re-entering therefore shows the same code without another network call.
       if (this.activation) {
@@ -489,10 +494,13 @@ export class Onboarding {
         // fresh on "Try Again" — not re-arming a code nothing can complete.
         this.activationSecret = null;
         this.stall();
-        const finished = await this.run(() => this.finishWithSession(result.token as string));
-        // Privacy is actionable while the relay connects. `run` clears busy and
-        // publishes before this await, and nothing after it mutates state.
-        if (finished.step === "privacy") await this.deps.startRelay();
+        let kept = false;
+        await this.run(async () => {
+          kept = await this.finishWithSession(result.token as string);
+        });
+        // The screen is actionable while the relay connects. `run` clears busy
+        // and publishes before this await, and nothing after it mutates state.
+        if (kept) await this.deps.startRelay();
         return;
       }
       if (generation !== this.pollGeneration) return;
@@ -625,8 +633,9 @@ export class Onboarding {
    *
    * The token the redeem handed back is what gets written. Runtime relay
    * startup owns the idempotent registration and retries it with backoff.
+   * Returns whether this Mac kept the session.
    */
-  private async finishWithSession(sessionToken: string): Promise<void> {
+  private async finishWithSession(sessionToken: string): Promise<boolean> {
     // A sign-out can land inside the account lookup, and it must stay signed out:
     // persisting past it would leave the account a live credential its owner
     // just retired. `pollGeneration` is bumped by every path that abandons this
@@ -661,11 +670,11 @@ export class Onboarding {
       this.retireSession(sessionToken, true);
       throw error;
     }
-    if (epoch !== this.pollGeneration) return;
+    if (epoch !== this.pollGeneration) return false;
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
     const settings = this.settings();
-    if (settings.relayCredential !== sessionToken) return;
+    if (settings.relayCredential !== sessionToken) return false;
     settings.accountUid = info.uid;
     // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
     // phone — the number that takes an activation text, not one anyone can be
@@ -682,8 +691,12 @@ export class Onboarding {
     this.activationStale = false;
     this.message = "";
     this.noteKind = "error";
-    this.step = "privacy";
+    // An owner who went Back to revise the Gatekeeper's instructions while the
+    // code was live stays there, so the revision is not lost; its Continue
+    // saves it and goes on to Privacy.
+    if (this.step !== "gatekeeper") this.step = "privacy";
     this.telemetryEnabled = settings.telemetryEnabled;
+    return true;
   }
 
   private retireSession(sessionToken: string, clearIfActive = false): void {

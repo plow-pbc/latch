@@ -223,43 +223,25 @@ describe("wizard steps around the existing verification flow", () => {
     },
   );
 
-  it("re-enters a live verification on the activation-code view", async () => {
+  it.each([
+    ["activate", false],
+    ["waiting", true],
+  ] as const)("re-enters a verification on its %s view", async (step, stale) => {
     const pendingWaits: Array<() => void> = [];
     const onboarding = build({
       wait: () => new Promise<void>((resolve) => pendingWaits.push(resolve)),
     });
-    const verify = await startActivation(onboarding);
-    const displayCode = verify.activation?.displayCode;
+    const shown = await startActivation(onboarding);
     onboarding.messagesOpened();
     expect((await onboarding.back()).step).toBe("gatekeeper");
 
+    if (stale) clock = shown.activation!.pollUntil + 1;
     pendingWaits.shift()!();
-    await settleUntil(() => plow.redeemCalls.length === 1);
+    await settleUntil(() => plow.redeemCalls.length === 1 && onboarding.state().activationStale === stale);
     const reentered = await onboarding.advance();
 
-    expect(reentered.step).toBe("activate");
-    expect(reentered.activation?.displayCode).toBe(displayCode);
-    expect(plow.activations).toHaveLength(1);
-    onboarding.reset();
-  });
-
-  it("re-enters a locally stale verification on its waiting view", async () => {
-    const pendingWaits: Array<() => void> = [];
-    const onboarding = build({
-      wait: () => new Promise<void>((resolve) => pendingWaits.push(resolve)),
-    });
-    const verify = await startActivation(onboarding);
-    const displayCode = verify.activation?.displayCode;
-    onboarding.messagesOpened();
-    await onboarding.back();
-
-    clock = verify.activation!.pollUntil + 1;
-    pendingWaits.shift()!();
-    await settleUntil(() => onboarding.state().activationStale);
-    const reentered = await onboarding.advance();
-
-    expect(reentered.step).toBe("waiting");
-    expect(reentered.activation?.displayCode).toBe(displayCode);
+    expect(reentered.step).toBe(step);
+    expect(reentered.activation?.displayCode).toBe(shown.activation?.displayCode);
     expect(plow.activations).toHaveLength(1);
     onboarding.reset();
   });
@@ -646,6 +628,23 @@ describe("the gatekeeper's instructions", () => {
 
     expect(onboarding.state().step).toBe("privacy");
     expect(loadSettings(home).agentPurpose).toBe("Allow my assistant to read my calendar.");
+  });
+
+  // The code stays live behind Back, so the text can land while the owner is
+  // revising; leaving the screen then would drop the revision unsaved.
+  it("keeps a revision made while the code was live, through a sign-in that lands meanwhile", async () => {
+    const onboarding = await toGatekeeper();
+    await onboarding.advance("Allow my assistant to read my calendar.");
+    expect((await onboarding.back()).step).toBe("gatekeeper");
+
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => started === 1);
+    expect(onboarding.state().step).toBe("gatekeeper");
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+
+    expect((await onboarding.advance("Allow my assistant to manage my calendar.")).step).toBe("privacy");
+    expect(loadSettings(home).agentPurpose).toBe("Allow my assistant to manage my calendar.");
+    expect(plow.activations).toHaveLength(1);
   });
 
   it("keeps an unsaved draft across Gatekeeper → Welcome → Gatekeeper", async () => {
