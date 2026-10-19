@@ -115,7 +115,10 @@ What the fill now tells you about it:
 - A **credential** fill is the case where that is decided for you: the value
   came out of the vault, so `fillSecret` refuses a field that changed it. It is
   rolled back under its mask first, and the error says what the rollback
-  achieved, naming any field the page would not empty.
+  achieved, naming any field the page would not empty. One exception: a stored
+  value whose only change is a line break the field cannot hold (the browser
+  adds **`dropped_breaks`**) completes, and its `credential_filled` audit event
+  carries `dropped_breaks: true`. A split code's box is still refused.
 - A value the field says it cannot hold is refused **before the node is
   touched**, answering `too_long` with the field's own cap, so the page is left
   exactly as it was found. Measured against what this node will actually

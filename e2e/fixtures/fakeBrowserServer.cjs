@@ -22,6 +22,8 @@
  *   FAKE_ALTERED=1           answer every fill ok, but holding something else
  *   FAKE_ALTERED_SELECTOR=s  same, but only for fills of that one selector —
  *                            how a test fails box three of a split fill
+ *   FAKE_DROPPED_BREAKS=1    answer every fill ok, holding the value minus
+ *                            the line breaks the field cannot hold
  *   FAKE_FRAME_MOVED=1       answer every masked fill "moved", the way the real
  *                            server does when the resolved node is in a
  *                            different document than the one approved
@@ -233,6 +235,12 @@ function handle(cmd) {
         process.env.FAKE_ALTERED_SELECTOR === String(cmd.selector))
     ) {
       return { ok: true, frame: cmd.frame ?? 0, altered: true, ...(cmd.mask ? { mask: "stylesheet" } : {}) };
+    }
+    if (process.env.FAKE_DROPPED_BREAKS === "1") {
+      return {
+        ok: true, frame: cmd.frame ?? 0, altered: true, dropped_breaks: true,
+        ...(cmd.mask ? { mask: "stylesheet" } : {}),
+      };
     }
     if (process.env.FAKE_FRAME_MOVED === "1" && cmd.frame_token) {
       return { ok: false, mask: "moved", frame: cmd.frame ?? 0 };

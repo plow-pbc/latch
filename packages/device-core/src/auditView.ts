@@ -913,6 +913,9 @@ function describeStep(e: JSONValue): AuditStep {
       break;
     case "credential_filled":
       text = `Credential typed into page: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} on ${ev.get("origin").str ?? ""}`;
+      // The stored value has a line break the field could not hold; worth
+      // fixing in the vault, though the fill itself went through.
+      if (ev.get("dropped_breaks").bool === true) text += " (without the line break the stored value has)";
       state = "ok";
       break;
     case "credential_fill_failed":

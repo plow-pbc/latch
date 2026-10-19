@@ -408,9 +408,19 @@ export class Session {
     return this.page.frames();
   }
 
-  /** `{altered:true}` when the field is not holding what was ASKED for. */
-  private async kept(el: HandleLike, wanted: string): Promise<Obj> {
-    return (await el.evaluate(HELD_MATCHES_JS, wanted)) ? {} : { altered: true };
+  /**
+   * `{altered:true}` when the field is not holding what was ASKED for, with
+   * `dropped_breaks` beside it when the only difference is the line breaks
+   * this kind of field cannot hold — what a person pasting the same value
+   * would have got. The caller decides whether that matters (#356).
+   */
+  private async kept(el: HandleLike, wanted: string, kind: string): Promise<Obj> {
+    if (await el.evaluate(HELD_MATCHES_JS, wanted)) return {};
+    const received = kind === "" || kind === "select" ? wanted : asReceived(wanted, kind);
+    if (received !== wanted && (await el.evaluate(HELD_MATCHES_JS, received))) {
+      return { altered: true, dropped_breaks: true };
+    }
+    return { altered: true };
   }
 
   /**
@@ -593,13 +603,13 @@ export class Session {
         }
         await before.dispose();
         this.rememberMasked(doc, sel);
-        return { ok: true, mask: state, frame: i, ...(await this.kept(el, String(cmd.value))) };
+        return { ok: true, mask: state, frame: i, ...(await this.kept(el, String(cmd.value), kind)) };
       }
       // Not a secret. The mark comes off AFTER the value is in, never before.
       await this.typeValue(el, String(cmd.value), kind);
       await el.evaluate(UNMASK_JS);
       this.forgetMasked(doc, sel);
-      return { ok: true, frame: i, ...(await this.kept(el, String(cmd.value))) };
+      return { ok: true, frame: i, ...(await this.kept(el, String(cmd.value), kind)) };
     }
     throw last ?? new Error(`selector not found: ${sel}`);
   }
