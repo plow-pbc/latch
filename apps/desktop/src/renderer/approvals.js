@@ -1,7 +1,3 @@
-/** The purpose field's own label, which carries its explanation with it. */
-export const PURPOSE_LABEL =
-  "What are agents for? The reviewer checks each request it sees against this.";
-
 /** An example that demonstrates both the work to allow and the boundary around it. */
 export const PURPOSE_PLACEHOLDER =
   "For example: Allow my assistant to manage Instacart grocery ordering and delivery tracking, including signing in to instacart.com with my saved login. Keep it out of everything else on this computer — no files, no other sites.";
