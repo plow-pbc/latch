@@ -101,13 +101,24 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     await browser.page.goto(`data:text/html,${encodeURIComponent(html)}`);
 
     await expect(session.handle({ action: "click", selector: "text=Send" })).rejects.toThrow(
-      /matches 2 elements[^]*0: <a> "Send and Request" \(visible\)\n {2}1: <button> "Send" \(visible\)/,
+      /matches 2 elements[^]*frame 0 #0: <a> "Send and Request" \(visible\)\n {2}frame 0 #1: <button> "Send" \(visible\)/,
     );
     expect(await browser.page.title()).toBe("");
     expect(browser.page.url()).not.toContain("#home");
 
     await session.handle({ action: "click", selector: 'role=button[name="Send"]' });
     expect(await browser.page.title()).toBe("SUBMITTED");
+  }, 30_000);
+
+  // A vault-filled contenteditable's secret IS its text, so a refusal that
+  // lists it names it without that text.
+  it("lists a concealed candidate without its text", async () => {
+    await browser.page.goto("data:text/html,<div id=note contenteditable></div><div>Plain</div>");
+    await session.handle({ action: "fill", selector: "#note", value: "hunter2", mask: true, frame: 0 });
+
+    const refusal = session.handle({ action: "click", selector: "div" });
+    await expect(refusal).rejects.toThrow(/<div> \[concealed\] \(visible\)/);
+    await expect(refusal).rejects.not.toThrow(/hunter2/);
   }, 30_000);
 
   it("actually masks a filled secret (would be UNMASKED with string scripts)", async () => {

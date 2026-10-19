@@ -487,60 +487,61 @@ export class Session {
         await this.page.waitForTimeout(SCAN_INTERVAL_MS);
       }
     }
+    // Several frames holding it is the same guess as several matches in one:
+    // a nav link up top and the Send button in an iframe each pass strictness
+    // on their own.
+    if (frames.length > 1) throw await this.ambiguous(frames, sel);
 
-    let last: Error | null = null;
-    for (let tried = 0; tried < frames.length; tried++) {
-      const [i, fr] = frames[tried];
-      const left = Math.floor((deadline - now()) / (frames.length - tried));
-      if (left <= 0) {
-        // The selector IS somewhere — the scan said so — but the budget went on
-        // waiting. Saying "not found" here would be false.
-        last = last ?? new Error(`found ${sel} with no time left to click it`);
-        break;
+    const [[i, fr]] = frames;
+    const left = deadline - now();
+    // The selector IS there — the scan said so — but the budget went on
+    // waiting. Saying "not found" here would be false.
+    if (left <= 0) throw new Error(`found ${sel} with no time left to click it`);
+    try {
+      // Strict: a selector that matches several elements is refused, never
+      // resolved to the first. `text=Send` takes any element whose text
+      // contains "send", and the first was a nav link — the click reported
+      // ok and the payment was never submitted (#338).
+      await fr.click(sel, { strict: true, timeout: left });
+    } catch (exc) {
+      if (String((exc as Error).message).includes("strict mode violation")) {
+        throw await this.ambiguous(frames, sel);
       }
-      try {
-        // Strict: a selector that matches several elements is refused, never
-        // resolved to the first. `text=Send` takes any element whose text
-        // contains "send", and the first was a nav link — the click reported
-        // ok and the payment was never submitted (#338).
-        await fr.click(sel, { strict: true, timeout: left });
-        await this.page.waitForTimeout(SETTLE_MS);
-        return { ok: true, frame: i };
-      } catch (exc) {
-        // An ambiguous selector is this click's answer. Trying the next frame
-        // would be the same guess one level up.
-        if (String((exc as Error).message).includes("strict mode violation")) {
-          throw await this.ambiguous(fr, sel, exc as Error);
-        }
-        last = exc as Error;
-      }
+      throw exc;
     }
-    throw last ?? new Error(`selector not found: ${sel}`);
+    await this.page.waitForTimeout(SETTLE_MS);
+    return { ok: true, frame: i };
   }
 
   /**
    * The refusal for a selector that matched several elements: the advice
-   * first, then candidates by match index with their tag, text and
+   * first, then candidates by frame and match index with their tag, text and
    * visibility, enough to write a selector that names one. Visible ones are
    * listed first: on PayPal's sign-in `text=Log In` matched eleven hidden
-   * elements ahead of the button. A page that changed since leaves
-   * Playwright's own refusal standing.
+   * elements ahead of the button. Playwright's own refusal is never passed
+   * on: it previews each element's text, a vault-filled one's included.
    */
-  private async ambiguous(fr: FrameLike, sel: string, refused: Error): Promise<Error> {
-    const found = await fr.$$(sel);
-    if (found.length < 2) return refused;
+  private async ambiguous(frames: [number, FrameLike][], sel: string): Promise<Error> {
     const described: string[] = [];
-    for (const [n, el] of found.slice(0, MAX_DESCRIBED).entries()) {
-      described.push(`  ${n}: ${String(await el.evaluate(CANDIDATE_JS))}`);
+    let total = 0;
+    for (const [i, fr] of frames) {
+      const found = await fr.$$(sel);
+      total += found.length;
+      for (const [n, el] of found.slice(0, MAX_DESCRIBED).entries()) {
+        described.push(`  frame ${i} #${n}: ${String(await el.evaluate(CANDIDATE_JS))}`);
+      }
+    }
+    if (total < 2) {
+      return new Error(`click refused: ${sel} matched several elements, and the page changed before they could be listed`);
     }
     const visible = described.filter((line) => line.endsWith("(visible)"));
     const shown = [...visible, ...described.filter((line) => !line.endsWith("(visible)"))];
     const lines = [
-      `click refused: ${sel} matches ${found.length} elements. Use a selector that names one, ` +
-        `e.g. role=button[name="..."] or button:has-text("..."), or click_at from a screenshot:`,
+      `click refused: ${sel} matches ${total} elements. Use a selector that names one, ` +
+        `e.g. role=button[name="..."] or button:has-text("..."), pass frame, or click_at from a screenshot:`,
       ...shown.slice(0, MAX_CANDIDATES),
     ];
-    if (found.length > MAX_CANDIDATES) lines.push(`  …and ${found.length - MAX_CANDIDATES} more`);
+    if (total > MAX_CANDIDATES) lines.push(`  …and ${total - MAX_CANDIDATES} more`);
     return new Error(lines.join("\n"));
   }
 

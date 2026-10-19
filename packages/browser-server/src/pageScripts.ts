@@ -83,16 +83,19 @@ export const TABLES_JS = (): any[] =>
 
 /**
  * One line naming a click candidate: `<tag> "text" (visible|hidden)`. Text only,
- * never `value` — a candidate can be a field the vault filled.
+ * never `value`, and no text at all from a candidate that is, sits inside or
+ * holds a field the vault filled: a filled contenteditable's secret IS its text.
  */
 export const CANDIDATE_JS = (el: El): string => {
+  const secret = el.closest("[data-domo-secret]") !== null || el.querySelector("[data-domo-secret]") !== null;
   const text = String(el.innerText || el.textContent || el.getAttribute("aria-label") || "")
     .replace(/\s+/g, " ")
     .trim();
   const shown =
     typeof el.checkVisibility === "function" ? el.checkVisibility() : el.getClientRects().length > 0;
   const short = text.length > 40 ? text.slice(0, 39) + "…" : text;
-  return `<${el.tagName.toLowerCase()}> ${JSON.stringify(short)} (${shown ? "visible" : "hidden"})`;
+  const named = secret ? "[concealed]" : JSON.stringify(short);
+  return `<${el.tagName.toLowerCase()}> ${named} (${shown ? "visible" : "hidden"})`;
 };
 
 /**

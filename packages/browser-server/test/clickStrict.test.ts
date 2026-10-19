@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { Session, type FrameLike, type HandleLike, type PageLike } from "../src/session.js";
 
-/** Playwright's own refusal for a strict click that matched several elements. */
-const STRICT = "frame.click: Error: strict mode violation: locator('text=Send') resolved to 2 elements";
+/** Playwright's own refusal for a strict click that matched several elements.
+ * It previews each element's text, so it must never reach the caller. */
+const STRICT =
+  "frame.click: Error: strict mode violation: locator('text=Send') resolved to 2 elements:\n" +
+  '    1) <div contenteditable data-domo-secret>hunter2</div>';
+
+const ADVICE =
+  'Use a selector that names one, e.g. role=button[name="..."] or button:has-text("..."), ' +
+  "pass frame, or click_at from a screenshot:";
 
 function candidate(line: string): HandleLike {
   return { evaluate: async () => line } as unknown as HandleLike;
@@ -23,6 +30,14 @@ function frame(o: { click?: () => Promise<void>; matches?: string[] } = {}) {
   } satisfies FrameLike;
   return { frame: self, click };
 }
+
+const strictFrame = (matches: string[]) =>
+  frame({
+    click: async () => {
+      throw new Error(STRICT);
+    },
+    matches,
+  });
 
 function page(frames: FrameLike[]) {
   const self = {
@@ -53,70 +68,60 @@ describe("click on a selector that matches several elements", () => {
     expect(f.click).toHaveBeenCalledWith("button", expect.objectContaining({ strict: true }));
   });
 
-  it("refuses, naming each candidate's tag, text and visibility", async () => {
-    const f = frame({
-      click: async () => {
-        throw new Error(STRICT);
-      },
+  it.each([
+    {
+      name: "several matches → each candidate's tag, text and visibility",
       matches: ['<a> "Send and Request" (visible)', '<button> "Send" (visible)'],
-    });
+      expected:
+        `click refused: text=Send matches 2 elements. ${ADVICE}\n` +
+        '  frame 0 #0: <a> "Send and Request" (visible)\n' +
+        '  frame 0 #1: <button> "Send" (visible)',
+    },
+    {
+      // PayPal's sign-in: `text=Log In` matched eleven hidden elements ahead of the button.
+      name: "twelve matches → five named, visible first, the rest counted",
+      matches: [...Array.from({ length: 11 }, (_, n) => `<p> "Log In help ${n}" (hidden)`), '<button> "Log In" (visible)'],
+      expected: /:\n {2}frame 0 #11: <button> "Log In" \(visible\)\n {2}frame 0 #0: <p> "Log In help 0" \(hidden\)\n[^]* {2}frame 0 #3: <p> "Log In help 3" \(hidden\)\n {2}…and 7 more$/,
+    },
+    {
+      name: "the page changed before they could be listed → Playwright's refusal is not passed on",
+      matches: ['<button> "Send" (visible)'],
+      expected: "click refused: text=Send matched several elements, and the page changed before they could be listed",
+    },
+  ])("$name", async ({ matches, expected }) => {
+    const refusal = new Session(page([strictFrame(matches).frame])).handle({ action: "click", selector: "text=Send" });
 
-    const refusal = new Session(page([f.frame])).handle({ action: "click", selector: "text=Send" });
-
-    await expect(refusal).rejects.toThrow(
-      'click refused: text=Send matches 2 elements. Use a selector that names one, ' +
-        'e.g. role=button[name="..."] or button:has-text("..."), or click_at from a screenshot:\n' +
-        '  0: <a> "Send and Request" (visible)\n' +
-        '  1: <button> "Send" (visible)',
-    );
+    await expect(refusal).rejects.toThrow(expected);
+    await expect(refusal).rejects.not.toThrow(/hunter2|Log In help 4/);
   });
 
-  it("names five candidates, visible first, and counts the rest, so the refusal fits the error cut", async () => {
-    // PayPal's sign-in: `text=Log In` matched eleven hidden elements ahead of the button.
-    const many = [...Array.from({ length: 11 }, (_, n) => `<p> "Log In help ${n}" (hidden)`), '<button> "Log In" (visible)'];
-    const f = frame({
-      click: async () => {
-        throw new Error(STRICT);
-      },
-      matches: many,
-    });
+  // Each frame passes strictness on its own; the click must not pick one.
+  it("refuses a selector held by two frames without clicking either", async () => {
+    const top = frame({ matches: ['<a> "Send and Request" (visible)'] });
+    const inner = frame({ matches: ['<button> "Send" (visible)'] });
 
-    const refusal = new Session(page([f.frame])).handle({ action: "click", selector: "text=Log In" });
+    const refusal = new Session(page([top.frame, inner.frame])).handle({ action: "click", selector: "text=Send" });
 
     await expect(refusal).rejects.toThrow(
-      /screenshot:\n {2}11: <button> "Log In" \(visible\)\n {2}0: <p> "Log In help 0" \(hidden\)\n[^]* {2}3: <p> "Log In help 3" \(hidden\)\n {2}…and 7 more$/,
+      `click refused: text=Send matches 2 elements. ${ADVICE}\n` +
+        '  frame 0 #0: <a> "Send and Request" (visible)\n' +
+        '  frame 1 #0: <button> "Send" (visible)',
     );
-    await expect(refusal).rejects.not.toThrow(/Log In help 4/);
+    expect(top.click).not.toHaveBeenCalled();
+    expect(inner.click).not.toHaveBeenCalled();
   });
 
-  it("does not try the next frame: that would be the same guess one level up", async () => {
-    const ambiguous = frame({
-      click: async () => {
-        throw new Error(STRICT);
-      },
-      matches: ['<a> "Send and Request" (visible)', '<button> "Send" (visible)'],
-    });
-    const single = frame();
+  it("clicks in the frame it is told to, when two hold the selector", async () => {
+    const top = frame({ matches: ['<a> "Send and Request" (visible)'] });
+    const inner = frame({ matches: ['<button> "Send" (visible)'] });
 
-    const refusal = new Session(page([ambiguous.frame, single.frame])).handle({
+    const result = await new Session(page([top.frame, inner.frame])).handle({
       action: "click",
       selector: "text=Send",
+      frame: 1,
     });
 
-    await expect(refusal).rejects.toThrow(/matches 2 elements/);
-    expect(single.click).not.toHaveBeenCalled();
-  });
-
-  it("keeps Playwright's refusal when the page no longer holds several matches", async () => {
-    const f = frame({
-      click: async () => {
-        throw new Error(STRICT);
-      },
-      matches: ['<button> "Send" (visible)'],
-    });
-
-    const refusal = new Session(page([f.frame])).handle({ action: "click", selector: "text=Send" });
-
-    await expect(refusal).rejects.toThrow(STRICT);
+    expect(result).toEqual({ ok: true, frame: 1 });
+    expect(top.click).not.toHaveBeenCalled();
   });
 });
