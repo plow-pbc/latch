@@ -13,7 +13,6 @@
  * executed; the column NAMES are still only as good as that inspection.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,19 +22,7 @@ import {
   CONTACTS_RECORD_PLACEHOLDER,
   contactsStorePath,
 } from "@domo/device-core";
-
-const SQLITE = "/usr/bin/sqlite3";
-
-const sqlite = (args: string[]): string =>
-  execFileSync(SQLITE, args, { encoding: "utf8", stdio: "pipe" });
-
-/** Run SQL read-only and hand back rows split into cells — `-list`, not the
- *  `-csv` the skill teaches, for the same reason the sibling tests choose it:
- *  the recipes under test are the SQL, not the output format. */
-function query(store: string, sql: string): string[][] {
-  const out = sqlite(["-readonly", "-list", store, sql]).trim();
-  return out === "" ? [] : out.split("\n").map((line) => line.split("|"));
-}
+import { query, sqlite } from "./recipeHarness.js";
 
 /** The CoreData label constant exactly as the live store spells it — the
  *  `$!` that made the incident's shell round mangle it. */
