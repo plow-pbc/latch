@@ -385,7 +385,7 @@ export const TOOLS: ToolSpec[] = [
       const [size, limit] =
         content !== null
           ? [content.length, MAX_FILE_BYTES]
-          : [(encoded!.length / 4) * 3 - (encoded!.match(/=*$/)![0].length), MAX_BINARY_WRITE_BYTES];
+          : [(encoded!.length / 4) * 3 - encoded!.match(/={0,2}$/)![0].length, MAX_BINARY_WRITE_BYTES];
       if (size > limit) {
         throw new ToolError(`content is ${size} bytes, over the ${limit}-byte single-call limit`);
       }

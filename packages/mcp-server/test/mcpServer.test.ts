@@ -604,6 +604,7 @@ describe("review findings", () => {
       ["neither", {}, /exactly one/],
       ["something that is not base64", { content_base64: "not base64!" }, /is not base64/],
       ["an unpadded tail", { content_base64: "YQ" }, /is not base64/],
+      ["a run of padding (quadratic under /=*$/)", { content_base64: "=".repeat(4 * 1024 * 1024 - 1) + "A" }, /is not base64/],
       ["a byte over the ceiling", { content_base64: Buffer.alloc(MAX_BINARY_WRITE_BYTES + 1).toString("base64") }, /single-call limit/],
     ])("refuses %s, writing nothing", async (_what, args, error) => {
       const { server } = makeServer();
