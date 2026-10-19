@@ -151,10 +151,12 @@ describe("PlowApi", () => {
       "plow_secret",
       "device/one",
       "mbp",
+      "0.1.202610052248",
     );
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices/device%2Fone");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ hostname: "mbp" });
+    // The build rides along so the device row says which Latch this Mac runs (#357).
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ hostname: "mbp", app_version: "0.1.202610052248" });
     expect(device).toEqual({ mcpUrl: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp" });
   });
 
