@@ -2220,7 +2220,7 @@ async function startRelay(): Promise<void> {
         accountUid = loadSettings(home).accountUid.trim()
           ? undefined
           : (await api.relayInfo(credential)).uid;
-        registered = await api.registerRelayDevice(credential, deviceId, hostName());
+        registered = await api.registerRelayDevice(credential, deviceId, hostName(), app.getVersion());
       } catch (error) {
         if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
         if (loadSettings(home).relayCredential.trim() !== credential) return;

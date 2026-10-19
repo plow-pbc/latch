@@ -532,17 +532,22 @@ export class PlowApi {
     return { uid: data.uid };
   }
 
+  /**
+   * Sent on every (re)connect, with this build's version, so the device row
+   * always says which Latch the Mac is running (#357).
+   */
   async registerRelayDevice(
     token: string,
     deviceId: string,
     hostname: string,
+    appVersion: string,
   ): Promise<RelayDeviceInfo> {
     const data = await this.call<{
       device_id?: unknown;
       mcp_url?: unknown;
     }>("PUT", `/v1/relay/devices/${encodeURIComponent(deviceId)}`, {
       token,
-      body: { hostname },
+      body: { hostname, app_version: appVersion },
     });
     if (
       data.device_id !== deviceId || typeof data.mcp_url !== "string"
