@@ -34,6 +34,7 @@ import {
   DeviceAgent,
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
+  MAX_HOLD_MS,
   MAX_FILE_BYTES,
   PAYMENT_AUTHORIZATION,
   SAFARI_HARD_BLOCK_ROUTING,
@@ -1043,6 +1044,12 @@ export const TOOLS: ToolSpec[] = [
         selector: { type: "string", description: "click / fill / fill_secret: CSS selector" },
         x: { type: "integer", description: "click_at: horizontal viewport coordinate from the latest screenshot" },
         y: { type: "integer", description: "click_at: vertical viewport coordinate from the latest screenshot" },
+        hold_ms: {
+          type: "integer",
+          description:
+            `click_at: press and hold the button this long before releasing, for a "press and hold" ` +
+            `check (capped at ${MAX_HOLD_MS}); the whole hold happens on this Mac`,
+        },
         selectors: {
           type: "array",
           items: { type: "string" },

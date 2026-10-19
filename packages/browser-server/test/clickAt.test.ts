@@ -2,8 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { Session, type PageLike } from "../src/session.js";
 
 function page(viewport: { width: number; height: number } | null = { width: 640, height: 480 }) {
+  const steps: string[] = [];
   const click = vi.fn(async () => {});
-  const waitForTimeout = vi.fn(async () => {});
+  const move = vi.fn(async (x: number, y: number) => void steps.push(`move ${x},${y}`));
+  const down = vi.fn(async () => void steps.push("down"));
+  const up = vi.fn(async () => void steps.push("up"));
+  const waitForTimeout = vi.fn(async (ms: number) => void steps.push(`wait ${ms}`));
   const self = {
     url: () => "https://example.test/verify",
     title: async () => "Verify",
@@ -17,10 +21,33 @@ function page(viewport: { width: number; height: number } | null = { width: 640,
     bringToFront: async () => {},
     waitForTimeout,
     viewportSize: () => viewport,
-    mouse: { click },
+    mouse: { click, move, down, up },
   } satisfies PageLike;
-  return { page: self, click, waitForTimeout };
+  return { page: self, click, waitForTimeout, steps };
 }
+
+describe("click_at with hold_ms", () => {
+  // #403: a "press and hold" check. The press, the hold and the release all
+  // happen here on the Mac, so no round trip to the agent lands mid-hold.
+  it("presses at the point, holds, releases, then settles", async () => {
+    const fake = page();
+
+    const result = await new Session(fake.page).handle({ action: "click_at", x: 120, y: 80, hold_ms: 4000 });
+
+    expect(result).toEqual({ ok: true, x: 120, y: 80, hold_ms: 4000 });
+    expect(fake.steps).toEqual(["move 120,80", "down", "wait 4000", "up", "wait 1000"]);
+    expect(fake.click).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -5, 1.5, "4000"])("refuses hold_ms %j without pressing", async (hold_ms) => {
+    const fake = page();
+
+    await expect(new Session(fake.page).handle({ action: "click_at", x: 120, y: 80, hold_ms } as never)).rejects.toThrow(
+      "hold_ms must be a positive whole number",
+    );
+    expect(fake.steps).toEqual([]);
+  });
+});
 
 describe("click_at", () => {
   it("clicks an integer point inside the current viewport and settles", async () => {

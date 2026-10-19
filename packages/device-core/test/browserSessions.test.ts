@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
-import { BrowserHostConfig, BrowserSessions, CredentialBroker } from "@domo/device-core";
+import { BrowserHostConfig, BrowserSessions, CredentialBroker, MAX_HOLD_MS } from "@domo/device-core";
 
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
@@ -296,6 +296,21 @@ describe("session lifecycle", () => {
     const failure = audited.at(-1)!.fields;
     expect(failure.timeout_ms).toBe(6000);
     expect(String(failure.error)).toContain("intercepts pointer events");
+  });
+
+  it.each([
+    [4000, 4000],
+    [60_000, MAX_HOLD_MS],
+    [0, 1],
+  ])("forwards a click_at hold of %j ms as %j, bounded like a wait", async (asked, sent) => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
+
+    await ctx.sessions.command(s, { action: "click_at", x: 120, y: 80, hold_ms: asked });
+
+    const forwarded = fs.readFileSync(ctx.cmdLog, "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line) as Record<string, JSONValue>);
+    expect(forwarded.at(-1)).toMatchObject({ action: "click_at", x: 120, y: 80, hold_ms: sent });
   });
 
   it("forwards and audits viewport coordinates for click_at", async () => {

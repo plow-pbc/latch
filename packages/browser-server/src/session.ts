@@ -78,7 +78,12 @@ export interface ContextLike {
   pages(): PageLike[];
 }
 export interface PageLike {
-  mouse: { click(x: number, y: number): Promise<void> };
+  mouse: {
+    click(x: number, y: number): Promise<void>;
+    move(x: number, y: number): Promise<void>;
+    down(): Promise<void>;
+    up(): Promise<void>;
+  };
   url(): string;
   title(): Promise<string>;
   frames(): FrameLike[];
@@ -522,9 +527,25 @@ export class Session {
     if ((x as number) < 0 || (y as number) < 0 || (x as number) >= viewport.width || (y as number) >= viewport.height) {
       throw new Error(`click_at coordinates (${x}, ${y}) are outside the ${viewport.width}x${viewport.height} viewport`);
     }
-    await this.page.mouse.click(x as number, y as number);
+    const hold = cmd.hold_ms;
+    if (hold === undefined || hold === null) {
+      await this.page.mouse.click(x as number, y as number);
+    } else {
+      if (!Number.isInteger(hold) || (hold as number) <= 0) {
+        throw new Error("click_at hold_ms must be a positive whole number of milliseconds");
+      }
+      // A "press and hold" check: press, hold, release — all of it here, on
+      // the Mac, so the agent's round trip never lands in the middle (#403).
+      await this.page.mouse.move(x as number, y as number);
+      await this.page.mouse.down();
+      try {
+        await this.page.waitForTimeout(hold as number);
+      } finally {
+        await this.page.mouse.up();
+      }
+    }
     await this.page.waitForTimeout(SETTLE_MS);
-    return { ok: true, x: x as number, y: y as number };
+    return { ok: true, x: x as number, y: y as number, ...(hold ? { hold_ms: hold as number } : {}) };
   }
 
   private async fill(cmd: Obj): Promise<Obj> {
