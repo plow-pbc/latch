@@ -338,7 +338,7 @@ export async function run(cmd: Record<string, Any>, o: RunOpts = {}): Promise<Pr
   try {
     const result = await session.handle({ ...cmd } as Record<string, never>);
     const keep: Record<string, Any> = {};
-    for (const k of ["ok", "mask", "frame", "frame_url", "frame_token", "cap", "altered"]) {
+    for (const k of ["ok", "mask", "frame", "frame_url", "frame_token", "cap", "altered", "dropped_breaks"]) {
       if (k in result) keep[k] = (result as Record<string, Any>)[k];
     }
     out.result = keep;

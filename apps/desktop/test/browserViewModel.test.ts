@@ -304,6 +304,17 @@ describe.each([
   });
 });
 
+it("says when a credential went in without the line break its stored value has", () => {
+  // #356: worth fixing in the vault, though the fill went through.
+  const browser = auditActivities([
+    { event: "browser_session_opened", intentId: "i4", session: "B", origins: ["google.com"], ts: "2026-08-10T12:00:00Z" },
+    { event: "credential_filled", session: "B", item: "L1", field: "password", origin: "google.com", dropped_breaks: true, ts: "2026-08-10T12:00:01Z" },
+  ] as JSONValue[]).find((a) => a.id === "browser:B")!;
+  const line = browser.timeline.find((step) => step.text.includes("Credential typed"))!;
+  expect(line.text).toContain("without the line break the stored value has");
+  expect(line.state).toBe("ok");
+});
+
 it("shows the eval gate firing without calling the session failed", () => {
   // The gate refusing a look at a filled credential is the design working, not
   // a fault — but the owner should still see what their agent went looking for.

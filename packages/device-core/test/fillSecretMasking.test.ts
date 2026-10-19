@@ -546,6 +546,29 @@ describe("fill_secret marking", () => {
     expect(JSON.stringify(result)).not.toContain("4111");
   });
 
+  // #356: one stored credential refused 4/4 as a "changed copy" while others
+  // filled fine. A stored value carrying a line break (an import leaves one)
+  // lands without it, because a single-line field cannot hold one — what a
+  // person pasting it would get. That is not the page rewriting the value.
+  it("fills a credential whose only difference is a line break the field cannot hold", async () => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_DROPPED_BREAKS: "1" });
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 1 });
+    expect(ctx.events.slice(before)).toEqual([
+      {
+        event: "credential_filled",
+        fields: {
+          session: audited(), item: "C1", field: "number", origin: "payframe.example", dropped_breaks: true,
+        },
+      },
+    ]);
+  });
+
   it("refuses when the browser says the frame moved", async () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
@@ -873,6 +896,19 @@ describe("fill_secret split across single-character boxes", () => {
         reason: "the boxes are not all in one document",
       },
     });
+  });
+
+  // A box holds one character; one that dropped its break holds nothing,
+  // so it did not take its part of the code.
+  it("still refuses a box that dropped its character as a line break", async () => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_DROPPED_BREAKS: "1" });
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selectors: BOXES, item: "L1", field: "totp",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain("#c1 rewrote the character");
   });
 
   it("clears the boxes it touched, under their mask, and owns up to one that would not empty", async () => {

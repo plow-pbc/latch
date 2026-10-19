@@ -122,6 +122,16 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     expect(shot.data_b64.length).toBeGreaterThan(0);
   }, 30_000);
 
+  // #356: a stored value carrying a line break (an import leaves one) lands
+  // without it, as a paste would, and says so apart from a page rewrite.
+  it("reports a dropped line break apart from a rewrite", async () => {
+    await browser.page.goto("data:text/html,<input id=pw2 type=password>");
+    const r = await session.handle({
+      action: "fill", selector: "#pw2", value: "Corr3ct-horse!\r\n", mask: true, frame: 0,
+    });
+    expect(r).toMatchObject({ ok: true, altered: true, dropped_breaks: true });
+  }, 30_000);
+
   it("gives real document tokens and typing kinds (not undefined)", async () => {
     await browser.page.goto("data:text/html,<input id=a type=text><textarea id=b></textarea>");
     const tok = await browser.page.evaluate(

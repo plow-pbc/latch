@@ -1349,6 +1349,7 @@ export class BrowserSessions {
           `page would not empty${mask ? " (what it kept stays masked on screen)" : ""}.`;
 
     let current = targets[0];
+    let droppedBreaks = false;
     try {
       for (let i = 0; i < targets.length; i++) {
         current = targets[i];
@@ -1405,7 +1406,12 @@ export class BrowserSessions {
         // does not judge whether that matters, because it cannot know what the
         // value means. Here it can: this came out of the vault, so a field that
         // changed it did not receive the credential, whatever its reason.
-        if (filled.altered === true) {
+        // Except a stored value whose only difference is a line break the
+        // field cannot hold — usually left by an import. The field holds what
+        // a person pasting that value would get, so the fill stands (#356).
+        if (boxes === null && filled.altered === true && filled.dropped_breaks === true) {
+          droppedBreaks = true;
+        } else if (filled.altered === true) {
           this.audit("credential_fill_failed", {
             session: s.auditId,
             item: itemId,
@@ -1540,6 +1546,7 @@ export class BrowserSessions {
       field,
       origin: frameHost,
       ...(boxes === null ? {} : { boxes: targets.length }),
+      ...(droppedBreaks ? { dropped_breaks: true } : {}),
     });
     return { status: "completed", ok: true, frame };
   }

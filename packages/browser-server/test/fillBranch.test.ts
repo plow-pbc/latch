@@ -30,7 +30,7 @@ describe("the server's fill branch, run directly", () => {
 
   it("does not refuse a value that only overflows before its break is dropped", async () => {
     const r = await run({ ...base, value: "one\ntwo" }, { maxLength: 6 });
-    expect(r.result).toEqual({ ok: true, frame: 0, altered: true });
+    expect(r.result).toEqual({ ok: true, frame: 0, altered: true, dropped_breaks: true });
   });
 
   it("refuses the same value at a textarea, which keeps its breaks", async () => {
@@ -55,6 +55,8 @@ describe("the server's fill branch, run directly", () => {
   it.each([
     { what: "strips a space out of a name", value: "Jon Doe", rewrites: (t: string) => t.replace(/ /g, "") },
     { what: "truncates what it was given", value: "hunter2", rewrites: (t: string) => t.slice(0, 4) },
+    // A break in the value does not make every change a dropped break.
+    { what: "truncates a value that also carries a break", value: "hunter2\r\n", rewrites: (t: string) => t.slice(0, 4) },
   ])("reports, without refusing, a field that $what", async ({ value, rewrites }) => {
     const r = await run({ ...base, value }, { rewrites });
     expect(r.result).toEqual({ ok: true, frame: 0, altered: true });
@@ -128,9 +130,13 @@ describe("the server's fill branch, run directly", () => {
     expect(r.result).toBeNull();
   });
 
+  // A dropped break is still `altered` — the field does not hold what was
+  // asked for — and says so on its own, so a vault fill can tell it from a
+  // page rewriting the value (#356).
   it.each([
     { what: "an input drops a break it cannot hold", value: "one\ntwo", typedLen: 6, altered: true },
     { what: "the same break as CR, which must not reach the keys", value: "one\rtwo", typedLen: 6, altered: true },
+    { what: "a trailing CRLF, the shape an import leaves", value: "onetwo\r\n", typedLen: 6, altered: true },
     { what: "a textarea keeps its break", value: "one\ntwo", typeable: "multiline", typedLen: 7, altered: false },
     { what: "a CRLF becomes one break", value: "one\r\ntwo", typeable: "multiline", typedLen: 7, altered: true },
   ])("$what", async ({ value, typeable, typedLen, altered }) => {
@@ -138,7 +144,7 @@ describe("the server's fill branch, run directly", () => {
     expect(r.trace).toContain("handle.type");
     expect(r.typed_has_cr).toBe(false);
     expect(r.typed_len).toBe(typedLen);
-    expect(r.result).toEqual({ ok: true, frame: 0, ...(altered ? { altered } : {}) });
+    expect(r.result).toEqual({ ok: true, frame: 0, ...(altered ? { altered, dropped_breaks: true } : {}) });
   });
 
   it("assigns a value carrying a tab in the typed tail", async () => {
