@@ -632,20 +632,29 @@ describe("the gatekeeper's instructions", () => {
 
   // The code stays live behind Back, so the text can land while the owner is
   // revising; leaving the screen then would drop the revision unsaved.
-  it("keeps a revision made while the code was live, through a sign-in that lands meanwhile", async () => {
-    const onboarding = await toGatekeeper();
-    await onboarding.advance("Allow my assistant to read my calendar.");
-    expect((await onboarding.back()).step).toBe("gatekeeper");
+  it.each(["gatekeeper", "welcome"] as const)(
+    "keeps a revision made while the code was live, through a sign-in that lands on %s",
+    async (where) => {
+      const revision = "Allow my assistant to manage my calendar.";
+      const onboarding = await toGatekeeper();
+      await onboarding.advance("Allow my assistant to read my calendar.");
+      expect((await onboarding.back()).step).toBe("gatekeeper");
+      if (where === "welcome") expect((await onboarding.back(revision)).step).toBe("welcome");
 
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    await settleUntil(() => started === 1);
-    expect(onboarding.state().step).toBe("gatekeeper");
-    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+      plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+      await settleUntil(() => started === 1);
+      expect(onboarding.state().step).toBe(where);
+      expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
 
-    expect((await onboarding.advance("Allow my assistant to manage my calendar.")).step).toBe("privacy");
-    expect(loadSettings(home).agentPurpose).toBe("Allow my assistant to manage my calendar.");
-    expect(plow.activations).toHaveLength(1);
-  });
+      if (where === "welcome") {
+        expect((await onboarding.advance()).step).toBe("gatekeeper");
+        expect(onboarding.state().purpose).toBe(revision);
+      }
+      expect((await onboarding.advance(revision)).step).toBe("privacy");
+      expect(loadSettings(home).agentPurpose).toBe(revision);
+      expect(plow.activations).toHaveLength(1);
+    },
+  );
 
   it("keeps an unsaved draft across Gatekeeper → Welcome → Gatekeeper", async () => {
     const onboarding = await toGatekeeper();

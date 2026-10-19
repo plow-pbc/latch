@@ -691,10 +691,11 @@ export class Onboarding {
     this.activationStale = false;
     this.message = "";
     this.noteKind = "error";
-    // An owner who went Back to revise the Gatekeeper's instructions while the
-    // code was live stays there, so the revision is not lost; its Continue
-    // saves it and goes on to Privacy.
-    if (this.step !== "gatekeeper") this.step = "privacy";
+    // Only the code screen moves on. An owner who went Back to revise the
+    // Gatekeeper's instructions while the code was live stays where they are,
+    // so the revision is not lost: the Gatekeeper's Continue saves it and goes
+    // on to Privacy.
+    if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
     this.telemetryEnabled = settings.telemetryEnabled;
     return true;
   }
