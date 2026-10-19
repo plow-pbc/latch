@@ -1,20 +1,14 @@
 /* The Gatekeeper screen's presentation, as pure functions so vitest reaches
-   them without a window. A row's reason is the reviewer's own sentence when it
-   reached a verdict, and a fixed one when it did not — nothing a provider said
-   about a failure is shown. */
+   them without a window. A row's reason is the demo's fixed reason for its
+   verdict, and a fixed one when it could not be checked. */
 
-export const NO_CREDITS_REASON =
-  "Your Plow account is out of credits, so the gatekeeper can't review right now.";
 export const UNAVAILABLE_REASON = "The gatekeeper didn't answer. Edit the text to try again.";
 
 export function rowView(result) {
   if (!result) return { state: "checking", reason: "" };
   if (result.verdict === "allow") return { state: "ok", reason: result.reason };
   if (result.verdict === "deny") return { state: "no", reason: result.reason };
-  return {
-    state: "unavailable",
-    reason: result.cause === "no_credits" ? NO_CREDITS_REASON : UNAVAILABLE_REASON,
-  };
+  return { state: "unavailable", reason: UNAVAILABLE_REASON };
 }
 
 const VERDICT_WORDS = { ok: "Allowed", no: "Denied", unavailable: "Couldn't check", checking: "Analyzing…" };

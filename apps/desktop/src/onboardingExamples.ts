@@ -12,7 +12,6 @@ import {
 export type PresetKey = "home" | "work";
 
 export interface Operation {
-  request: string;
   capabilities: Capability[];
 }
 
@@ -23,7 +22,6 @@ export interface OnboardingExample extends OnboardingQuery {
 /** `plow_run_command`'s shape: the exec, an explicit network flag, then reads. */
 function run(argv: string[], network: boolean, reads: string[] = []): Operation {
   return {
-    request: `run: ${argv.join(" ")}`,
     capabilities: [
       { kind: "process.exec", argv },
       { kind: "network", allowed: network },
@@ -43,11 +41,9 @@ const TAX_RETURN = `${PREVIEW_HOME}/Documents/tax-return-2025.pdf`;
 const OPERATIONS: Record<OnboardingQueryId, Operation> = {
   "family-calendar": run(["plow-gog", "calendar", "events", "list", "--all", "--from=now", "--days=7", "--json", "--results-only", "--sort=start", "--max=50"], true),
   "text-mary": {
-    request: "applescript: Messages",
     capabilities: [{ kind: "applescript", app: "Messages", bundleId: "com.apple.MobileSMS", script: SEND_IMESSAGE, args: ["Running late", "+15555550123"] }],
   },
   "instacart-sign-in": {
-    request: `widen browser session — browse: instacart.com, *.instacart.com; fill credentials: ${INSTACART_LOGIN}`,
     capabilities: [
       { kind: "browser", origins: ["instacart.com", "*.instacart.com"] },
       { kind: "credential", access: "fill", items: [INSTACART_LOGIN] },

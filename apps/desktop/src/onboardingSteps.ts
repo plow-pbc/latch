@@ -9,16 +9,19 @@
  *
  * `resumable: false` marks a screen a relaunch must NOT return to. The
  * activation screen holds a secret that lives in memory and never on disk, so
- * a resumed setup pointing at it would show a code it cannot redeem.
+ * a resumed setup pointing at it would show a code it cannot redeem. The
+ * Gatekeeper comes before sign-in: a relaunch without a credential opens on
+ * Welcome anyway, and one with a credential is past it — its Continue would
+ * mint a sign-in code for a Mac that is already signed in.
  *
  * Pure on purpose: `settings.ts` types its persisted field from here, and
  * `settings.ts` is read by the test suite and by `latch-smoke`, neither of
  * which runs Electron.
  */
 export const SETUP_STEPS = [
+  { step: "gatekeeper", resumable: false },
   { step: "activate", resumable: false },
   { step: "privacy", resumable: true },
-  { step: "gatekeeper", resumable: true },
   { step: "plugins", resumable: true },
   { step: "access", resumable: true },
   { step: "availability", resumable: true },
@@ -65,13 +68,13 @@ export function isResumableStep(step: string): step is ResumableStep {
  * Deliberately NOT derived from `SETUP_STEPS` order: it deviates in three of
  * six cases and the deviations are the point. There is no Back from Privacy —
  * the code behind it has been redeemed — Availability goes back past Access
- * because Access may have been skipped, and the activation screen goes back to
+ * because Access may have been skipped, and the Gatekeeper goes back to
  * Welcome, which owns no dot and is not in the table.
  */
 export function canGoBackFrom(step: string): SetupStep | "welcome" | null {
-  if (step === "activate" || step === "waiting") return "welcome";
-  if (step === "gatekeeper") return "privacy";
-  if (step === "plugins") return "gatekeeper";
+  if (step === "gatekeeper") return "welcome";
+  if (step === "activate" || step === "waiting") return "gatekeeper";
+  if (step === "plugins") return "privacy";
   if (step === "access" || step === "availability") return "plugins";
   return null;
 }

@@ -279,8 +279,9 @@ function invalidate(g, text) {
   return ++g.gen;
 }
 
-/** Review every row of the current deck against the text in the field. A newer
- * run supersedes an older one; its late answers are dropped, not cancelled. */
+/** Review every row of the current deck against the text in the field, in one
+ * call. A newer run supersedes an older one; its late answers are dropped, not
+ * cancelled. */
 function runPreview() {
   const g = gatekeeper;
   if (!g?.view) return;
@@ -288,16 +289,16 @@ function runPreview() {
   clearTimeout(g.timer);
   const text = g.text;
   const gen = invalidate(g, text);
-  g.results.forEach((_, i) => {
-    window.domo.gatekeeperPreview(g.deck, i, text)
-      .catch(() => ({ verdict: "ask", reason: "", cause: "unavailable" }))
-      .then((result) => {
-        if (gatekeeper !== g || g.gen !== gen) return;
+  window.domo.gatekeeperPreview(g.deck, text)
+    .catch(() => g.results.map(() => ({ verdict: "ask", reason: "" })))
+    .then((results) => {
+      if (gatekeeper !== g || g.gen !== gen) return;
+      results.forEach((result, i) => {
         g.results[i] = result;
         paintRow(i);
-        if (result.verdict === "allow") setTimeout(() => lightMac(g.view), 420);
       });
-  });
+      if (results.some((result) => result.verdict === "allow")) setTimeout(() => lightMac(g.view), 420);
+    });
 }
 
 function schedulePreview() {

@@ -27,9 +27,11 @@ import {
 } from "./onboardingSteps.js";
 
 /**
- * The verification sub-steps retain their existing mechanics. A successful
- * login moves straight to Privacy, which doubles as the confirmation screen
- * before the gatekeeper's instructions and the post-login plugin choice.
+ * The Gatekeeper comes first, before there is an account: the owner writes
+ * its instructions and watches them judged, then signs in. The verification
+ * sub-steps retain their existing mechanics. A successful login moves straight
+ * to Privacy, which doubles as the confirmation screen before the post-login
+ * plugin choice.
  *
  * The dotted screens come from `SETUP_STEPS`; `welcome` and `done` own no dot,
  * and `waiting` shares the activation screen's.
@@ -145,7 +147,7 @@ export interface OnboardingState {
   /** The plugins screen's pending choice. It is persisted only on Continue. */
   telemetryEnabled: boolean;
   /** The gatekeeper's instructions the step opens on. The owner's draft is
-   * saved (trimmed) only on Continue from that step. */
+   * saved (trimmed) only on Continue from that step, before sign-in. */
   purpose: string;
 }
 
@@ -240,6 +242,19 @@ export class Onboarding {
   async advance(draft?: unknown): Promise<OnboardingState> {
     if (this.busy) return this.state();
     if (this.step === "welcome") {
+      this.step = "gatekeeper";
+      return this.publish();
+    }
+    if (this.step === "gatekeeper") {
+      const settings = this.settings();
+      settings.agentPurpose = (typeof draft === "string" ? draft : this.purpose).trim();
+      this.save(settings);
+      this.purpose = settings.agentPurpose;
+      // Signed in while the owner was back here revising: on to Privacy.
+      if (settings.relayCredential.trim()) {
+        this.step = "privacy";
+        return this.publish();
+      }
       // Returning from verification keeps the live activation and its watcher.
       // Re-entering therefore shows the same code without another network call.
       if (this.activation) {
@@ -249,14 +264,6 @@ export class Onboarding {
       return this.newActivationCode();
     }
     if (this.step === "privacy") {
-      this.step = "gatekeeper";
-      return this.publish();
-    }
-    if (this.step === "gatekeeper") {
-      const settings = this.settings();
-      settings.agentPurpose = (typeof draft === "string" ? draft : this.purpose).trim();
-      this.save(settings);
-      this.purpose = settings.agentPurpose;
       this.step = "plugins";
       return this.publish();
     }
@@ -314,7 +321,7 @@ export class Onboarding {
   /** Retry a mint only when the activation view is already waiting for one. */
   async begin(): Promise<OnboardingState> {
     // Renderer boot is intentionally a read-like no-op on the presentational
-    // steps. The first activation is minted only by Get started on Welcome.
+    // steps. The first activation is minted only by Continue on the Gatekeeper.
     if (this.step !== "activate" || this.activation) {
       return this.state();
     }
@@ -487,10 +494,13 @@ export class Onboarding {
         // fresh on "Try Again" — not re-arming a code nothing can complete.
         this.activationSecret = null;
         this.stall();
-        const finished = await this.run(() => this.finishWithSession(result.token as string));
-        // Privacy is actionable while the relay connects. `run` clears busy and
-        // publishes before this await, and nothing after it mutates state.
-        if (finished.step === "privacy") await this.deps.startRelay();
+        let kept = false;
+        await this.run(async () => {
+          kept = await this.finishWithSession(result.token as string);
+        });
+        // The screen is actionable while the relay connects. `run` clears busy
+        // and publishes before this await, and nothing after it mutates state.
+        if (kept) await this.deps.startRelay();
         return;
       }
       if (generation !== this.pollGeneration) return;
@@ -623,8 +633,9 @@ export class Onboarding {
    *
    * The token the redeem handed back is what gets written. Runtime relay
    * startup owns the idempotent registration and retries it with backoff.
+   * Returns whether this Mac kept the session.
    */
-  private async finishWithSession(sessionToken: string): Promise<void> {
+  private async finishWithSession(sessionToken: string): Promise<boolean> {
     // A sign-out can land inside the account lookup, and it must stay signed out:
     // persisting past it would leave the account a live credential its owner
     // just retired. `pollGeneration` is bumped by every path that abandons this
@@ -642,10 +653,10 @@ export class Onboarding {
     // The checkpoint rides THIS write, not `publish()`'s, because the step only
     // becomes `privacy` after the `relayInfo` await below — and a quit inside
     // that network call would otherwise leave a durable credential with no
-    // checkpoint, which `initialStep` reads as Plugins, skipping Privacy and
-    // Gatekeeper (so `agentPurpose` is never set). `checkpoint()` still owns
-    // every step change; this makes the one write that creates a durable
-    // credential atomic with the screen that credential implies.
+    // checkpoint, which `initialStep` reads as Plugins, skipping Privacy.
+    // `checkpoint()` still owns every step change; this makes the one write
+    // that creates a durable credential atomic with the screen that
+    // credential implies.
     accepted.onboardingResumeStep = "privacy";
     this.save(accepted);
     this.deps.applyAvailabilityDefault?.();
@@ -659,11 +670,11 @@ export class Onboarding {
       this.retireSession(sessionToken, true);
       throw error;
     }
-    if (epoch !== this.pollGeneration) return;
+    if (epoch !== this.pollGeneration) return false;
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
     const settings = this.settings();
-    if (settings.relayCredential !== sessionToken) return;
+    if (settings.relayCredential !== sessionToken) return false;
     settings.accountUid = info.uid;
     // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
     // phone — the number that takes an activation text, not one anyone can be
@@ -680,8 +691,13 @@ export class Onboarding {
     this.activationStale = false;
     this.message = "";
     this.noteKind = "error";
-    this.step = "privacy";
+    // Only the code screen moves on. An owner who went Back to revise the
+    // Gatekeeper's instructions while the code was live stays where they are,
+    // so the revision is not lost: the Gatekeeper's Continue saves it and goes
+    // on to Privacy.
+    if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
     this.telemetryEnabled = settings.telemetryEnabled;
+    return true;
   }
 
   private retireSession(sessionToken: string, clearIfActive = false): void {
@@ -759,7 +775,7 @@ export class Onboarding {
     // does real harm: a throw after the credential lands (see
     // `finishWithSession`) unwinds through `run()`'s publish with the step
     // still on the code screen, and clearing there would drop the relaunch
-    // back on Plugins, skipping Privacy and Gatekeeper.
+    // back on Plugins, skipping Privacy.
     if (!isResumableStep(this.step)) return;
     const settings = this.settings();
     if (settings.onboardingResumeStep === this.step) return;

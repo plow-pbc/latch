@@ -523,6 +523,16 @@ export class PlowApi {
   }
 
   /**
+   * Judge example requests against the owner's own words on Plow's public
+   * Gatekeeper demo route — the one the web demo uses. No credential: setup
+   * shows the Gatekeeper before there is an account. The answer is returned
+   * as read; `gatekeeperPreview.ts` decides what it means.
+   */
+  async gatekeeperDemo(task: string, requests: unknown[]): Promise<unknown> {
+    return this.call<unknown>("POST", "/v1/latch/gatekeeper/demo", { body: { task, requests } });
+  }
+
+  /**
    * The only way to learn which account you just logged into: verify returns a
    * token and nothing else. Also the authority on the agent endpoint — the app
    * never constructs that URL itself.

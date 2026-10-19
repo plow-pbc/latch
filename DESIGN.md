@@ -146,11 +146,14 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   capability bounds, and the owner's own `agentPurpose` text, which rides in
   the system message. Nothing else does — no goal text, and no audit history:
   `reviewPolicy.ts` passes `history: []` deliberately, and `buildPrompt`
-  explains why. Setup's Gatekeeper step posts the same shape for five fixed
-  example requests with the owner's DRAFT instructions as the purpose, to
-  preview verdicts; their example paths use a fixed placeholder home, so no
-  local account name leaves the Mac. A preview is not an operation and records
-  nothing — no audit line, no telemetry, no rule.
+  explains why. Setup's Gatekeeper step comes before sign-in, so it does not
+  call the reviewer: it posts the owner's DRAFT instructions and the capability
+  bounds of five fixed example requests, with no credential, to Plow's public
+  Gatekeeper demo route (`/v1/latch/gatekeeper/demo`, the web demo's backend),
+  which answers ALLOWED or DENIED per request with fixed reasons. The example
+  paths use a fixed placeholder home, so no local account name leaves the Mac.
+  A preview is not an operation and records nothing — no audit line, no
+  telemetry, no rule.
   A separate, owner-invoked **Gatekeeper revision coach** may run after an AI
   Reviewer denial. It sees the current owner-authored purpose, the denied
   request, and its capability displays. Every persisted AI Reviewer denial in

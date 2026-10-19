@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  NO_CREDITS_REASON,
   presetFor,
   rowView,
   UNAVAILABLE_REASON,
@@ -10,10 +9,9 @@ import {
 describe("gatekeeper preview rows", () => {
   it.each([
     [null, { state: "checking", reason: "" }],
-    [{ verdict: "allow", reason: "Calendar is allowed." }, { state: "ok", reason: "Calendar is allowed." }],
-    [{ verdict: "deny", reason: "Never share documents." }, { state: "no", reason: "Never share documents." }],
-    [{ verdict: "ask", reason: "insufficient Plow balance", cause: "no_credits" }, { state: "unavailable", reason: NO_CREDITS_REASON }],
-    [{ verdict: "ask", reason: "reviewer timed out", cause: "unavailable" }, { state: "unavailable", reason: UNAVAILABLE_REASON }],
+    [{ verdict: "allow", reason: "Fits what you asked." }, { state: "ok", reason: "Fits what you asked." }],
+    [{ verdict: "deny", reason: "Outside what you asked, or you ruled it out." }, { state: "no", reason: "Outside what you asked, or you ruled it out." }],
+    [{ verdict: "ask", reason: "" }, { state: "unavailable", reason: UNAVAILABLE_REASON }],
     [{ verdict: "ask", reason: "anything" }, { state: "unavailable", reason: UNAVAILABLE_REASON }],
   ])("shows %j as %j", (result, view) => {
     expect(rowView(result)).toEqual(view);

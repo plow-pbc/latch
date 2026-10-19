@@ -232,6 +232,19 @@ describe("PlowApi", () => {
     });
   });
 
+  it("asks the public Gatekeeper demo without a credential", async () => {
+    const results = [{ verdict: "ALLOWED", reason: "Fits what you asked.", confidence: 1 }];
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { results, degraded: false } }]);
+    const requests = [{ capabilities: ["Run: gh pr view 482", "Network: allowed"] }];
+    const answer = await new PlowApi("https://api.plow.co", fetchImpl).gatekeeperDemo("Allow GitHub.", requests);
+
+    expect(calls[0].url).toBe("https://api.plow.co/v1/latch/gatekeeper/demo");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ task: "Allow GitHub.", requests });
+    // Setup shows the Gatekeeper before sign-in, so there is no credential to send.
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBeUndefined();
+    expect(answer).toEqual({ results, degraded: false });
+  });
+
   it("reads a redeem poll, including the verified answer that omits the token", async () => {
     const api = (answers: Array<{ status: number; body?: unknown }>) =>
       new PlowApi("https://api.plow.co", recordingFetch(answers).fetchImpl);
