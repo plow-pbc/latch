@@ -231,7 +231,8 @@ const GOAL = {
  * in device-core's executor.ts.
  */
 export const MACOS_TOOLING =
-  "mdfind for Spotlight search across their files, sips for images, " +
+  "mdfind for Spotlight search across their files, sips for images (convert, resize, HEIC to " +
+  "JPEG; not qlmanage, which sandboxes itself and so cannot start inside this one), " +
   "pbcopy and pbpaste for the clipboard, say to speak text aloud through the Mac's speakers " +
   "(a clean exit is not evidence it was heard — a Latch running in the wrong macOS login session " +
   "speaks silently, and the user quitting it and reopening it from Finder is the fix), " +

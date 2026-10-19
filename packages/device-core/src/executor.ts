@@ -4,7 +4,7 @@
  * mechanically derived from the approved capability set (DESIGN.md §6) and
  * must be BYTE-IDENTICAL to the Swift generator (fixtures/sbpl.json).
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -48,6 +48,35 @@ function quote(p: string): string {
   return '"' + p.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 }
 
+/**
+ * The names ImageIO gives its scratch in the per-user temp dir: `<UUID>`,
+ * first written as `.<UUID>-<random>` and renamed. Only those, and only
+ * directly in it — the folder itself is every app's (#372).
+ */
+function userTempPattern(dir: string): string {
+  const uuid = "[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+";
+  return "^" + dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/\\.?" + uuid + "(-[0-9A-Za-z]+)?$";
+}
+
+let userTempCache: string | null | undefined;
+
+/**
+ * The per-user temp dir macOS gives every process (`DARWIN_USER_TEMP_DIR`),
+ * resolved, or null where there is none. ImageIO writes there whatever TMPDIR
+ * says, so `sips` cannot convert an image without a way in (#372).
+ */
+export function userTempDir(): string | null {
+  if (userTempCache === undefined) {
+    try {
+      const dir = execFileSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8" }).trim();
+      userTempCache = dir === "" ? null : fs.realpathSync(dir);
+    } catch {
+      userTempCache = null;
+    }
+  }
+  return userTempCache;
+}
+
 export const SandboxProfile = {
   generate(args: {
     readPaths: string[];
@@ -59,6 +88,8 @@ export const SandboxProfile = {
     scratch: string;
     /** Home override for golden tests; defaults to the real home. */
     home?: string;
+    /** `userTempDir()`; null or absent grants nothing there. */
+    userTemp?: string | null;
   }): string {
     const lines: string[] = [
       "(version 1)",
@@ -88,6 +119,9 @@ export const SandboxProfile = {
       "(allow lsopen)",
       "(allow file-read-metadata)",
       "(allow file-ioctl)",
+      // An image decoder hands its pixels over in IOSurfaces. Without this
+      // `sips` turns a HEIC into a 308-byte JPEG and exits 0 (#372).
+      '(allow iokit-open (iokit-user-client-class "IOSurfaceRootUserClient"))',
       "(allow file-read* " +
         [
           ...READ_BOILERPLATE.map((p) => `(subpath ${quote(p)})`),
@@ -119,6 +153,7 @@ export const SandboxProfile = {
     for (const p of args.readPaths.map((p) => canonicalize(p))) {
       lines.push(`(allow file-read* (subpath ${quote(p)}))`);
     }
+    if (args.userTemp) lines.push(`(allow file-read* file-write* (regex #"${userTempPattern(args.userTemp)}"))`);
     if (args.network) {
       lines.push("(allow network*)");
       lines.push("(allow system-socket)");
@@ -160,13 +195,15 @@ export function sandboxGrants(
     appleEvents: boolean;
     scratch: string;
     home?: string;
+    userTemp?: string | null;
   },
   target: string,
 ): { read: boolean; write: boolean } {
   const under = isLexicallyWithin;
   const home = canonicalize(args.home ?? os.homedir());
   const writable = writableRoots(args);
-  const write = writable.some((root) => under(target, root));
+  const scratchFile = !!args.userTemp && new RegExp(userTempPattern(args.userTemp)).test(target);
+  const write = scratchFile || writable.some((root) => under(target, root));
   const readRoots = [...READ_BOILERPLATE, home, ...writable, ...args.readPaths, "/dev/fd"];
   const read = write || READ_LITERALS.includes(target) || readRoots.some((root) => under(target, root));
   return { read, write };
@@ -484,6 +521,7 @@ export class Executor {
       appleEvents: args.appleEvents,
       sysvSemaphores: args.sysvSemaphores ?? false,
       scratch: canonicalize(scratch),
+      userTemp: userTempDir(),
     };
     // No new writer over what a hold is about, while it is out.
     while (this.conflicts(writableRoots(profileArgs))) await new Promise<void>((wake) => this.holdWaiters.push(wake));

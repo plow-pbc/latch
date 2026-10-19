@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Executor, SandboxProfile } from "@domo/device-core";
+import { Executor, SandboxProfile, sandboxGrants, userTempDir } from "@domo/device-core";
 
 const fixturesDir = path.join(__dirname, "../../../fixtures");
 const sbpl = JSON.parse(fs.readFileSync(path.join(fixturesDir, "sbpl.json"), "utf8"));
@@ -43,6 +43,25 @@ describe("SBPL profile", () => {
       expect(profile).toBe(c.profile);
     });
   }
+
+  // #372: ImageIO writes its scratch into the per-user temp dir whatever
+  // TMPDIR says. Only its own names there, never the folder every app shares.
+  it("lets a run use ImageIO's scratch names in the user temp dir, and nothing else there", () => {
+    const base = { readPaths: [], writePaths: [], network: false, appleEvents: false, scratch: "/tmp/s" };
+    const T = "/private/var/folders/ab/cd.ef/T";
+
+    expect(SandboxProfile.generate(base)).not.toContain("/var/folders");
+    expect(SandboxProfile.generate({ ...base, userTemp: T })).toContain(
+      '(allow file-read* file-write* (regex #"^/private/var/folders/ab/cd\\.ef/T/\\.?' +
+        '[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+(-[0-9A-Za-z]+)?$"))',
+    );
+    const grants = (target: string) => sandboxGrants({ ...base, userTemp: T }, target);
+    expect(grants(`${T}/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`)).toEqual({ read: true, write: true });
+    expect(grants(`${T}/.ECCB9013-3BF2-4A5F-BF81-E46717EF7056-UY8M`)).toEqual({ read: true, write: true });
+    expect(grants(`${T}/com.apple.mail/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`).write).toBe(false);
+    expect(grants(`${T}/notes.txt`).write).toBe(false);
+    expect(grants(`/private/var/folders/ab/cdxef/T/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`).write).toBe(false);
+  });
 
   it("grants appleevent-send only when the capability was approved", () => {
     const base = { readPaths: [], writePaths: [], network: false, scratch: "/tmp/s" };
@@ -132,6 +151,30 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
     });
     expect(result.exitCode).not.toBe(0);
     expect(fs.existsSync(forbidden)).toBe(false);
+  });
+
+  // #372: under the old profile `sips` exited 13 ("Cannot write to file
+  // /var/folders/…/T/<uuid>"), and with only the temp grant it exited 0 on a
+  // 308-byte JPEG — the decoder needs IOSurface too. Checks the picture.
+  it("converts a HEIC to JPEG with sips", async () => {
+    const out = tempDir();
+    const heic = path.join(fixturesDir, "images", "tiny.heic");
+    const jpeg = path.join(out, "tiny.jpg");
+    const executor = new Executor(tempDir());
+
+    const result = await executor.run({
+      argv: ["/usr/bin/sips", "-s", "format", "jpeg", heic, "--out", jpeg],
+      readPaths: [path.dirname(heic)],
+      writePaths: [out],
+      network: false,
+      appleEvents: false,
+      waitMs: 30_000,
+    });
+
+    expect(userTempDir()).toMatch(/^\/private\/var\/folders\/.+\/T$/);
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    const size = execFileSync("/usr/bin/sips", ["-g", "pixelWidth", "-g", "pixelHeight", jpeg], { encoding: "utf8" });
+    expect(size).toMatch(/pixelWidth: 64\s+pixelHeight: 64/);
   });
 
   it("allows a write inside the approved scope", async () => {
