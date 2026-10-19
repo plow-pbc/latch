@@ -522,6 +522,12 @@ export class Session {
    * on: it previews each element's text, a vault-filled one's included.
    */
   private async ambiguous(frames: [number, FrameLike][], sel: string): Promise<Error> {
+    // The listing reads text, so it is a look at the page like a screenshot:
+    // a re-render can drop a filled field's mark, and only the mark keeps its
+    // text out of the list.
+    if ((await this.reapplyMasks()) !== null) {
+      return new Error(`click refused: ${sel} matches several elements, not listed while a field the vault filled is uncovered`);
+    }
     const described: string[] = [];
     let total = 0;
     for (const [i, fr] of frames) {

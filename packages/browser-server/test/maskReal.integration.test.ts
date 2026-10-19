@@ -119,6 +119,12 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     const refusal = session.handle({ action: "click", selector: "div" });
     await expect(refusal).rejects.toThrow(/<div> \[concealed\] \(visible\)/);
     await expect(refusal).rejects.not.toThrow(/hunter2/);
+
+    // A re-render that drops the mark: the listing puts it back first.
+    await browser.page.evaluate(() => (globalThis as any).document.getElementById("note").removeAttribute("data-domo-secret"));
+    const again = session.handle({ action: "click", selector: "div" });
+    await expect(again).rejects.toThrow(/<div> \[concealed\] \(visible\)/);
+    await expect(again).rejects.not.toThrow(/hunter2/);
   }, 30_000);
 
   it("actually masks a filled secret (would be UNMASKED with string scripts)", async () => {
