@@ -109,6 +109,13 @@ per-mailbox: a read on an id from a fan-out result passes
 \`--account <that item's account>\`. When replying, use the
 account that received the thread.
 
+**Forward with gog's own forward, never a retyped one.** \`gmail forward <message
+id>\` sends it, and \`gmail drafts forward <message id>\` saves it as a draft for
+the owner to review. Either one copies the original message and its attachments
+as they are, under any \`--note\` you put above it. A new message you write to
+look like a forward is a different message: your rewrite, without the original's
+attachments. The id is a MESSAGE id from \`thread get\`, not a search row's.
+
 **Timed calendar creates are conflict-gated.**
 
 A calendar conflict comes back to you rather than to an approval
@@ -205,6 +212,7 @@ Useful starting points:
     ["plow-gog","gmail","search","from:someone newer_than:30d","--max","10"]
     ["plow-gog","gmail","thread","get","<the row's id>","--sanitize-content","--account","<the item's account>","--json"]
     ["plow-gog","gmail","drafts","reply","<a message id from thread get>","--body","...","--account","..."]  # draft, for review
+    ["plow-gog","gmail","drafts","forward","<a message id from thread get>","--to","a@b.com","--note","...","--account","..."]  # forward as-is, for review
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--account","..."]
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--attach","/Users/me/Plow/receipt.jpg","--account","..."]
     ["plow-gog","calendar","calendars"]   # readable accounts' calendars; the shown ones carry selected

@@ -722,6 +722,13 @@ describe("the Google Workspace skill", () => {
     }
   });
 
+  // plow-agents#27: asked to save a forward, an agent rewrote the message and
+  // dressed it as one. gog forwards the original itself; the skill says so.
+  it("forwards with gog's own forward, never a retyped message", () => {
+    expect(GOG_SKILL.body).toContain("**Forward with gog's own forward, never a retyped one.**");
+    expect(GOG_SKILL.body).toContain('["plow-gog","gmail","drafts","forward","<a message id from thread get>"');
+  });
+
   it("reads a search row as a thread, not with the single-message get", () => {
     expect(GOG_SKILL.body).toContain("A `gmail search` row is a THREAD, not a message.");
     expect(GOG_SKILL.body).toContain('["plow-gog","gmail","thread","get","<the row\'s id>"');
