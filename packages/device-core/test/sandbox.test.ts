@@ -12,7 +12,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Executor, SandboxProfile, sandboxGrants, userTempDir, writableRoots } from "@domo/device-core";
+import crypto from "node:crypto";
+import { Executor, SandboxProfile, sandboxGrants, userTempDir } from "@domo/device-core";
 
 const fixturesDir = path.join(__dirname, "../../../fixtures");
 const sbpl = JSON.parse(fs.readFileSync(path.join(fixturesDir, "sbpl.json"), "utf8"));
@@ -52,8 +53,8 @@ describe("SBPL profile", () => {
 
     expect(SandboxProfile.generate(base)).not.toContain("/var/folders");
     expect(SandboxProfile.generate({ ...base, userTemp: T })).toContain(
-      '(allow file-read* file-write* (regex #"^/private/var/folders/ab/cd\\.ef/T/\\.?' +
-        '[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+(-[0-9A-Za-z]+)?$"))',
+      '(allow file-read* file-write* (require-all (regex #"^/private/var/folders/ab/cd\\.ef/T/\\.?' +
+        '[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+(-[0-9A-Za-z]+)?$") (vnode-type REGULAR-FILE)))',
     );
     const grants = (target: string) => sandboxGrants({ ...base, userTemp: T }, target);
     expect(grants(`${T}/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`)).toEqual({ read: true, write: true });
@@ -61,9 +62,6 @@ describe("SBPL profile", () => {
     expect(grants(`${T}/com.apple.mail/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`).write).toBe(false);
     expect(grants(`${T}/notes.txt`).write).toBe(false);
     expect(grants(`/private/var/folders/ab/cdxef/T/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`).write).toBe(false);
-    // Tracking is conservative where the profile is narrow: a run can replace a
-    // UUID file there, so a file op must not open anything in it by name.
-    expect(writableRoots({ ...base, userTemp: T })).toContain(T);
   });
 
   it("grants appleevent-send only when the capability was approved", () => {
@@ -180,19 +178,29 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
     expect(size).toMatch(/pixelWidth: 64\s+pixelHeight: 64/);
   });
 
-  it("holds the user temp dir as mutable while a run is alive", async () => {
+  // A symlink, directory or hard link at one of those names would send an
+  // unsandboxed file operation somewhere else; the grant is for regular files.
+  it.each([
+    ["a symlink", "ln -s /etc/passwd"],
+    ["a directory", "mkdir"],
+    ["a hard link", `ln ${path.join(fixturesDir, "images", "tiny.heic")}`],
+  ])("cannot put %s at an ImageIO name in the user temp dir", async (_what, make) => {
+    const name = path.join(userTempDir()!, crypto.randomUUID().toUpperCase());
+    // A regression would leave it in a folder every app shares.
+    cleanups.push(() => fs.rmSync(name, { recursive: true, force: true }));
     const executor = new Executor(tempDir());
+
     const result = await executor.run({
-      argv: ["/bin/sleep", "2"],
-      readPaths: [],
+      argv: ["/bin/sh", "-c", `${make} ${name}`],
+      readPaths: [fixturesDir],
       writePaths: [],
       network: false,
       appleEvents: false,
-      waitMs: 50,
+      waitMs: 10_000,
     });
 
-    expect(result.running).toBe(true);
-    expect(executor.mutableRoots()).toContain(userTempDir());
+    expect(result.exitCode).not.toBe(0);
+    expect(fs.existsSync(name) || fs.lstatSync(name, { throwIfNoEntry: false }) !== undefined).toBe(false);
   });
 
   it("allows a write inside the approved scope", async () => {

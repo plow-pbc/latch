@@ -153,7 +153,13 @@ export const SandboxProfile = {
     for (const p of args.readPaths.map((p) => canonicalize(p))) {
       lines.push(`(allow file-read* (subpath ${quote(p)}))`);
     }
-    if (args.userTemp) lines.push(`(allow file-read* file-write* (regex #"${userTempPattern(args.userTemp)}"))`);
+    // Regular files only: a symlink, directory or hard link there could send
+    // an unsandboxed file operation somewhere else, and none can be made.
+    if (args.userTemp) {
+      lines.push(
+        `(allow file-read* file-write* (require-all (regex #"${userTempPattern(args.userTemp)}") (vnode-type REGULAR-FILE)))`,
+      );
+    }
     if (args.network) {
       lines.push("(allow network*)");
       lines.push("(allow system-socket)");
@@ -201,9 +207,7 @@ export function sandboxGrants(
 ): { read: boolean; write: boolean } {
   const under = isLexicallyWithin;
   const home = canonicalize(args.home ?? os.homedir());
-  // The temp dir is a root for tracking only; what the profile allows there is
-  // the pattern below, not the folder.
-  const writable = writableRoots({ ...args, userTemp: null });
+  const writable = writableRoots(args);
   const scratchFile = !!args.userTemp && new RegExp(userTempPattern(args.userTemp)).test(target);
   const write = scratchFile || writable.some((root) => under(target, root));
   const readRoots = [...READ_BOILERPLATE, home, ...writable, ...args.readPaths, "/dev/fd"];
@@ -223,16 +227,12 @@ export function writableRoots(args: {
   appleEvents: boolean;
   scratch: string;
   home?: string;
-  userTemp?: string | null;
 }): string[] {
   const home = canonicalize(args.home ?? os.homedir());
   const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
     (p) => home + "/" + p,
   );
-  // The whole temp dir, conservatively: a run can replace a UUID-named file
-  // in it, so nothing there is opened by name while the run may be alive.
-  const temp = args.userTemp ? [args.userTemp] : [];
-  return [args.scratch, ...args.writePaths, ...temp].concat(isReapable(args) ? [] : housekeeping);
+  return [args.scratch, ...args.writePaths].concat(isReapable(args) ? [] : housekeeping);
 }
 
 export class ExecutorError extends Error {}
