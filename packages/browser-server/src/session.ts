@@ -520,21 +520,22 @@ export class Session {
    * listed first: on PayPal's sign-in `text=Log In` matched eleven hidden
    * elements ahead of the button. Playwright's own refusal is never passed
    * on: it previews each element's text, a vault-filled one's included.
+   *
+   * The text is read out of the page the way `eval` reads it, so it follows
+   * eval's gate: while any page of the session holds a value the vault
+   * filled, candidates are named without their text. A mark can be lost to
+   * a re-render and a filled field's selector can stop matching it, so only
+   * the ledger is trusted to say no secret is on the page.
    */
   private async ambiguous(frames: [number, FrameLike][], sel: string): Promise<Error> {
-    // The listing reads text, so it is a look at the page like a screenshot:
-    // a re-render can drop a filled field's mark, and only the mark keeps its
-    // text out of the list.
-    if ((await this.reapplyMasks()) !== null) {
-      return new Error(`click refused: ${sel} matches several elements, not listed while a field the vault filled is uncovered`);
-    }
+    const withText = this.pages.every((p) => (this.masked.get(p)?.size ?? 0) === 0);
     const described: string[] = [];
     let total = 0;
     for (const [i, fr] of frames) {
       const found = await fr.$$(sel);
       total += found.length;
       for (const [n, el] of found.slice(0, MAX_DESCRIBED).entries()) {
-        described.push(`  frame ${i} #${n}: ${String(await el.evaluate(CANDIDATE_JS))}`);
+        described.push(`  frame ${i} #${n}: ${String(await el.evaluate(CANDIDATE_JS, withText))}`);
       }
     }
     if (total < 2) {
@@ -543,7 +544,9 @@ export class Session {
     const visible = described.filter((line) => line.endsWith("(visible)"));
     const shown = [...visible, ...described.filter((line) => !line.endsWith("(visible)"))];
     const lines = [
-      `click refused: ${sel} matches ${total} elements. Use a selector that names one, ` +
+      `click refused: ${sel} matches ${total} elements` +
+        (withText ? "" : " (no text shown while a field the vault filled holds a value)") +
+        `. Use a selector that names one, ` +
         `e.g. role=button[name="..."] or button:has-text("..."), pass frame, or click_at from a screenshot:`,
       ...shown.slice(0, MAX_CANDIDATES),
     ];

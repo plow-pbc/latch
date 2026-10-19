@@ -11,8 +11,11 @@ const ADVICE =
   'Use a selector that names one, e.g. role=button[name="..."] or button:has-text("..."), ' +
   "pass frame, or click_at from a screenshot:";
 
+/** A match that answers CANDIDATE_JS: its line, without the text when told. */
 function candidate(line: string): HandleLike {
-  return { evaluate: async () => line } as unknown as HandleLike;
+  return {
+    evaluate: async (_fn: unknown, withText: unknown) => (withText === false ? line.replace(/ ".*"/, "") : line),
+  } as unknown as HandleLike;
 }
 
 function frame(o: { click?: () => Promise<void>; matches?: string[] } = {}) {
@@ -109,6 +112,27 @@ describe("click on a selector that matches several elements", () => {
     );
     expect(top.click).not.toHaveBeenCalled();
     expect(inner.click).not.toHaveBeenCalled();
+  });
+
+  // A filled contenteditable's secret is its text, and neither its mark nor
+  // its selector can be trusted to still find it, so while the ledger holds
+  // anything the list carries no text at all — eval's own gate.
+  it("names candidates without their text while a field the vault filled holds a value", async () => {
+    const p = page([strictFrame(['<div> "hunter2" (visible)', '<div> "Plain" (visible)']).frame]);
+    const session = new Session(p);
+    // The ledger a masked fill leaves on this document (fillBranch.test.ts
+    // covers how it gets there).
+    const ledger = session as unknown as { masked: Map<PageLike, Set<string>>; seenDocument: Map<PageLike, string> };
+    ledger.seenDocument.set(p, "doc-1");
+    ledger.masked.set(p, new Set(["doc-1:[contenteditable]:empty"]));
+
+    const refusal = session.handle({ action: "click", selector: "div" });
+
+    await expect(refusal).rejects.toThrow(
+      "click refused: div matches 2 elements (no text shown while a field the vault filled holds a value). " +
+        `${ADVICE}\n  frame 0 #0: <div> (visible)\n  frame 0 #1: <div> (visible)`,
+    );
+    await expect(refusal).rejects.not.toThrow(/hunter2/);
   });
 
   it("clicks in the frame it is told to, when two hold the selector", async () => {

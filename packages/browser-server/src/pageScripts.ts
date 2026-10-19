@@ -82,20 +82,20 @@ export const TABLES_JS = (): any[] =>
   }));
 
 /**
- * One line naming a click candidate: `<tag> "text" (visible|hidden)`. Text only,
- * never `value`, and no text at all from a candidate that is, sits inside or
- * holds a field the vault filled: a filled contenteditable's secret IS its text.
+ * One line naming a click candidate: `<tag> "text" (visible|hidden)`, or
+ * `<tag> (visible|hidden)` when the caller says text may not be shown. Text
+ * only, never `value`.
  */
-export const CANDIDATE_JS = (el: El): string => {
-  const secret = el.closest("[data-domo-secret]") !== null || el.querySelector("[data-domo-secret]") !== null;
+export const CANDIDATE_JS = (el: El, withText: boolean): string => {
+  const shown =
+    typeof el.checkVisibility === "function" ? el.checkVisibility() : el.getClientRects().length > 0;
+  const state = `(${shown ? "visible" : "hidden"})`;
+  if (!withText) return `<${el.tagName.toLowerCase()}> ${state}`;
   const text = String(el.innerText || el.textContent || el.getAttribute("aria-label") || "")
     .replace(/\s+/g, " ")
     .trim();
-  const shown =
-    typeof el.checkVisibility === "function" ? el.checkVisibility() : el.getClientRects().length > 0;
   const short = text.length > 40 ? text.slice(0, 39) + "…" : text;
-  const named = secret ? "[concealed]" : JSON.stringify(short);
-  return `<${el.tagName.toLowerCase()}> ${named} (${shown ? "visible" : "hidden"})`;
+  return `<${el.tagName.toLowerCase()}> ${JSON.stringify(short)} ${state}`;
 };
 
 /**

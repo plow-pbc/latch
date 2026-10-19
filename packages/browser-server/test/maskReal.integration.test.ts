@@ -110,21 +110,19 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     expect(await browser.page.title()).toBe("SUBMITTED");
   }, 30_000);
 
-  // A vault-filled contenteditable's secret IS its text, so a refusal that
-  // lists it names it without that text.
-  it("lists a concealed candidate without its text", async () => {
-    await browser.page.goto("data:text/html,<div id=note contenteditable></div><div>Plain</div>");
-    await session.handle({ action: "fill", selector: "#note", value: "hunter2", mask: true, frame: 0 });
+  // A vault-filled contenteditable's secret IS its text. Its selector stops
+  // matching once filled (`:empty`) and a re-render can drop its mark, so the
+  // list goes by the ledger: no text while a filled value is held.
+  it("lists candidates without text while a concealed value is held", async () => {
+    await browser.page.goto("data:text/html,<div contenteditable></div><div>Plain</div>");
+    await session.handle({ action: "fill", selector: "[contenteditable]:empty", value: "hunter2", mask: true, frame: 0 });
+    await browser.page.evaluate(() =>
+      (globalThis as any).document.querySelector("[contenteditable]").removeAttribute("data-domo-secret"),
+    );
 
     const refusal = session.handle({ action: "click", selector: "div" });
-    await expect(refusal).rejects.toThrow(/<div> \[concealed\] \(visible\)/);
+    await expect(refusal).rejects.toThrow(/no text shown[^]*frame 0 #0: <div> \(visible\)/);
     await expect(refusal).rejects.not.toThrow(/hunter2/);
-
-    // A re-render that drops the mark: the listing puts it back first.
-    await browser.page.evaluate(() => (globalThis as any).document.getElementById("note").removeAttribute("data-domo-secret"));
-    const again = session.handle({ action: "click", selector: "div" });
-    await expect(again).rejects.toThrow(/<div> \[concealed\] \(visible\)/);
-    await expect(again).rejects.not.toThrow(/hunter2/);
   }, 30_000);
 
   it("actually masks a filled secret (would be UNMASKED with string scripts)", async () => {
