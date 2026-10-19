@@ -106,6 +106,33 @@ const act = (server: DomoMcpServer, session: string, action: string, extra: Reco
   callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
 
 describe("browser tools (fake runtime)", () => {
+  // #163: an upload is asked for as a read of that file, because the site
+  // receives its bytes, and a files-only widen must widen the session rather
+  // than run as a plain read whose bytes would come back to the agent.
+  it("uploads a file only once the owner approves it, by its resolved path", async () => {
+    const { server, device, cmdLog } = makeServer();
+    const file = path.join(tempDir(), "clip.mov");
+    fs.writeFileSync(file, "not really a movie");
+    const real = fs.realpathSync(file);
+    const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/post" });
+
+    const early = await act(server, session, "upload", { selector: "input[type=file]", path: file });
+    const grant = await callTool(server, "plow_browser_request", { session, files: [file] }, AGENT);
+    const uploaded = await act(server, session, "upload", { selector: "input[type=file]", path: file });
+
+    expect(early.isError).toBe(true);
+    expect(grant.isError, JSON.stringify(grant.payload)).toBe(false);
+    expect(grant.payload.files).toEqual([real]);
+    expect(JSON.stringify(grant.payload)).not.toContain("not really a movie");
+    expect(uploaded.isError, JSON.stringify(uploaded.payload)).toBe(false);
+    const sent = fs.readFileSync(cmdLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(sent.filter((c) => c.action === "upload")).toEqual([
+      expect.objectContaining({ action: "upload", selector: "input[type=file]", path: real }),
+    ]);
+    expect(events(device)).not.toContain("file_read");
+  });
+
   it("returns a click_at result and lets a fill clear a field", async () => {
     const { server } = makeServer();
     const session = await open(server, ["pizza.example"]);
@@ -136,6 +163,7 @@ describe("browser tools (fake runtime)", () => {
     ["plow_browser", { action: "click_at", x: "120", y: 80 }, "Input validation error: Invalid arguments for tool plow_browser: data/x must be integer"],
     ["plow_browser", { action: "click_at", x: 12.5, y: 80 }, "Input validation error: Invalid arguments for tool plow_browser: data/x must be integer"],
     ["plow_browser", { action: "use_page" }, "use_page requires 'index'"],
+    ["plow_browser", { action: "upload", selector: "input[type=file]" }, "upload requires 'path'"],
     ["plow_vault", { action: "describe" }, "describe requires 'item'"],
   ])("%s %j names what is missing and does nothing", async (tool, args, error) => {
     const { server, device, cmdLog } = makeServer();

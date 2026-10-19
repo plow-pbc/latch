@@ -57,6 +57,8 @@ interface Session {
   agentId: string;
   origins: string[];
   credentialItems: Set<string>;
+  /** Files the owner approved for `upload`, by resolved path. */
+  uploads: Set<string>;
   lastActivity: number;
   lastUrl: string;
   knownPageCount: number;
@@ -292,6 +294,7 @@ export class BrowserSessions {
       agentId,
       origins: origins.map(normalizeOrigin),
       credentialItems: new Set(),
+      uploads: new Set(),
       lastActivity: Date.now(),
       lastUrl: "",
       knownPageCount: 1,
@@ -373,6 +376,7 @@ export class BrowserSessions {
     handle: string,
     origins: string[],
     items: string[],
+    files: string[] = [],
   ): JSONValue {
     const s = this.validate(handle);
     if (typeof s === "string") return { status: "error", error: s };
@@ -391,19 +395,23 @@ export class BrowserSessions {
     const widenedItems = new Set(s.credentialItems);
     for (const i of items) widenedItems.add(i);
     const itemList = [...widenedItems].sort();
+    const fileList = [...new Set([...s.uploads, ...files])].sort();
     this.audit("browser_session_extended", {
       intentId,
       session: s.auditId,
       origins: widened,
       items: itemList,
+      ...(fileList.length ? { files: fileList } : {}),
     });
     s.origins = widened;
     s.credentialItems = widenedItems;
+    s.uploads = new Set(fileList);
     s.lastActivity = Date.now();
     return {
       status: "completed",
       origins: s.origins,
       items: itemList,
+      files: fileList,
     };
   }
 
@@ -778,6 +786,21 @@ export class BrowserSessions {
           );
           const refused = this.reportRefusals(s, action, s.lastUrl, knobs, false);
           return refused.length ? { ...filled, failed_requests: refused } : filled;
+        }
+        case "upload": {
+          // Only a file the owner approved for this session, by the path the
+          // approval resolved; the guard around this call keeps it that file.
+          const file = p.get("path").str ?? "";
+          if (!s.uploads.has(file)) {
+            return {
+              status: "error",
+              error: `${file || "that file"} is not approved for upload in this session — ask for it with plow_browser_request's 'files'`,
+            };
+          }
+          const forwarded: { [k: string]: JSONValue } = { action, selector: p.get("selector").str ?? "", path: file };
+          const frame = p.get("frame").value;
+          if (frame !== null && frame !== undefined) forwarded.frame = frame;
+          return await this.serverAction(s, forwarded, { path: file });
         }
         case "goto": {
           const target = p.get("url").str ?? "";

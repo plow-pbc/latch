@@ -51,13 +51,15 @@ export interface HandleLike {
   type(text: string, opts?: { delay?: number; timeout?: number }): Promise<void>;
   /** Choose an option by value or label; Playwright throws when none matches. */
   selectOption(value: string, opts?: { timeout?: number }): Promise<unknown>;
+  /** Set a file input's files; Playwright throws on anything else. */
+  setInputFiles(files: string, opts?: { timeout?: number }): Promise<void>;
 }
 export interface FrameLike {
   url(): string;
   evaluate(pageFunction: PageFunction, arg?: unknown): Promise<unknown>;
   /** querySelector — Playwright names it `$`, NOT `querySelector`. */
   $(selector: string): Promise<HandleLike | null>;
-  waitForSelector(selector: string, opts?: { timeout?: number }): Promise<HandleLike | null>;
+  waitForSelector(selector: string, opts?: { state?: "attached"; timeout?: number }): Promise<HandleLike | null>;
   click(selector: string, opts?: { timeout?: number }): Promise<void>;
   isDetached(): boolean;
   parentFrame(): FrameLike | null;
@@ -511,6 +513,31 @@ export class Session {
     throw last ?? new Error(`selector not found: ${sel}`);
   }
 
+  /**
+   * Put a file on a page's file input without opening the native picker, which
+   * nothing driving this browser can operate (#163). Sites hide the input
+   * behind a button, so it is found attached, not visible. The device only
+   * sends a file the owner approved for this session.
+   */
+  private async upload(cmd: Obj): Promise<Obj> {
+    const sel = String(cmd.selector);
+    let last: Error | null = null;
+    for (const [i, fr] of this.indexedFrames(cmd)) {
+      let el: HandleLike | null;
+      try {
+        el = await fr.waitForSelector(sel, { state: "attached", timeout: DEFAULT_ACTION_TIMEOUT_MS });
+      } catch (exc) {
+        last = exc as Error;
+        continue;
+      }
+      if (el === null) continue;
+      await el.setInputFiles(String(cmd.path), { timeout: DEFAULT_ACTION_TIMEOUT_MS });
+      await this.page.waitForTimeout(SETTLE_MS);
+      return { ok: true, frame: i };
+    }
+    throw last ?? new Error(`selector not found: ${sel}`);
+  }
+
   private async clickAt(cmd: Obj): Promise<Obj> {
     const x = cmd.x;
     const y = cmd.y;
@@ -712,6 +739,7 @@ export class Session {
     if (action === "click") return this.click(cmd);
     if (action === "click_at") return this.clickAt(cmd);
     if (action === "fill") return this.fill(cmd);
+    if (action === "upload") return this.upload(cmd);
 
     if (action === "locate") {
       const sel = String(cmd.selector);

@@ -666,8 +666,13 @@ export class DeviceAgent {
 
   private async execute(intent: Intent, payload: JSONValue): Promise<JSONValue> {
     // Browser/credential intents contain only those kinds; dispatch them first
-    // so they can never fall into the exec path.
-    if (intent.capabilities.some((c) => c.kind === "browser" || c.kind === "credential")) {
+    // so they can never fall into the exec path. A widen (it names its
+    // session) may carry only files to upload — an `fs.read` bound that is
+    // the session's to hold, never a read whose bytes come back here.
+    if (
+      intent.capabilities.some((c) => c.kind === "browser" || c.kind === "credential") ||
+      jv(payload).get("session").str !== null
+    ) {
       const result = await this.executeBrowserIntent(intent, payload);
       // Every way a browser request can fail before a session exists -- no
       // runtime, the cap, a cold start that never came up -- ends here, so the
@@ -1775,10 +1780,11 @@ export class DeviceAgent {
     const origins = intent.capabilities.find((c) => c.kind === "browser")?.origins ?? [];
     const items =
       intent.capabilities.find((c) => c.kind === "credential" && c.access === "fill")?.items ?? [];
+    const files = intent.capabilities.find((c) => c.kind === "fs.read")?.paths ?? [];
 
     const session = jv(payload).get("session").str;
     if (session !== null) {
-      return this.browserSessions!.extend(intent.intentId, session, origins, items);
+      return this.browserSessions!.extend(intent.intentId, session, origins, items, files);
     }
     if (origins.length === 0) {
       return { status: "error", error: "plow_browser_open requires at least one origin" };
@@ -1805,6 +1811,20 @@ export class DeviceAgent {
     if (refusal !== null) return { status: "error", error: refusal };
     if (jv(params).get("action").str === "close") {
       return this.browserSessions!.close(session, "agent");
+    }
+    // An upload is a read of that file on the site's behalf, so it runs under
+    // the same guard as plow_read_file: not while a run may write there, and
+    // never parked on a privacy dialog nobody is there to answer.
+    const upload = jv(params).get("action").str === "upload" ? jv(params).get("path").str : null;
+    if (upload !== null) {
+      try {
+        return await this.guardedFileOp(upload, () => this.browserSessions!.command(session, params));
+      } catch (error: unknown) {
+        if (error instanceof FileOpBusy || error instanceof FileOpHang) {
+          return { status: "error", error: `${upload} was not uploaded: ${error.message}` };
+        }
+        throw error;
+      }
     }
     return this.browserSessions!.command(session, params);
   }

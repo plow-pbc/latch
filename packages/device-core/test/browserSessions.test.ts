@@ -316,6 +316,52 @@ describe("session lifecycle", () => {
   });
 });
 
+describe("file upload", () => {
+  // #163: the page's upload button opens the native picker, which nothing here
+  // can drive, so an approved file is set on the input instead. The site gets
+  // the file's bytes, so only a file the owner approved for THIS session goes.
+  it("refuses a file the session was not given", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
+
+    const r = jv(await ctx.sessions.command(s, { action: "upload", selector: "input[type=file]", path: "/Users/o/clip.mov" }));
+
+    expect(r.get("status").str).toBe("error");
+    expect(r.get("error").str).toContain("plow_browser_request's 'files'");
+    const sent = fs.readFileSync(ctx.cmdLog, "utf8").trim().split("\n").map((line) => JSON.parse(line).action);
+    expect(sent).not.toContain("upload");
+  });
+
+  it("sends an approved file to the input, and the owner's log names it", async () => {
+    const s = await openSession(["pizza.example"]);
+    const widened = jv(ctx.sessions.extend("int-2", s, [], [], ["/Users/o/clip.mov"]));
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
+
+    const r = jv(await ctx.sessions.command(s, { action: "upload", selector: "input[type=file]", path: "/Users/o/clip.mov" }));
+
+    expect(widened.get("files").value).toEqual(["/Users/o/clip.mov"]);
+    expect(ctx.events.find((e) => e.event === "browser_session_extended")?.fields.files).toEqual(["/Users/o/clip.mov"]);
+    expect(r.get("status").str).toBe("completed");
+    const sent = fs.readFileSync(ctx.cmdLog, "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line) as Record<string, JSONValue>);
+    expect(sent.at(-1)).toEqual({ id: sent.at(-1)!.id, action: "upload", selector: "input[type=file]", path: "/Users/o/clip.mov" });
+    expect(ctx.events.filter((e) => e.event === "browser_command").at(-1)?.fields)
+      .toMatchObject({ action: "upload", path: "/Users/o/clip.mov" });
+  });
+
+  it("is locked out like any content action on an out-of-scope page", async () => {
+    const s = await openSession(["pizza.example"]);
+    ctx.sessions.extend("int-2", s, [], [], ["/Users/o/clip.mov"]);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
+    await ctx.sessions.command(s, { action: "click", selector: "#offsite" });
+
+    const r = jv(await ctx.sessions.command(s, { action: "upload", selector: "input[type=file]", path: "/Users/o/clip.mov" }));
+
+    expect(r.get("status").str).toBe("error");
+    expect(r.get("error").str).toContain("outside the approved origins");
+  });
+});
+
 describe("origin scope", () => {
   it("refuses goto outside the approved origins before navigating", async () => {
     const s = await openSession(["pizza.example"]);

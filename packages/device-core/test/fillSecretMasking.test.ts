@@ -204,7 +204,7 @@ async function bankSession(): Promise<string> {
   // "agent-1" would not be accepted by the backend's integer field.
   const opened = await ctx.sessions.open("i1", "42", ["chase.com"], false);
   const handle = (opened as { session: string }).session;
-  ctx.sessions.extend("i2", handle, [], ["B1"], false);
+  ctx.sessions.extend("i2", handle, [], ["B1"]);
   await ctx.sessions.command(handle, { action: "goto", url: "https://chase.com/login" });
   return handle;
 }
