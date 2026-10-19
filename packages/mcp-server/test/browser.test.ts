@@ -106,6 +106,20 @@ const act = (server: DomoMcpServer, session: string, action: string, extra: Reco
   callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
 
 describe("browser tools (fake runtime)", () => {
+  // #403: the hold has to survive the tool's argument copy, or a press-and-hold
+  // request arrives at the browser as an ordinary click.
+  it("carries a click_at hold to the browser", async () => {
+    const { server, cmdLog } = makeServer();
+    const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/verify" });
+
+    const held = await act(server, session, "click_at", { x: 120, y: 80, hold_ms: 4000 });
+
+    expect(held.isError, JSON.stringify(held.payload)).toBe(false);
+    const sent = fs.readFileSync(cmdLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(sent.filter((c) => c.action === "click_at")).toEqual([expect.objectContaining({ x: 120, y: 80, hold_ms: 4000 })]);
+  });
+
   it("returns a click_at result and lets a fill clear a field", async () => {
     const { server } = makeServer();
     const session = await open(server, ["pizza.example"]);

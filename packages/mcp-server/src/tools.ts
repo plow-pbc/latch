@@ -1095,7 +1095,7 @@ export const TOOLS: ToolSpec[] = [
       const session = requiredStr(a, "session");
       const action = requiredStr(a, "action");
       const params: { [k: string]: JSONValue } = { action };
-      for (const key of ["url", "selector", "x", "y", "selectors", "value", "expression", "index", "item", "field", "format", "direction", "seconds", "frame", "timeout_ms"]) {
+      for (const key of ["url", "selector", "x", "y", "hold_ms", "selectors", "value", "expression", "index", "item", "field", "format", "direction", "seconds", "frame", "timeout_ms"]) {
         const v = a.get(key).value;
         if (v !== null && v !== undefined) params[key] = v;
       }
