@@ -17,6 +17,7 @@ import {
   DeviceAgent,
   HeadlessPolicy,
   loadPlugins,
+  MAX_BINARY_WRITE_BYTES,
   MAX_FILE_BYTES,
   PolicyDelegate,
 } from "@domo/device-core";
@@ -586,15 +587,15 @@ describe("review findings", () => {
   // latch#539: a binary file the agent holds (an attachment, a PDF) goes in as
   // bytes, never retyped by the model or relayed through a file host.
   describe("plow_write_file with content_base64", () => {
-    it("writes exactly the bytes it was given", async () => {
+    it("writes exactly the bytes it was given, up to the ceiling", async () => {
       const { server } = makeServer();
       const file = path.join(tempDir(), "every-byte.bin");
-      const bytes = Buffer.from(Array.from({ length: 256 }, (_, n) => n));
+      const bytes = Buffer.alloc(MAX_BINARY_WRITE_BYTES, Buffer.from(Array.from({ length: 256 }, (_, n) => n)));
 
       const { isError, payload } = await callTool(server, "plow_write_file", { path: file, content_base64: bytes.toString("base64") }, AGENT);
 
       expect(isError, JSON.stringify(payload)).toBe(false);
-      expect(payload.bytes).toBe(256);
+      expect(payload.bytes).toBe(MAX_BINARY_WRITE_BYTES);
       expect(fs.readFileSync(file).equals(bytes)).toBe(true);
     });
 
@@ -603,6 +604,7 @@ describe("review findings", () => {
       ["neither", {}, /exactly one/],
       ["something that is not base64", { content_base64: "not base64!" }, /is not base64/],
       ["an unpadded tail", { content_base64: "YQ" }, /is not base64/],
+      ["a byte over the ceiling", { content_base64: Buffer.alloc(MAX_BINARY_WRITE_BYTES + 1).toString("base64") }, /single-call limit/],
     ])("refuses %s, writing nothing", async (_what, args, error) => {
       const { server } = makeServer();
       const file = path.join(tempDir(), "x.bin");
@@ -611,18 +613,6 @@ describe("review findings", () => {
 
       expect(isError).toBe(true);
       expect(JSON.stringify(payload)).toMatch(error);
-      expect(fs.existsSync(file)).toBe(false);
-    });
-
-    it("refuses an oversized file before decoding it", async () => {
-      const { server } = makeServer();
-      const file = path.join(tempDir(), "big.bin");
-      const tooBig = "A".repeat(Math.ceil(((MAX_FILE_BYTES + 3) * 4) / 3 / 4) * 4);
-
-      const { isError, payload } = await callTool(server, "plow_write_file", { path: file, content_base64: tooBig }, AGENT);
-
-      expect(isError).toBe(true);
-      expect(JSON.stringify(payload)).toMatch(/single-call limit/);
       expect(fs.existsSync(file)).toBe(false);
     });
   });

@@ -33,6 +33,7 @@ import {
   DATE_LABELS,
   DeviceAgent,
   LIVE_WEB_ROUTING,
+  MAX_BINARY_WRITE_BYTES,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
   PAYMENT_AUTHORIZATION,
@@ -136,9 +137,6 @@ const requiredStr = (a: JV, key: string): string => {
  * ever firing, exactly as a synchronous read would.
  */
 const resolved = (p: string): Promise<string> => canonicalizeAsync(p);
-
-/** Standard base64, padded: whole 4-character groups, `=` only at the end. */
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 /** Resolve a list of supplied paths concurrently. */
 const resolveAll = (paths: string[]): Promise<string[]> => Promise.all(paths.map(resolved));
@@ -365,7 +363,7 @@ export const TOOLS: ToolSpec[] = [
         content: { type: "string", description: "Text to write. Give this or content_base64." },
         content_base64: {
           type: "string",
-          description: `The file's bytes, base64 (up to ${MAX_FILE_BYTES} bytes decoded). Give this or content.`,
+          description: `The file's bytes, base64 (up to ${MAX_BINARY_WRITE_BYTES} bytes decoded). Give this or content.`,
         },
         goal: GOAL,
       },
@@ -384,13 +382,17 @@ export const TOOLS: ToolSpec[] = [
       }
       // Refuse before encoding or decoding: the point of the ceiling is to
       // bound the work, and converting an oversized string is the work.
-      const size = content !== null ? content.length : Math.floor((encoded!.length * 3) / 4);
-      if (size > MAX_FILE_BYTES) {
-        throw new ToolError(`content is ${size} bytes, over the ${MAX_FILE_BYTES}-byte single-call limit`);
+      const [size, limit] =
+        content !== null
+          ? [content.length, MAX_FILE_BYTES]
+          : [(encoded!.length / 4) * 3 - (encoded!.match(/=*$/)![0].length), MAX_BINARY_WRITE_BYTES];
+      if (size > limit) {
+        throw new ToolError(`content is ${size} bytes, over the ${limit}-byte single-call limit`);
       }
       // Node's decoder skips what it cannot read, so a garbled string would be
-      // written as a quietly different file. Refused instead.
-      if (encoded !== null && !BASE64.test(encoded)) {
+      // written as a quietly different file. Refused instead. Flat checks: a
+      // repeated-group pattern overflows V8's stack on a few MiB.
+      if (encoded !== null && (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))) {
         throw new ToolError("content_base64 is not base64 (A–Z, a–z, 0–9, + and /, padded with =)");
       }
       const data = content !== null ? Buffer.from(content, "utf8") : Buffer.from(encoded!, "base64");

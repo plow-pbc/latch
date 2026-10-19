@@ -25,6 +25,14 @@ import { canonicalizeAsync, isWithinRootsAsync } from "@domo/protocol";
  */
 export const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
+/**
+ * A binary file written through `plow_write_file`'s `content_base64`. That one
+ * argument is the file at 4/3 its size, and it arrives in one relay request,
+ * which plow's relay refuses over 8 MiB (`relay/mcp.py` MAX_BODY_BYTES);
+ * 64 KiB of it is left for the path, the goal and the JSON-RPC envelope.
+ */
+export const MAX_BINARY_WRITE_BYTES = ((8 * 1024 * 1024 - 64 * 1024) / 4) * 3;
+
 /** What the kernel said, when it was the kernel: Node's errno code, the
  *  syscall, and the path it was about. Null for this module's own rules. */
 export interface FsErrorDetail {
