@@ -93,6 +93,23 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     expect(result).not.toHaveProperty("altered", true);
   });
 
+  // #338: on PayPal's review page `text=Send` matched the "Send and Request" nav
+  // link first, the click reported ok, and the payment was never submitted.
+  it("refuses an ambiguous click instead of pressing the first match", async () => {
+    const html = `<!doctype html><nav><a href="#home">Send and Request</a></nav>
+      <main><button onclick="document.title='SUBMITTED'">Send</button></main>`;
+    await browser.page.goto(`data:text/html,${encodeURIComponent(html)}`);
+
+    await expect(session.handle({ action: "click", selector: "text=Send" })).rejects.toThrow(
+      /matches 2 elements[^]*0: <a> "Send and Request" \(visible\)\n {2}1: <button> "Send" \(visible\)/,
+    );
+    expect(await browser.page.title()).toBe("");
+    expect(browser.page.url()).not.toContain("#home");
+
+    await session.handle({ action: "click", selector: 'role=button[name="Send"]' });
+    expect(await browser.page.title()).toBe("SUBMITTED");
+  }, 30_000);
+
   it("actually masks a filled secret (would be UNMASKED with string scripts)", async () => {
     await browser.page.goto("data:text/html,<input id=pw type=text value=''>");
     const r = (await session.handle(

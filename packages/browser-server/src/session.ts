@@ -14,6 +14,7 @@
  */
 import { JSONValue } from "@domo/protocol";
 import {
+  CANDIDATE_JS,
   DOC_TOKEN_JS,
   FIELD_CAP_JS,
   FIELD_JS,
@@ -57,8 +58,10 @@ export interface FrameLike {
   evaluate(pageFunction: PageFunction, arg?: unknown): Promise<unknown>;
   /** querySelector — Playwright names it `$`, NOT `querySelector`. */
   $(selector: string): Promise<HandleLike | null>;
+  /** querySelectorAll, likewise named `$$`. */
+  $$(selector: string): Promise<HandleLike[]>;
   waitForSelector(selector: string, opts?: { timeout?: number }): Promise<HandleLike | null>;
-  click(selector: string, opts?: { timeout?: number }): Promise<void>;
+  click(selector: string, opts?: { strict?: boolean; timeout?: number }): Promise<void>;
   isDetached(): boolean;
   parentFrame(): FrameLike | null;
 }
@@ -110,6 +113,11 @@ const FAILED_REQUEST_HEADERS = ["retry-after", "server"] as const;
 export const DEFAULT_ACTION_TIMEOUT_MS = 3000;
 /** How often a click re-scans the frames for its selector while waiting. */
 const SCAN_INTERVAL_MS = 50;
+/** How many of an ambiguous selector's matches a click refusal names. Five
+ * lines fit inside the server's error-length cut with room for the advice. */
+const MAX_CANDIDATES = 5;
+/** How many matches it looks at to find the visible ones to name first. */
+const MAX_DESCRIBED = 50;
 /** What every action that moves the page gives it to settle afterwards. */
 const SETTLE_MS = 1000;
 /** Per-character `el.type` delay — what makes a fill keystrokes, not an assign. */
@@ -491,14 +499,49 @@ export class Session {
         break;
       }
       try {
-        await fr.click(sel, { timeout: left });
+        // Strict: a selector that matches several elements is refused, never
+        // resolved to the first. `text=Send` takes any element whose text
+        // contains "send", and the first was a nav link — the click reported
+        // ok and the payment was never submitted (#338).
+        await fr.click(sel, { strict: true, timeout: left });
         await this.page.waitForTimeout(SETTLE_MS);
         return { ok: true, frame: i };
       } catch (exc) {
+        // An ambiguous selector is this click's answer. Trying the next frame
+        // would be the same guess one level up.
+        if (String((exc as Error).message).includes("strict mode violation")) {
+          throw await this.ambiguous(fr, sel, exc as Error);
+        }
         last = exc as Error;
       }
     }
     throw last ?? new Error(`selector not found: ${sel}`);
+  }
+
+  /**
+   * The refusal for a selector that matched several elements: the advice
+   * first, then candidates by match index with their tag, text and
+   * visibility, enough to write a selector that names one. Visible ones are
+   * listed first: on PayPal's sign-in `text=Log In` matched eleven hidden
+   * elements ahead of the button. A page that changed since leaves
+   * Playwright's own refusal standing.
+   */
+  private async ambiguous(fr: FrameLike, sel: string, refused: Error): Promise<Error> {
+    const found = await fr.$$(sel);
+    if (found.length < 2) return refused;
+    const described: string[] = [];
+    for (const [n, el] of found.slice(0, MAX_DESCRIBED).entries()) {
+      described.push(`  ${n}: ${String(await el.evaluate(CANDIDATE_JS))}`);
+    }
+    const visible = described.filter((line) => line.endsWith("(visible)"));
+    const shown = [...visible, ...described.filter((line) => !line.endsWith("(visible)"))];
+    const lines = [
+      `click refused: ${sel} matches ${found.length} elements. Use a selector that names one, ` +
+        `e.g. role=button[name="..."] or button:has-text("..."), or click_at from a screenshot:`,
+      ...shown.slice(0, MAX_CANDIDATES),
+    ];
+    if (found.length > MAX_CANDIDATES) lines.push(`  …and ${found.length - MAX_CANDIDATES} more`);
+    return new Error(lines.join("\n"));
   }
 
   private async clickAt(cmd: Obj): Promise<Obj> {

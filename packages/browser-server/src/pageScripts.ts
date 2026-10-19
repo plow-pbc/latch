@@ -82,6 +82,20 @@ export const TABLES_JS = (): any[] =>
   }));
 
 /**
+ * One line naming a click candidate: `<tag> "text" (visible|hidden)`. Text only,
+ * never `value` — a candidate can be a field the vault filled.
+ */
+export const CANDIDATE_JS = (el: El): string => {
+  const text = String(el.innerText || el.textContent || el.getAttribute("aria-label") || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const shown =
+    typeof el.checkVisibility === "function" ? el.checkVisibility() : el.getClientRects().length > 0;
+  const short = text.length > 40 ? text.slice(0, 39) + "…" : text;
+  return `<${el.tagName.toLowerCase()}> ${JSON.stringify(short)} (${shown ? "visible" : "hidden"})`;
+};
+
+/**
  * Marking a secret the vault masks, at the moment it is filled: one attribute on
  * the element, and one stylesheet rule per document that renders anything
  * carrying it as discs. An attribute is used rather than an inline style because

@@ -134,6 +134,10 @@ url, title, links, forms, tables, pages.
 - \`eval\` runs a JS expression in the top frame — use it to extract structured data after
   you've seen the page. \`forms\` lists every input across frames with labels; \`fill\`
   searches all frames (pass \`frame\` to target one).
+- **A selector must name ONE element.** \`click\` refuses a selector that matches several
+  and lists each match with its text and whether it is visible, rather than guess. \`text=Send\`
+  matches anything whose text CONTAINS "send", so a "Send and Request" nav link as well as
+  the button: prefer \`role=button[name="Send"]\` or \`button:has-text("Send")\`.
 - **A click that fails is not a reason to reach for \`eval\`.** A click \`eval\` synthesizes
   arrives with \`isTrusted: false\`, which is exactly what a site's bot defenses look for —
   and the click you route around is usually the one that gets the session flagged. Give the

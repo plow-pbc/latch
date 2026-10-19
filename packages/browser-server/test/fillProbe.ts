@@ -243,6 +243,10 @@ class Frame implements FrameLike {
   async $(selector: string): Promise<HandleLike | null> {
     return this.node(selector);
   }
+  async $$(selector: string): Promise<HandleLike[]> {
+    const node = this.node(selector);
+    return node === null ? [] : [node];
+  }
   isDetached(): boolean {
     return this.o.detached ?? false;
   }
