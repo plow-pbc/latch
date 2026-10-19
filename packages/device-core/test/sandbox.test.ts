@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Executor, SandboxProfile, sandboxGrants, userTempDir } from "@domo/device-core";
+import { Executor, SandboxProfile, sandboxGrants, userTempDir, writableRoots } from "@domo/device-core";
 
 const fixturesDir = path.join(__dirname, "../../../fixtures");
 const sbpl = JSON.parse(fs.readFileSync(path.join(fixturesDir, "sbpl.json"), "utf8"));
@@ -61,6 +61,9 @@ describe("SBPL profile", () => {
     expect(grants(`${T}/com.apple.mail/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`).write).toBe(false);
     expect(grants(`${T}/notes.txt`).write).toBe(false);
     expect(grants(`/private/var/folders/ab/cdxef/T/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`).write).toBe(false);
+    // Tracking is conservative where the profile is narrow: a run can replace a
+    // UUID file there, so a file op must not open anything in it by name.
+    expect(writableRoots({ ...base, userTemp: T })).toContain(T);
   });
 
   it("grants appleevent-send only when the capability was approved", () => {
@@ -175,6 +178,21 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     const size = execFileSync("/usr/bin/sips", ["-g", "pixelWidth", "-g", "pixelHeight", jpeg], { encoding: "utf8" });
     expect(size).toMatch(/pixelWidth: 64\s+pixelHeight: 64/);
+  });
+
+  it("holds the user temp dir as mutable while a run is alive", async () => {
+    const executor = new Executor(tempDir());
+    const result = await executor.run({
+      argv: ["/bin/sleep", "2"],
+      readPaths: [],
+      writePaths: [],
+      network: false,
+      appleEvents: false,
+      waitMs: 50,
+    });
+
+    expect(result.running).toBe(true);
+    expect(executor.mutableRoots()).toContain(userTempDir());
   });
 
   it("allows a write inside the approved scope", async () => {

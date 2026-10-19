@@ -201,7 +201,9 @@ export function sandboxGrants(
 ): { read: boolean; write: boolean } {
   const under = isLexicallyWithin;
   const home = canonicalize(args.home ?? os.homedir());
-  const writable = writableRoots(args);
+  // The temp dir is a root for tracking only; what the profile allows there is
+  // the pattern below, not the folder.
+  const writable = writableRoots({ ...args, userTemp: null });
   const scratchFile = !!args.userTemp && new RegExp(userTempPattern(args.userTemp)).test(target);
   const write = scratchFile || writable.some((root) => under(target, root));
   const readRoots = [...READ_BOILERPLATE, home, ...writable, ...args.readPaths, "/dev/fd"];
@@ -221,12 +223,16 @@ export function writableRoots(args: {
   appleEvents: boolean;
   scratch: string;
   home?: string;
+  userTemp?: string | null;
 }): string[] {
   const home = canonicalize(args.home ?? os.homedir());
   const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
     (p) => home + "/" + p,
   );
-  return [args.scratch, ...args.writePaths].concat(isReapable(args) ? [] : housekeeping);
+  // The whole temp dir, conservatively: a run can replace a UUID-named file
+  // in it, so nothing there is opened by name while the run may be alive.
+  const temp = args.userTemp ? [args.userTemp] : [];
+  return [args.scratch, ...args.writePaths, ...temp].concat(isReapable(args) ? [] : housekeeping);
 }
 
 export class ExecutorError extends Error {}
