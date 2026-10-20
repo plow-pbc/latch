@@ -7,7 +7,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { canonicalize, JSONValue, jv } from "@domo/protocol";
