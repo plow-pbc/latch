@@ -8,6 +8,7 @@ import {
 import { attentionMatches, createSerialAutosave, modeView } from "./gatekeeperState.js";
 
 import { el, icon, PLW_PATH, switchEl } from "./dom.js";
+import { gatekeeperDefaults } from "./gatekeeperDefaults.js";
 import { singleFlight } from "./onboardingAction.js";
 import { googleCapabilityBadges } from "../connectorBadges.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
@@ -1105,6 +1106,16 @@ function createGatekeeperCard() {
   });
   inactiveNote.hidden = true;
 
+  const purposeSection = el("div", { class: "gatekeeper-purpose" }, [
+    el("div", { class: "gatekeeper-field-head" }, [
+      el("label", { text: "Instructions", attrs: { for: "gatekeeperPurpose" } }),
+    ]),
+    purposeInput,
+    saveStatus,
+    inactiveNote,
+  ]);
+  let syncDefaults = () => {};
+
   // Two lines: the setting and what it means, then the instructions it
   // enforces — shown in full and edited where they are read.
   const node = el("section", { class: "audit-gatekeeper" }, [
@@ -1115,14 +1126,7 @@ function createGatekeeperCard() {
       modeDescription,
       rulesButton,
     ]),
-    el("div", { class: "gatekeeper-purpose" }, [
-      el("div", { class: "gatekeeper-field-head" }, [
-        el("label", { text: "Instructions", attrs: { for: "gatekeeperPurpose" } }),
-      ]),
-      purposeInput,
-      saveStatus,
-      inactiveNote,
-    ]),
+    purposeSection,
   ]);
 
   let inference = null;
@@ -1175,6 +1179,7 @@ function createGatekeeperCard() {
           : "";
     if (state.phase === "saved" && purposeInput.value !== state.draft) {
       purposeInput.value = state.draft;
+      syncDefaults();
     }
   };
 
@@ -1191,7 +1196,8 @@ function createGatekeeperCard() {
     window.domo.inferenceGet(),
     window.domo.agentPurposeGet(),
     window.domo.rulesList(),
-  ]).then(([nextInference, purpose, rules]) => {
+    window.domo.gatekeeperPresets(),
+  ]).then(([nextInference, purpose, rules, presets]) => {
     inference = nextInference;
     drawMode();
     rulesButton.textContent = `View ${rules.length} ${rules.length === 1 ? "rule" : "rules"}`;
@@ -1199,7 +1205,18 @@ function createGatekeeperCard() {
     purposeInput.disabled = false;
     autosave = createSerialAutosave((value) => window.domo.agentPurposeSet(value), 500, purpose);
     unsubscribe = autosave.subscribe(setSaveState);
-    purposeListener = () => autosave.edit(purposeInput.value);
+    const defaults = gatekeeperDefaults(purposeInput, presets, (text) => {
+      purposeInput.value = text;
+      autosave.edit(text);
+      defaults.sync();
+      purposeInput.focus();
+    });
+    purposeSection.insertBefore(defaults.row, inactiveNote);
+    syncDefaults = defaults.sync;
+    purposeListener = () => {
+      autosave.edit(purposeInput.value);
+      defaults.sync();
+    };
     purposeInput.addEventListener("input", purposeListener);
     retrySave.addEventListener("click", () => autosave.retry());
   });

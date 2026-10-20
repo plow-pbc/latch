@@ -6,6 +6,7 @@ import { el, icon, PLW_PATH, switchEl } from "./dom.js";
 import { latestOnly, singleFlight, whenAnswered } from "./onboardingAction.js";
 import { HELLO_WORLD_DEMO, loadDoneAgent } from "./onboardingDone.js";
 import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
+import { GATEKEEPER_DEFAULTS } from "./gatekeeperDefaults.js";
 import { presetFor, rowView, verdictWord } from "./gatekeeperRows.js";
 import { accessPrimary, clearMissed, runGrants } from "./onboardingGrants.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
@@ -331,8 +332,7 @@ function gatekeeperScreen() {
   // Each default replaces the text with its preset; it is an action, not a state.
   const defaults = el("div", { class: "gk-defaults" }, [
     el("span", { text: "Use a default:" }),
-    button("Personal assistant", "gk-default", () => choosePreset("home")),
-    button("Executive assistant", "gk-default", () => choosePreset("work")),
+    ...GATEKEEPER_DEFAULTS.map(([key, label]) => button(label, "gk-default", () => choosePreset(key))),
   ]);
 
   const field = el("textarea", {

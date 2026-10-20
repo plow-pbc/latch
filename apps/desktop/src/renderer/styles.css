@@ -426,6 +426,9 @@ dl.meta dt {
   border-color: var(--border);
 }
 .gatekeeper-purpose textarea.text:hover { border-color: var(--border-strong); }
+/* Under the box, lined up with it: the setup screen's defaults (plow#2289). */
+.gatekeeper-defaults { flex-basis: 100%; display: flex; align-items: baseline; gap: 10px; padding-left: 101px; color: var(--muted); font-size: 12px; }
+.gatekeeper-defaults[hidden] { display: none; }
 .gatekeeper-purpose textarea.text:focus { background: var(--raised); border-color: var(--accent); }
 .gatekeeper-save-status {
   position: absolute; top: 0; right: 10px;
