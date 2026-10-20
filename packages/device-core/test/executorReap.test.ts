@@ -27,6 +27,21 @@ function tempDir(): string {
   return dir;
 }
 
+/**
+ * A run confined to `dir`: readable, not writable, no network, no Apple
+ * events — the narrowest grant, which every case here starts from. `grant`
+ * widens it where a case needs to.
+ */
+function runIn(
+  executor: InstanceType<typeof Executor>,
+  dir: string,
+  argv: string[],
+  waitMs: number,
+  grant: { writePaths?: string[]; network?: boolean } = {},
+) {
+  return executor.run({ argv, cwd: dir, readPaths: [dir], writePaths: [], network: false, appleEvents: false, waitMs, ...grant });
+}
+
 /** A path that blocks any reader in open(2) until a writer appears — none does. */
 function blockingPipe(dir: string): string {
   const fifo = path.join(dir, "blocked.pipe");
@@ -126,15 +141,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
     const fifo = blockingPipe(dir);
     const executor = new Executor(path.join(dir, "scratch"), 300);
 
-    const started = await executor.run({
-      argv: argv(fifo),
-      cwd: dir,
-      readPaths: [dir],
-      writePaths: [],
-      network: false,
-      appleEvents: false,
-      waitMs: 50,
-    });
+    const started = await runIn(executor, dir, argv(fifo), 50);
     cleanups.push(() => killAll(fifo));
     expect(started.running).toBe(true);
 
@@ -162,15 +169,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
     const fifo = blockingPipe(dir);
     const executor = new Executor(path.join(dir, "scratch"), 300);
 
-    const started = await executor.run({
-      argv: ["/bin/cat", fifo],
-      cwd: dir,
-      readPaths: [dir],
-      writePaths: write ? [dir] : [],
-      network,
-      appleEvents: false,
-      waitMs: 50,
-    });
+    const started = await runIn(executor, dir, ["/bin/cat", fifo], 50, { writePaths: write ? [dir] : [], network });
     cleanups.push(() => killAll(fifo));
 
     await new Promise((r) => setTimeout(r, 900));
@@ -186,15 +185,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
 
     // Speaks first, then blocks forever: visibly doing something, so the
     // reaper must not touch it however long it sits there.
-    const started = await executor.run({
-      argv: ["/bin/sh", "-c", `echo working; exec /bin/cat ${JSON.stringify(fifo)}`],
-      cwd: dir,
-      readPaths: [dir],
-      writePaths: [],
-      network: false,
-      appleEvents: false,
-      waitMs: 1000,
-    });
+    const started = await runIn(executor, dir, ["/bin/sh", "-c", `echo working; exec /bin/cat ${JSON.stringify(fifo)}`], 1000);
     expect(started.output.toString()).toContain("working");
 
     // Registered before the assertions, not after: a failing expectation must
@@ -221,15 +212,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
     // tell the settled job from one still quietly capturing: it holds the
     // stdout pipe, sleeps past the drain, then writes and exits.
     const marker = `stray-${path.basename(dir)}`;
-    const started = await executor.run({
-      argv: ["/bin/sh", "-c", `echo started; (sleep 1; echo ${marker}) & exit 0`],
-      cwd: dir,
-      readPaths: [dir],
-      writePaths: [],
-      network: false,
-      appleEvents: false,
-      waitMs: 3_000,
-    });
+    const started = await runIn(executor, dir, ["/bin/sh", "-c", `echo started; (sleep 1; echo ${marker}) & exit 0`], 3_000);
     cleanups.push(() => killAll(marker));
     expect(started.running).toBe(false);
     expect(started.exitCode).toBe(0);
@@ -256,15 +239,12 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
     // redirects both streams is not holding the run's pipes, so nothing this
     // Mac does to end the run reaches it.
     const marker = `survivor-${path.basename(dir)}`;
-    const started = await executor.run({
-      argv: ["/bin/sh", "-c", `echo started; (sleep 5; echo ${marker}) >/dev/null 2>&1 & exit 0`],
-      cwd: dir,
-      readPaths: [dir],
-      writePaths: [],
-      network: false,
-      appleEvents: false,
-      waitMs: 3_000,
-    });
+    const started = await runIn(
+      executor,
+      dir,
+      ["/bin/sh", "-c", `echo started; (sleep 5; echo ${marker}) >/dev/null 2>&1 & exit 0`],
+      3_000,
+    );
     cleanups.push(() => killAll(marker));
     expect(started.running).toBe(false);
     expect(started.exitCode).toBe(0);
