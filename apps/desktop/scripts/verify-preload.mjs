@@ -20,6 +20,7 @@ import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
 import { capabilitiesView } from "../dist/capabilitiesModel.js";
 import { grantList, pluginRows } from "../dist/pluginsModel.js";
+import { gatekeeperPresets } from "../dist/gatekeeperPreview.js";
 import { parseManifest } from "@domo/device-core";
 import { settleMotion } from "./screenshot-harness.mjs";
 
@@ -82,6 +83,7 @@ ipcMain.handle("audit:clear", async (event) => {
 });
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
 ipcMain.handle("rules:list", async () => []);
+ipcMain.handle("onboarding:gatekeeperPresets", async () => gatekeeperPresets());
 let gatekeeperRecoveryProbe = {
   intentId: "intent-gatekeeper-probe",
   request: "Buy a $125 Lego set on Amazon",

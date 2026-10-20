@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { shotWindow } from "./screenshot-harness.mjs";
+import { gatekeeperPresets } from "../dist/gatekeeperPreview.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -63,6 +64,7 @@ ipcMain.handle("vault:exchangePending", async () => null);
 ipcMain.handle("settings:getInference", async () => ({ approvalMode: "adversarial" }));
 ipcMain.handle("settings:getAgentPurpose", async () => "Only touch ~/workspace. Never send email.");
 ipcMain.handle("rules:list", async () => [{}, {}, {}]);
+ipcMain.handle("onboarding:gatekeeperPresets", async () => gatekeeperPresets());
 ipcMain.handle("viewer:state", async () => ({ active: false }));
 // Slow enough that a screen which draws nothing until the data lands would
 // visibly jump when it does — the shift this run exists to catch.

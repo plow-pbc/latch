@@ -1235,6 +1235,7 @@ function createGatekeeperCard() {
     async savePurpose(value) {
       await ready;
       purposeInput.value = value;
+      syncDefaults();
       autosave.edit(value);
       return (await autosave.flush()).phase !== "error";
     },
