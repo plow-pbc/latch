@@ -6,21 +6,17 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { Capability, Intent, makeIntent } from "@domo/protocol";
 import { ApprovalStore, IntentDecision, PolicyDelegate } from "@domo/device-core";
+import { scratchDir } from "./pluginFixtures.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-appr-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-appr-", cleanups);
 
 function intentFor(caps: Capability[] = [{ kind: "fs.read", paths: ["/tmp/x"] }]): Intent {
   return makeIntent({

@@ -9,22 +9,18 @@
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VaultAccount, VaultSecretStore } from "../src/browser/vaultSecretStore.js";
 import { readCredentialsState } from "../src/browser/vaultCredentials.js";
+import { scratchDir } from "./pluginFixtures.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-state-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("vault-state-", cleanups);
 
 function writeLegacyAccount(dir: string, account: VaultAccount): void {
   fs.writeFileSync(path.join(dir, "vault-account.enc"), JSON.stringify(account), { mode: 0o600 });

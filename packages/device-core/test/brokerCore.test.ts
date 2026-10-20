@@ -5,7 +5,6 @@
  * maskClassification.test.ts; this file owns the broker's CONDUCT around it.
  */
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BrokerCore, hostsRelated } from "../src/browser/brokerCore.js";
@@ -13,17 +12,14 @@ import { CredentialError } from "../src/browser/credentialBroker.js";
 import { LocalVault } from "../src/browser/localVault.js";
 import { VaultKeyStore } from "../src/browser/vaultKeyStore.js";
 import { VaultStore } from "../src/browser/vaultStore.js";
+import { scratchDir } from "./pluginFixtures.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "broker-core-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("broker-core-", cleanups);
 
 /** A vault with one login, one card, and the broker beside it. */
 async function fixture(): Promise<{ broker: BrokerCore; auditPath: string; loginId: string; cardId: string }> {
