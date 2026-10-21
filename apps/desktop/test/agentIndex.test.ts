@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_INDEX_URL, fetchAgentIndex, parseAgentIndex } from "../src/agentIndex.js";
-import { deployCards } from "../src/cloudAgentViewModel.js";
 
 const LOGO_URL = `${new URL(AGENT_INDEX_URL).origin}/v1/agent-logos/life.png`;
 const LIFE = {
@@ -8,8 +7,9 @@ const LIFE = {
   deployable_at: "2026-09-10T16:42:29.070Z", blessed_at: "2026-09-08T00:00:00.000Z", users: 16, install_success: 88,
   builder: { name: "Sam", photo: null }, logo: LOGO_URL,
 };
-const LIFE_ENTRY = { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88, verified: true, rank: 0, logoUrl: LOGO_URL };
+const LIFE_ENTRY = { logoUrl: LOGO_URL };
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+const PNG_DATA_URL = `data:image/png;base64,${Buffer.from(PNG).toString("base64")}`;
 
 /** The Index at AGENT_INDEX_URL, and each logo URL answered by `logos`. Records every URL asked for. */
 function fakeIndex(agents: unknown[], logos: Record<string, () => Response>) {
@@ -27,16 +27,10 @@ function fakeIndex(agents: unknown[], logos: Record<string, () => Response>) {
 describe("parseAgentIndex", () => {
   it.each([
     ["a deployable entry, under its Plow provider id", [LIFE], { "exe:life": LIFE_ENTRY }],
-    // Verified is the Index's blessing; rank is its place in the list the Index sends, which is its ranking.
-    ["an unverified entry, ranked where the Index lists it", [{ ...LIFE, agent_id: "b", blessed_at: null }, LIFE], {
-      "exe:b": { ...LIFE_ENTRY, verified: false, rank: 0 }, "exe:life": { ...LIFE_ENTRY, rank: 1 },
-    }],
     // The Index's own `hermes` is someone else's agent and is not deployable.
     ["an entry the Index does not mark deployable", [{ ...LIFE, agent_id: "hermes", deployable_at: "" }], {}],
-    ["a malformed entry, dropped without the others", [null, 7, { name: "no id" }, LIFE], { "exe:life": { ...LIFE_ENTRY, rank: 3 } }],
-    ["wrong field types, each nulled or zeroed", [{
-      agent_id: "odd", deployable_at: "2026-09-10", blurb: 5, builder: "Sam", users: "16", install_success: "88", logo: 7, blessed_at: 5,
-    }], { "exe:odd": { blurb: null, builder: null, users: 0, successRate: null, verified: false, rank: 0, logoUrl: null } }],
+    ["a malformed entry, dropped without the others", [null, 7, { name: "no id" }, LIFE], { "exe:life": LIFE_ENTRY }],
+    ["a logo that is not a string, nulled", [{ agent_id: "odd", deployable_at: "2026-09-10", logo: 7 }], { "exe:odd": { logoUrl: null } }],
     // The Index names the URL; this Mac fetches only from the Index's own host.
     ["a logo hosted anywhere but the Index, dropped", [{ ...LIFE, logo: "https://elsewhere.example/v1/agent-logos/life.png" }], {
       "exe:life": { ...LIFE_ENTRY, logoUrl: null },
@@ -58,22 +52,12 @@ describe("fetchAgentIndex", () => {
     const index = await fetchAgentIndex(fetchImpl);
     expect(seen.map(({ url }) => url)).toEqual([AGENT_INDEX_URL, LOGO_URL]);
     expect(seen.some(({ headers }) => headers.has("authorization"))).toBe(false);
-    expect(index["exe:life"]?.users).toBe(16);
-  });
-
-  it("describes the provider Plow lists for an Index row, logo included, each in its real id format", async () => {
-    const logoUrl = `${LOGO_URL}?card`;
-    const { fetchImpl } = fakeIndex([{ ...LIFE, logo: logoUrl }], { [logoUrl]: () => new Response(PNG) });
-    const [card] = deployCards([{ id: "exe:life", name: "Life Assistant", phrase: "Start Life" }], await fetchAgentIndex(fetchImpl));
-    expect(card).toMatchObject({
-      blurb: "Runs a household.",
-      byline: "by Sam · 16 people · 88% set up",
-      logo: `data:image/png;base64,${Buffer.from(PNG).toString("base64")}`,
-    });
+    // Under the provider id Plow lists the agent by, as the bytes this Mac checked.
+    expect(index).toEqual({ "exe:life": { logo: PNG_DATA_URL } });
   });
 
   // The renderer loads no remote content, so a logo reaches it as bytes this
-  // Mac checked; anything else leaves the card its initial.
+  // Mac checked; anything else leaves the row its initial.
   it.each([
     ["not a PNG", () => new Response("<svg/>")],
     ["over the size cap", () => new Response(Uint8Array.from([...PNG, ...new Uint8Array(512 * 1024)]))],
@@ -83,7 +67,7 @@ describe("fetchAgentIndex", () => {
     const logoUrl = `${LOGO_URL}?${encodeURIComponent(label)}`;
     const { fetchImpl } = fakeIndex([{ ...LIFE, logo: logoUrl }], { [logoUrl]: answer });
     const index = await fetchAgentIndex(fetchImpl);
-    expect(index["exe:life"]).toMatchObject({ users: 16, logo: null });
+    expect(index["exe:life"]).toEqual({ logo: null });
   });
 
   it("fetches a logo once a run, and retries one that failed", async () => {

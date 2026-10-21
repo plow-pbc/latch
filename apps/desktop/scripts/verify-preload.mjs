@@ -260,6 +260,7 @@ let cloudProbe = {
     { id: "exe:life", name: "Life" },
   ],
   cloudProvidersError: null,
+  cloudDefaultProvider: { id: "exe:life", name: "Life" },
   cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
   cloudAgentsError: null,
   cloudChatsError: null,

@@ -108,8 +108,10 @@ export interface CloudAgentsUiState {
   cloudProviders: CloudAgentProvider[] | null;
   /** A provider-list failure, and nothing else. */
   cloudProvidersError: string | null;
-  /** The Agent Index's descriptions, keyed on provider id. Empty until a read
-   * succeeds and after a failed one: a card without one shows its name. */
+  /** What New agent deploys: the provider Plow's default phrase starts, while it lists one. */
+  cloudDefaultProvider: CloudAgentProvider | null;
+  /** The Agent Index's logos, keyed on provider id. Empty until a read
+   * succeeds and after a failed one: a row without one shows its initial. */
   cloudAgentIndex: AgentIndex;
   /** Lines found on the owner's chats that no current agent occupies. */
   cloudFreeLines: CloudAgentLine[];
@@ -167,7 +169,7 @@ export interface CloudAgentStateDeps {
   providers: CloudProvidersApi;
   /** Plow's pool numbers, used as display metadata for chat rows. */
   lines?: { list(credential: string): Promise<CloudLineOption[]> };
-  /** Describes the catalog. Optional: without it every card is name-only. */
+  /** Pictures the catalog. Optional: without it every row shows its initial. */
   agentIndex?: () => Promise<AgentIndex>;
   home: string;
   onChange?: () => void;
@@ -216,6 +218,7 @@ export class CloudAgentState {
   /** The pending `awaitNewAgent`, if any. One at a time. */
   private newAgentWait: NewAgentWait | null = null;
   private managedPhone: string | null = null;
+  private defaultProvider: string | null = null;
   /**
    * Bumped by `signedOut`. Every list result belongs
    * to the account that was signed in when it started; one that lands after a
@@ -249,6 +252,7 @@ export class CloudAgentState {
         ? null
         : this.providers.map((provider) => ({ ...provider })),
       cloudProvidersError: this.providersError,
+      cloudDefaultProvider: this.defaultCloudProvider(),
       cloudAgentIndex: { ...this.agentIndex },
       cloudFreeLines: this.freeLines(),
       cloudAgentsError: this.agentsError,
@@ -308,21 +312,23 @@ export class CloudAgentState {
     read: number,
   ): Promise<void> {
     try {
-      const { providers, managedPhone } = await this.deps.providers.listCloudAgentProviders();
+      const { providers, managedPhone, defaultProvider } = await this.deps.providers.listCloudAgentProviders();
       if (generation !== this.generation || read !== this.viewReads) return;
       this.providers = providers.filter((provider) => provider.phrase !== null);
       this.managedPhone = managedPhone;
+      this.defaultProvider = defaultProvider;
       this.providersError = null;
     } catch (error) {
       if (generation !== this.generation || read !== this.viewReads) return;
       this.providers = null;
       this.managedPhone = null;
+      this.defaultProvider = null;
       this.providersError = messageOf(error);
     }
   }
 
-  /** Describe the catalog from the Agent Index, publishing when it lands. It
-   * never fails the provider list: without it the cards show names only, which
+  /** Picture the catalog from the Agent Index, publishing when it lands. It
+   * never fails the provider list: without it the rows show initials, which
    * needs no banner. */
   private async refreshAgentIndex(generation: number, read: number): Promise<void> {
     if (!this.deps.agentIndex) return;
@@ -330,7 +336,7 @@ export class CloudAgentState {
     try {
       index = await this.deps.agentIndex();
     } catch {
-      // Name-only cards; deploying does not depend on the description.
+      // Initials only; deploying does not depend on the Index.
     }
     if (generation !== this.generation || read !== this.viewReads) return;
     this.agentIndex = index;
@@ -351,6 +357,12 @@ export class CloudAgentState {
       // Ownership is unknown after a failed refresh; do not offer stale free lines.
       this.relabelRows();
     }
+  }
+
+  /** Null unless Plow both names a default and lists it with a phrase to text. */
+  private defaultCloudProvider(): CloudAgentProvider | null {
+    const provider = this.providers?.find(({ id }) => id === this.defaultProvider);
+    return provider ? { ...provider } : null;
   }
 
   /** A text-to-start link built only from the current server catalog. */
@@ -525,6 +537,7 @@ export class CloudAgentState {
     this.chatsNeedReactivation = false;
     this.providers = null;
     this.managedPhone = null;
+    this.defaultProvider = null;
     this.providersError = null;
     // Nothing in flight belongs to the next account either.
     this.viewReads += 1;

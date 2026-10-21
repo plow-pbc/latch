@@ -15,7 +15,6 @@ import {
   agentKind,
   cloudErrorCopy,
   cloudProviderPickerViewModel,
-  deployCards,
 } from "../cloudAgentViewModel.js";
 
 // Lift styles.css's hold on the first paint once the faces are in.
@@ -2073,77 +2072,36 @@ function sectionHeader(title, count, unit, action) {
 let justDeployed = null;
 const NEW_AGENT_HIGHLIGHT_MS = 2500; // .cloud-agent-new's animation in styles.css
 
-/** The deploy picker: a card per agent Plow offers, described by the Agent Index. */
-function openDeployModal(trigger, s, redraw) {
-  const cards = deployCards(s.cloudProviders ?? [], s.cloudAgentIndex ?? {});
-  const deploy = el("button", { class: "btn primary", text: "Deploy" });
-  deploy.disabled = true;
-  const cancel = el("button", { class: "btn", text: "Cancel" });
-  cancel.addEventListener("click", closeCloudModal);
-  const grid = el("div", { class: "deploy-grid" }, cards.map((card) => {
-    const button = el("button", { class: "deploy-card", attrs: { type: "button", "aria-pressed": "false" } }, [
-      el("span", { class: "deploy-card-top" }, [
-        logoMark(card.logo) ?? el("span", { class: "entity-mark", text: card.initial }),
-        el("span", { class: "deploy-card-name", text: card.name }),
-      ]),
-      card.blurb ? el("span", { class: "deploy-card-blurb", text: card.blurb }) : null,
-      el("span", { class: "deploy-card-byline", text: card.byline }),
-    ]);
-    button.addEventListener("click", () => {
-      for (const other of grid.children) {
-        other.classList.remove("selected");
-        other.setAttribute("aria-pressed", "false");
-      }
-      button.classList.add("selected");
-      button.setAttribute("aria-pressed", "true");
-      cloudModal.selected = card;
-      deploy.disabled = false;
-      deploy.textContent = `Deploy ${card.name}`;
-    });
-    return button;
-  }));
-  const panel = openCloudModal(trigger, [
-    el("div", { class: "deploy-head" }, [
-      el("div", { class: "group-title", text: "Deploy an agent" }),
-      el("span", { class: "faint", text: `${cards.length} agent${cards.length === 1 ? "" : "s"}` }),
-    ]),
-    grid,
-    el("div", { class: "deploy-foot" }, [
-      el("span", { class: "faint deploy-note", text: "Opens Messages with a setup text to Plow." }),
-      cancel,
-      deploy,
-    ]),
-  ], grid.firstElementChild);
+/** New agent: Messages opens with the setup text for the agent Plow deploys by
+    default, and this modal waits for that agent to arrive. */
+function openDeployModal(trigger, provider, redraw) {
+  const panel = openCloudModal(trigger, [], null);
   if (!panel) return;
   panel.classList.add("deploy-modal");
-  Object.assign(cloudModal, { kind: "deploy", selected: null, deployToken: null });
-  deploy.addEventListener("click", () => void deployAgent(panel, cloudModal.selected, redraw));
+  Object.assign(cloudModal, { kind: "deploy", deployToken: null });
+  showDeployWaiting(panel, provider, "waiting", redraw);
+  void deployAgent(panel, provider, redraw);
 }
 
-/** Open Messages with the card's setup text, then wait for the agent it makes.
+/** Open Messages with the provider's setup text, then wait for the agent it makes.
     The token is swapped only once Messages opened, so a failed retry keeps the
     running wait; a stale answer (closed modal, a later retry) is ignored. */
-async function deployAgent(panel, card, redraw) {
+async function deployAgent(panel, provider, redraw) {
   const modal = cloudModal;
   for (const button of panel.querySelectorAll("button")) button.disabled = true;
-  const opened = await window.domo.cloudNewAgentMessages(card.id).catch(() => false);
+  const opened = await window.domo.cloudNewAgentMessages(provider.id).catch(() => false);
   if (cloudModal !== modal) return;
-  if (!opened) {
-    // Main had no setup text to send: a failed refresh dropped Plow's catalog
-    // (its API mid-deploy, say). An sms: link itself always opens on macOS.
-    const note = panel.querySelector(".deploy-note");
-    note.textContent = "Plow isn't answering right now. Try again in a minute.";
-    note.classList.add("error");
-    for (const button of panel.querySelectorAll("button")) button.disabled = false;
-    return;
-  }
+  // Not opened: main had no setup text to send, because a failed refresh
+  // dropped Plow's catalog (its API mid-deploy, say). An sms: link itself
+  // always opens on macOS.
+  showDeployWaiting(panel, provider, opened ? "waiting" : "down", redraw);
+  if (!opened) return;
   const token = {};
   modal.deployToken = token;
-  showDeployWaiting(panel, card, false, redraw);
-  const agentId = await window.domo.cloudAwaitNewAgent(card.id);
+  const agentId = await window.domo.cloudAwaitNewAgent(provider.id);
   if (cloudModal?.deployToken !== token) return;
   if (!agentId) {
-    showDeployWaiting(panel, card, true, redraw);
+    showDeployWaiting(panel, provider, "timedOut", redraw);
     return;
   }
   justDeployed = { id: agentId, at: performance.now() };
@@ -2151,35 +2109,33 @@ async function deployAgent(panel, card, redraw) {
   await redraw();
 }
 
-function showDeployWaiting(panel, card, timedOut, redraw) {
-  const again = el("button", { class: "btn", text: "Open Messages again" });
-  again.addEventListener("click", () => void deployAgent(panel, card, redraw));
+function showDeployWaiting(panel, provider, phase, redraw) {
+  const copy = {
+    waiting: ["Send the text in Messages", `Messages opened with your setup text to Plow. Send it, and ${provider.name} will appear on this tab in about a minute. This closes on its own when it does.`],
+    timedOut: [`We haven't seen ${provider.name} yet`, "If you didn't send the text, open Messages again."],
+    down: ["Plow isn't answering right now", "Try again in a minute."],
+  }[phase];
+  const again = el("button", { class: "btn", text: phase === "down" ? "Try again" : "Open Messages again" });
+  again.addEventListener("click", () => void deployAgent(panel, provider, redraw));
   const close = el("button", { class: "btn", text: "Close" });
   close.addEventListener("click", closeCloudModal);
   panel.replaceChildren(
-    el("div", { class: "deploy-head" }, [el("div", { class: "group-title", text: `Deploying ${card.name}` })]),
+    el("div", { class: "deploy-head" }, [el("div", { class: "group-title", text: `Deploying ${provider.name}` })]),
     el("div", { class: "deploy-wait" }, [
-      timedOut ? null : el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
-      el("div", {
-        class: "deploy-wait-title",
-        text: timedOut ? `We haven't seen ${card.name} yet` : "Send the text in Messages",
-      }),
-      el("p", {
-        class: "faint",
-        text: timedOut
-          ? "If you didn't send the text, open Messages again."
-          : `Messages opened with your setup text to Plow. Send it, and ${card.name} will appear on this tab in about a minute. This closes on its own when it does.`,
-      }),
+      phase === "waiting" ? el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }) : null,
+      el("div", { class: "deploy-wait-title", text: copy[0] }),
+      el("p", { class: "faint", text: copy[1] }),
     ]),
     el("div", { class: "deploy-foot" }, [el("span", { class: "faint deploy-note" }), again, close]),
   );
+  close.focus();
 }
 
 function cloudSection(s, redraw) {
   const add = el("button", { class: "btn primary", text: "New agent" });
   const providerView = cloudProviderPickerViewModel(s.cloudProviders, s.cloudProvidersError);
-  add.disabled = !(s.cloudProviders?.length);
-  add.addEventListener("click", () => openDeployModal(add, s, redraw));
+  add.disabled = !s.cloudDefaultProvider;
+  add.addEventListener("click", () => openDeployModal(add, s.cloudDefaultProvider, redraw));
   const rows = s.cloudAgents.map((agent) => cloudEntityRow(agent, s, redraw));
   const notices = [];
   if (!s.cloudChatsLoaded) {
