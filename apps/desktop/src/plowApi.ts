@@ -138,6 +138,8 @@ export interface CloudAgentProvider {
 export interface CloudAgentProviders {
   managedPhone: string;
   providers: CloudAgentProvider[];
+  /** The provider Plow's default phrase starts — what New agent deploys — or null while it can't. */
+  defaultProvider: string | null;
 }
 
 interface MintedCredential {
@@ -606,7 +608,8 @@ export class PlowApi {
       }
       return { id: row.id, name: row.name, phrase: row.phrases[0] ?? null };
     });
-    return { managedPhone: root.managed_phone, providers };
+    const defaultProvider = typeof root.default_provider === "string" ? root.default_provider : null;
+    return { managedPhone: root.managed_phone, providers, defaultProvider };
   }
 
   /** List the Google accounts available to Gmail and Calendar. */

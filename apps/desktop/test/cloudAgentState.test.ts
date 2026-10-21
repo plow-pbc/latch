@@ -89,6 +89,7 @@ function build(options: {
   listChats?: () => Promise<CloudChatOption[]>;
   listLines?: () => Promise<CloudLineOption[]>;
   listProviders?: () => Promise<CloudAgentProvider[]>;
+  defaultProvider?: string | null;
   remove?: (agentId: string) => Promise<void>;
   onChange?: () => void;
   agentIndex?: () => Promise<AgentIndex>;
@@ -131,7 +132,7 @@ function build(options: {
         calls.push("listProviders");
         return { managedPhone: "+15551234567", providers: options.listProviders
           ? await options.listProviders()
-          : [{ id: "provider/default", name: "Default", phrase: "Start Default" }] };
+          : [{ id: "provider/default", name: "Default", phrase: "Start Default" }], defaultProvider: options.defaultProvider ?? null };
       },
     },
     lines: {
@@ -615,16 +616,32 @@ describe("CloudAgentState text-to-start", () => {
     expect(state.newAgentSmsUrl("two")).toBeNull();
   });
 
+  it.each([
+    ["the provider Plow names", "two", "two"],
+    ["nothing when Plow names none", null, null],
+    ["nothing when Plow names one it lists without a phrase", "self_hosted", null],
+  ])("offers New agent %s", async (_case, named, offered) => {
+    const { state } = build({ defaultProvider: named, listProviders: async () => [
+      { id: "one", name: "One", phrase: "Start One" },
+      { id: "two", name: "Two", phrase: "Create an agent for me" },
+      { id: "self_hosted", name: "Self-hosted", phrase: null },
+    ] });
+    await state.refresh();
+    expect(state.state().cloudDefaultProvider?.id ?? null).toBe(offered);
+  });
+
   it("does not use a stale catalog after a failed refresh", async () => {
     let fail = false;
-    const { state } = build({ listProviders: async () => {
+    const { state } = build({ defaultProvider: "one", listProviders: async () => {
       if (fail) throw new Error("unavailable");
       return [{ id: "one", name: "One", phrase: "Start One" }];
     } });
     await state.refresh();
+    expect(state.state().cloudDefaultProvider?.id).toBe("one");
     fail = true;
     await state.refresh();
     expect(state.newAgentSmsUrl("one")).toBeNull();
+    expect(state.state().cloudDefaultProvider).toBeNull();
   });
 
   it("moves an existing agent without creating or activating", async () => {
@@ -664,11 +681,11 @@ describe("CloudAgentState text-to-start", () => {
   });
 });
 
-describe("CloudAgentState deploy catalog", () => {
-  const LIFE = { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88, verified: true, rank: 0, logo: null };
+describe("CloudAgentState Agent Index logos", () => {
+  const LIFE = { logo: "data:image/png;base64,iVBORw0KGgo=" };
 
   it.each([
-    ["describes agents once the Index answers", (index: Deferred<AgentIndex>) => index.resolve({ "exe:life": LIFE }), { "exe:life": LIFE }],
+    ["pictures agents once the Index answers", (index: Deferred<AgentIndex>) => index.resolve({ "exe:life": LIFE }), { "exe:life": LIFE }],
     ["keeps the provider list when the Index fails", (index: Deferred<AgentIndex>) => index.reject(new Error("offline")), {}],
   ] as const)("%s, without holding up the roster", async (_case, settle, expected) => {
     const index = deferred<AgentIndex>();

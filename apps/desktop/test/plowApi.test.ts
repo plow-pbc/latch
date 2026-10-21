@@ -475,19 +475,22 @@ describe("PlowApi", () => {
     }[why]);
   });
 
-  it("reads the public signup catalog without authentication and normalizes phrases", async () => {
+  it.each([
+    ["the provider Plow's default phrase starts", "exe:life", "exe:life"],
+    ["no default from a Plow that names none", undefined, null],
+  ])("reads the public signup catalog without authentication, normalizing phrases, with %s", async (_case, named, defaultProvider) => {
     const providers = [
       { id: "exe:life", name: "Life", phrases: ["Start Life", "Life alias"] },
       { id: "self_hosted", name: "Self-hosted", phrases: [] },
     ];
     const { fetchImpl, calls } = recordingFetch([{ status: 200, body: {
-      managed_phone: "+15551234567", providers,
+      managed_phone: "+15551234567", providers, default_provider: named,
     } }]);
     const result = await new PlowApi("https://stub.invalid", fetchImpl).listCloudAgentProviders();
     expect(result).toEqual({ managedPhone: "+15551234567", providers: [
       { id: "exe:life", name: "Life", phrase: "Start Life" },
       { id: "self_hosted", name: "Self-hosted", phrase: null },
-    ] });
+    ], defaultProvider });
     expect(calls[0].url).toBe("https://stub.invalid/v1/signup");
     expect(calls[0].init.headers.authorization).toBeUndefined();
   });
