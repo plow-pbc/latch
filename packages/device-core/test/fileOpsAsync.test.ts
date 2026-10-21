@@ -10,8 +10,8 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { scratchDir } from "./pluginFixtures.js";
 
 let gate: Promise<void> = Promise.resolve();
 let openGate: () => void = () => {};
@@ -54,11 +54,7 @@ afterEach(async () => {
   closeGate();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-fsasync-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-fsasync-", cleanups);
 
 /** How many times the interval must fire while the read is outstanding. */
 const REQUIRED_TICKS = 3;

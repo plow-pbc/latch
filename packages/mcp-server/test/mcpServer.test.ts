@@ -7,7 +7,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { canonicalize, JSONValue, jv } from "@domo/protocol";
@@ -32,6 +31,7 @@ import {
   toAuthInfo,
 } from "@domo/mcp-server";
 import { callTool, parse, pollUntil, rpc } from "./client.js";
+import { scratchDir } from "./scratch.js";
 
 // The cases that run a real command go through seatbelt (`sandbox-exec`),
 // which is the Mac's own; off it the spawn fails before the case's own claim
@@ -43,11 +43,7 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-mcp-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-mcp-", cleanups);
 
 const AGENT: RelayAuth = { agent_id: "agent-1", agent_name: "Agent One", scopes: ["relay:call"] };
 const OTHER: RelayAuth = { agent_id: "agent-2", agent_name: "Agent Two", scopes: ["relay:call"] };

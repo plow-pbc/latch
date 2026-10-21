@@ -18,8 +18,8 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { scratchDir } from "./scratch.js";
 
 /** Opened by the test; until then every realpath call hangs. */
 let gate: Promise<void> = Promise.resolve();
@@ -77,11 +77,7 @@ afterEach(async () => {
   closeGate();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-budget-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-budget-", cleanups);
 
 describe("the budget fires while a slow path resolution is still in flight", () => {
   it("plow_read_file defers instead of returning late", async () => {

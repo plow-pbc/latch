@@ -8,7 +8,6 @@
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { encString, masterKeys } from "../src/browser/vaultCrypto.js";
@@ -19,17 +18,14 @@ import { VaultKeyStore } from "../src/browser/vaultKeyStore.js";
 import { legacyVaultPresent, liveLegacyVaultServerPids, migrateLegacyVault } from "../src/browser/vaultMigrate.js";
 import { VaultAccount } from "../src/browser/vaultSecretStore.js";
 import { VaultStore } from "../src/browser/vaultStore.js";
+import { scratchDir } from "./pluginFixtures.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-migrate-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("vault-migrate-", cleanups);
 
 const SCHEMA = `
 CREATE TABLE users (uuid TEXT PRIMARY KEY, email TEXT, akey TEXT, private_key TEXT);

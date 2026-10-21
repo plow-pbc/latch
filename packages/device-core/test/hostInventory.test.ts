@@ -6,7 +6,6 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   AUTOMATION_APPS,
@@ -20,6 +19,7 @@ import {
   requestFolderAccess,
   scriptedProbes,
 } from "@domo/device-core";
+import { scratchDir } from "./pluginFixtures.js";
 
 const ON_MAC = process.platform === "darwin";
 
@@ -27,11 +27,7 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-inv-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-inv-", cleanups);
 
 /** A child runner that answers from a table and records what ran. */
 function runner(table: Record<string, { exitCode: number; output?: string }>) {

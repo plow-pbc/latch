@@ -5,21 +5,17 @@
  * collapsing them is the incident vaultSecretStore.ts documents.
  */
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VAULT_KEY_BYTES, VaultKeyStore } from "../src/browser/vaultKeyStore.js";
+import { scratchDir } from "./pluginFixtures.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-key-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("vault-key-", cleanups);
 
 describe("VaultKeyStore", () => {
   it("is empty before any key exists, and ok after one is written", () => {

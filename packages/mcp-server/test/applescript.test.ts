@@ -8,9 +8,6 @@
  * that raises the error text itself, the way the run_command cases do.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { Capability, JSONValue, jv } from "@domo/protocol";
 import {
   DeviceAgent,
@@ -21,6 +18,7 @@ import {
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer, RelayAuth } from "@domo/mcp-server";
 import { callTool } from "./client.js";
+import { scratchDir } from "./scratch.js";
 
 const ON_MAC = process.platform === "darwin";
 
@@ -29,11 +27,7 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-mcp-as-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-mcp-as-", cleanups);
 
 const AGENT: RelayAuth = { agent_id: "agent-1", agent_name: "Agent One", scopes: ["relay:call"] };
 

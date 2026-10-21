@@ -5,23 +5,19 @@
  * and no line ever carries a value.
  */
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { LocalVault } from "../src/browser/localVault.js";
 import { VaultKeyStore } from "../src/browser/vaultKeyStore.js";
 import { VaultStore } from "../src/browser/vaultStore.js";
+import { scratchDir } from "./pluginFixtures.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "local-vault-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("local-vault-", cleanups);
 
 function vaultIn(dir: string): { vault: LocalVault; auditPath: string } {
   const auditPath = path.join(dir, "credential-audit.log");

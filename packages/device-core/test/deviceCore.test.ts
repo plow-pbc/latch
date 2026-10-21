@@ -5,7 +5,6 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   Capability,
@@ -23,16 +22,13 @@ import {
   PolicyDelegate,
   PolicyEngine,
 } from "@domo/device-core";
+import { scratchDir } from "./pluginFixtures.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-dc-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-dc-", cleanups);
 
 describe("FileOps bounds", () => {
   it("reads within scope, rejects outside", async () => {

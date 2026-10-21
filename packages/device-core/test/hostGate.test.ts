@@ -11,7 +11,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { canonicalize } from "@domo/protocol";
 import {
@@ -31,16 +30,13 @@ import {
   stderrHint,
   tildeRelative,
 } from "@domo/device-core";
+import { scratchDir } from "./pluginFixtures.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-gate-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-gate-", cleanups);
 
 const HOME = "/Users/probe";
 
