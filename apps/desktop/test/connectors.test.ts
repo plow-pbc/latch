@@ -121,6 +121,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** The panel, and the audit log, once ada@example.com has connected. */
+const ADA_CONNECTED = {
+  busy: false,
+  message: "",
+  noteKind: "error",
+  google: {
+    accounts: [account("ada@example.com", { isDefault: true })],
+    connecting: false,
+  },
+};
+const ADA_CONNECTED_AUDIT = [{
+  event: "connector_connected",
+  fields: { provider: "google", account: "ada@example.com" },
+}];
+
 describe("connecting a Google account", () => {
   it("publishes changed grants when an existing account is reconnected", async () => {
     const plow = new FakePlow();
@@ -154,19 +169,8 @@ describe("connecting a Google account", () => {
     expect(opened).toEqual([CONNECT_URL]);
     expect(waits).toEqual([CONNECTOR_POLL_INTERVAL_MS]);
     expect(plow.listCredentials).toEqual([CREDENTIAL, CREDENTIAL]);
-    expect(state).toEqual({
-      busy: false,
-      message: "",
-      noteKind: "error",
-      google: {
-        accounts: [account("ada@example.com", { isDefault: true })],
-        connecting: false,
-      },
-    });
-    expect(audits).toEqual([{
-      event: "connector_connected",
-      fields: { provider: "google", account: "ada@example.com" },
-    }]);
+    expect(state).toEqual(ADA_CONNECTED);
+    expect(audits).toEqual(ADA_CONNECTED_AUDIT);
   });
 
   it("keeps earlier accounts in successive connection snapshots", async () => {
@@ -255,19 +259,8 @@ describe("connecting a Google account", () => {
     polling.abort(new DOMException("The operation was aborted.", "TimeoutError"));
     const state = await pending;
 
-    expect(state).toEqual({
-      busy: false,
-      message: "",
-      noteKind: "error",
-      google: {
-        accounts: [account("ada@example.com", { isDefault: true })],
-        connecting: false,
-      },
-    });
-    expect(audits).toEqual([{
-      event: "connector_connected",
-      fields: { provider: "google", account: "ada@example.com" },
-    }]);
+    expect(state).toEqual(ADA_CONNECTED);
+    expect(audits).toEqual(ADA_CONNECTED_AUDIT);
   });
 
   it("refuses a second action while the first is in flight", async () => {
