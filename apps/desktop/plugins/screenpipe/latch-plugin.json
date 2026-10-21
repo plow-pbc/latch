@@ -1,0 +1,19 @@
+{
+  "name": "screenpipe",
+  "title": "Screenpipe history",
+  "summary": "Find what you saw and heard with Screenpipe running on this Mac.",
+  "version": "0.1.0",
+  "command": "plow-screenpipe",
+  "runtime": { "binaries": [] },
+  "exec": { "argv": ["/bin/sh", "cli.sh"] },
+  "env": {
+    "SCREENPIPE_API_PORT": { "fixed": "3030" },
+    "SCREENPIPE_API_KEY_FILE": { "fixed": "${owner_home}/.config/plow-latch/screenpipe-api-key" },
+    "SCREENPIPE_INSTALL_DIR": { "fixed": "${owner_home}/.screenpipe/latch-cli" }
+  },
+  "argv": {
+    "read": [["health"], ["search"], ["--help"]],
+    "write": [["install"]]
+  },
+  "skill": "skill.md"
+}
