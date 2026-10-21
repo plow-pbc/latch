@@ -7,7 +7,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { canonicalize, JSONValue, jv } from "@domo/protocol";
@@ -17,6 +16,7 @@ import {
   DeviceAgent,
   HeadlessPolicy,
   loadPlugins,
+  MAX_BINARY_WRITE_BYTES,
   MAX_FILE_BYTES,
   PolicyDelegate,
 } from "@domo/device-core";
@@ -31,6 +31,7 @@ import {
   toAuthInfo,
 } from "@domo/mcp-server";
 import { callTool, parse, pollUntil, rpc } from "./client.js";
+import { scratchDir } from "./scratch.js";
 
 // The cases that run a real command go through seatbelt (`sandbox-exec`),
 // which is the Mac's own; off it the spawn fails before the case's own claim
@@ -42,11 +43,7 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-mcp-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-mcp-", cleanups);
 
 const AGENT: RelayAuth = { agent_id: "agent-1", agent_name: "Agent One", scopes: ["relay:call"] };
 const OTHER: RelayAuth = { agent_id: "agent-2", agent_name: "Agent Two", scopes: ["relay:call"] };
@@ -580,6 +577,40 @@ describe("review findings", () => {
       const identified = parse(await rpc(server, "tools/list", {}, AGENT));
       expect(anonymous.result?.tools).toEqual(identified.result?.tools);
       expect(parse(await rpc(server, "server/discover", {})).result).toBeDefined();
+    });
+  });
+
+  // latch#539: a binary file the agent holds (an attachment, a PDF) goes in as
+  // bytes, never retyped by the model or relayed through a file host.
+  describe("plow_write_file with content_base64", () => {
+    it("writes exactly the bytes it was given, up to the ceiling", async () => {
+      const { server } = makeServer();
+      const file = path.join(tempDir(), "every-byte.bin");
+      const bytes = Buffer.alloc(MAX_BINARY_WRITE_BYTES, Buffer.from(Array.from({ length: 256 }, (_, n) => n)));
+
+      const { isError, payload } = await callTool(server, "plow_write_file", { path: file, content_base64: bytes.toString("base64") }, AGENT);
+
+      expect(isError, JSON.stringify(payload)).toBe(false);
+      expect(payload.bytes).toBe(MAX_BINARY_WRITE_BYTES);
+      expect(fs.readFileSync(file).equals(bytes)).toBe(true);
+    });
+
+    it.each([
+      ["both", { content: "a", content_base64: "YQ==" }, /exactly one/],
+      ["neither", {}, /exactly one/],
+      ["something that is not base64", { content_base64: "not base64!" }, /is not base64/],
+      ["an unpadded tail", { content_base64: "YQ" }, /is not base64/],
+      ["a run of padding (quadratic under /=*$/)", { content_base64: "=".repeat(4 * 1024 * 1024 - 1) + "A" }, /is not base64/],
+      ["a byte over the ceiling", { content_base64: Buffer.alloc(MAX_BINARY_WRITE_BYTES + 1).toString("base64") }, /single-call limit/],
+    ])("refuses %s, writing nothing", async (_what, args, error) => {
+      const { server } = makeServer();
+      const file = path.join(tempDir(), "x.bin");
+
+      const { isError, payload } = await callTool(server, "plow_write_file", { path: file, ...args }, AGENT);
+
+      expect(isError).toBe(true);
+      expect(JSON.stringify(payload)).toMatch(error);
+      expect(fs.existsSync(file)).toBe(false);
     });
   });
 

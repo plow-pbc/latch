@@ -14,6 +14,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { Capability, isWithinAsync } from "@domo/protocol";
+import { MAX_BINARY_WRITE_BYTES } from "./fileOps.js";
 import { Skill, SkillRegistry } from "./skills.js";
 
 /** Audit `source` for a grant the carve-out answered — no reviewer, no dialog. */
@@ -89,6 +90,10 @@ long as a human takes.
 
 Ground rules:
 - Prefer a subfolder per task or project over loose files at the top level.
+- A file you hold that is not text — an attachment the owner sent, an image, a
+  PDF — goes in whole: \`plow_write_file\` with \`content_base64\` (its bytes,
+  base64) instead of \`content\`, up to ${Math.floor(MAX_BINARY_WRITE_BYTES / 1e6)} MB in one call. Never
+  retype it, split it, or relay it through a file-sharing site.
 - The folder may already contain files the owner or the Plow desktop app put
   there (for example \`brain/\` or \`skills/\`); read them if relevant, do not
   reorganize or delete what you did not create.

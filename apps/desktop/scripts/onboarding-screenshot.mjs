@@ -90,10 +90,10 @@ ipcMain.handle("cloud:openMessages", async (_event, agentId, draft) => {
   openedDraft = draft;
 });
 // "pending" holds every row on Checking.
-ipcMain.handle("onboarding:gatekeeperPreview", async (_event, _preset, index) => {
+ipcMain.handle("onboarding:gatekeeperPreview", async () => {
   const results = currentFixture.gatekeeper?.results;
   if (results === "pending" || !results) return new Promise(() => {});
-  return results[index];
+  return results;
 });
 ipcMain.handle("onboarding:finish", async (_event, destination) => {
   finishCalls += 1;

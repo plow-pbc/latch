@@ -43,10 +43,10 @@ window.domo = {
     publish({ ...current, telemetryEnabled: enabled === true }),
   gatekeeperPresets: async () => selected.gatekeeper?.presets ?? null,
   // "pending" holds every row on Checking.
-  gatekeeperPreview: (_preset, index) => {
+  gatekeeperPreview: () => {
     const results = selected.gatekeeper?.results;
     if (results === "pending" || !results) return new Promise(() => {});
-    return Promise.resolve(results[index]);
+    return Promise.resolve(results);
   },
   cloudAgents: async () => selected.cloud ?? null,
   cloudOpenMessages: async () => {},

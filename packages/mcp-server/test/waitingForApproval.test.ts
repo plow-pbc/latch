@@ -14,7 +14,6 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { JSONValue } from "@domo/protocol";
 import {
@@ -26,6 +25,7 @@ import {
 import { createDomoMcpServer, DeferredResults, DomoMcpServer } from "@domo/mcp-server";
 import { bareToolNames } from "./toolNames.js";
 import { callTool } from "./client.js";
+import { scratchDir } from "./scratch.js";
 
 const AGENT = { agent_id: "agent-1", agent_name: "Agent One" };
 
@@ -34,11 +34,7 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-waiting-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-waiting-", cleanups);
 
 /** A human who never comes back to their desk. */
 const NEVER_ANSWERS: PolicyDelegate = { decideIntent: () => new Promise(() => {}) };

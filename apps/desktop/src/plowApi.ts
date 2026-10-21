@@ -138,6 +138,8 @@ export interface CloudAgentProvider {
 export interface CloudAgentProviders {
   managedPhone: string;
   providers: CloudAgentProvider[];
+  /** The provider Plow's default phrase starts — what New agent deploys — or null while it can't. */
+  defaultProvider: string | null;
 }
 
 interface MintedCredential {
@@ -523,6 +525,16 @@ export class PlowApi {
   }
 
   /**
+   * Judge example requests against the owner's own words on Plow's public
+   * Gatekeeper demo route — the one the web demo uses. No credential: setup
+   * shows the Gatekeeper before there is an account. The answer is returned
+   * as read; `gatekeeperPreview.ts` decides what it means.
+   */
+  async gatekeeperDemo(task: string, requests: unknown[]): Promise<unknown> {
+    return this.call<unknown>("POST", "/v1/latch/gatekeeper/demo", { body: { task, requests } });
+  }
+
+  /**
    * The only way to learn which account you just logged into: verify returns a
    * token and nothing else. Also the authority on the agent endpoint — the app
    * never constructs that URL itself.
@@ -532,17 +544,22 @@ export class PlowApi {
     return { uid: data.uid };
   }
 
+  /**
+   * Sent on every (re)connect, with this build's version, so the device row
+   * always says which Latch the Mac is running (#357).
+   */
   async registerRelayDevice(
     token: string,
     deviceId: string,
     hostname: string,
+    appVersion: string,
   ): Promise<RelayDeviceInfo> {
     const data = await this.call<{
       device_id?: unknown;
       mcp_url?: unknown;
     }>("PUT", `/v1/relay/devices/${encodeURIComponent(deviceId)}`, {
       token,
-      body: { hostname },
+      body: { hostname, app_version: appVersion },
     });
     if (
       data.device_id !== deviceId || typeof data.mcp_url !== "string"
@@ -591,7 +608,8 @@ export class PlowApi {
       }
       return { id: row.id, name: row.name, phrase: row.phrases[0] ?? null };
     });
-    return { managedPhone: root.managed_phone, providers };
+    const defaultProvider = typeof root.default_provider === "string" ? root.default_provider : null;
+    return { managedPhone: root.managed_phone, providers, defaultProvider };
   }
 
   /** List the Google accounts available to Gmail and Calendar. */

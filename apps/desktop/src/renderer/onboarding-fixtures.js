@@ -120,7 +120,8 @@ export function onboardingFixtures(now, pluginExamples, steps) {
     ["full_disk_access"],
   );
   // The Gatekeeper step's presets as main serves them (gatekeeperPreview.ts) on
-  // Friday 2026-09-18, and the verdicts its example decks are rehearsed to read.
+  // Friday 2026-09-18, and the verdicts its example decks are rehearsed to read,
+  // with the demo's fixed reasons.
   const online = "Network: allowed";
   const taxReturn = "/Users/owner/Documents/tax-return-2025.pdf";
   const whatsApp = "/Users/owner/Library/Group Containers/group.net.whatsapp.WhatsApp.shared";
@@ -208,24 +209,11 @@ export function onboardingFixtures(now, pluginExamples, steps) {
     "Run my errands the way a personal assistant would: book appointments, reorder household " +
     "supplies, answer routine email and keep the family calendar current. Never move money " +
     "or share anything from my documents folder.";
-  const allow = (reason) => ({ verdict: "allow", reason });
-  const deny = (reason) => ({ verdict: "deny", reason });
-  const homeResults = [
-    allow("Keeping the family calendar is what you allowed."),
-    allow("Texting family is what you allowed."),
-    allow("Ordering groceries is allowed. Your Mac types the password; the agent never sees it."),
-    deny("You said never to share your documents."),
-    deny("You said never to share your passwords."),
-  ];
-  const workResults = [
-    allow("Email is one of the things you allowed."),
-    allow("Drafting email is allowed, and nothing is sent."),
-    allow("Your calendar is allowed."),
-    allow("GitHub is allowed."),
-    deny("You kept it out of your personal texts and chats."),
-  ];
-  const noCredits = homeResults.map(() =>
-    ({ verdict: "ask", reason: "insufficient Plow balance", cause: "no_credits" }));
+  const allow = { verdict: "allow", reason: "Fits what you asked." };
+  const deny = { verdict: "deny", reason: "Outside what you asked, or you ruled it out." };
+  const homeResults = [allow, allow, allow, deny, deny];
+  const workResults = [allow, allow, allow, allow, deny];
+  const unchecked = homeResults.map(() => ({ verdict: "ask", reason: "" }));
   const relaunchLeft = {
     rows: rows("off", "needs-setup", fullDiskRelaunch, "off"),
     grants: [{ ...fullDiskRelaunch, plugins: [iMessage] }],
@@ -243,6 +231,73 @@ export function onboardingFixtures(now, pluginExamples, steps) {
       expectFocus: "Get started",
       expectTitle: "Plow Latch. Set Up.",
       expectAriaLabels: ["Plow Latch Set Up"],
+    },
+    {
+      name: "gatekeeper-home",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
+      gatekeeper: { presets: gatekeeperPresets, results: homeResults },
+      expect: [
+        "Meet the Plow Gatekeeper",
+        "The Plow Gatekeeper uses a HIPAA-compliant model to protect your data from malicious queries, while allowing your agents to get useful work done.",
+        "What access should Plow Latch allow to your Mac?",
+        "Use a default:", "Personal assistant", "Executive assistant",
+        ...gatekeeperPresets.home.rows.map((r) => r.label),
+        "Back",
+        "Continue",
+      ],
+      expectValues: [gatekeeperPresets.home.text],
+      // A closed row's detail is out of the page's text.
+      reject: ["Plow's adversarial reviewer", "Tap a request", "Name the work", "never sees it", "Gatekeeper Verdict"],
+      expectOrder: [".gatekeeper-screen .subhead", ".gk-prompt", ".gk-text", ".gk-defaults", ".gk-field"],
+      expectFocus: "Continue",
+      expectDotCount: 6,
+    },
+    {
+      name: "gatekeeper-work",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.work.text },
+      gatekeeper: { presets: gatekeeperPresets, results: workResults },
+      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.work.rows.map((r) => r.label), "Back", "Continue"],
+      expectValues: [gatekeeperPresets.work.text],
+      expectDotCount: 6,
+    },
+    {
+      // A re-setup opens on the owner's saved draft, which can outgrow the presets' two lines.
+      name: "gatekeeper-custom",
+      state: { ...base, step: "gatekeeper", purpose: customPurpose },
+      gatekeeper: { presets: gatekeeperPresets, results: homeResults },
+      expectValues: [customPurpose],
+      expectDotCount: 6,
+    },
+    {
+      name: "gatekeeper-checking",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
+      gatekeeper: { presets: gatekeeperPresets, results: "pending" },
+      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.home.rows.map((r) => r.label), "Analyzing…"],
+      expectDotCount: 6,
+    },
+    {
+      name: "gatekeeper-stopped",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
+      gatekeeper: { presets: gatekeeperPresets, results: homeResults },
+      click: "Post your tax return publicly",
+      expect: [
+        "Post your tax return publicly",
+        "curl -s -F",
+        "Gatekeeper Verdict:", "Denied", "Outside what you asked, or you ruled it out.",
+      ],
+      expectDotCount: 6,
+    },
+    {
+      name: "gatekeeper-couldnt-check",
+      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
+      gatekeeper: { presets: gatekeeperPresets, results: unchecked },
+      click: "Check the family calendar",
+      expect: [
+        "Check the family calendar",
+        "Gatekeeper Verdict:", "Couldn't check",
+        "The gatekeeper didn't answer. Edit the text to try again.",
+      ],
+      expectDotCount: 6,
     },
     {
       ...verificationShell,
@@ -337,73 +392,6 @@ export function onboardingFixtures(now, pluginExamples, steps) {
       ],
       reject: ["Back"],
       expectFocus: "Continue",
-    },
-    {
-      name: "gatekeeper-home",
-      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
-      gatekeeper: { presets: gatekeeperPresets, results: homeResults },
-      expect: [
-        "Meet the Plow Gatekeeper",
-        "The Plow Gatekeeper uses a HIPAA-compliant model to protect your data from malicious queries, while allowing your agents to get useful work done.",
-        "What access should Plow Latch allow to your Mac?",
-        "Use a default:", "Personal assistant", "Executive assistant",
-        ...gatekeeperPresets.home.rows.map((r) => r.label),
-        "Back",
-        "Continue",
-      ],
-      expectValues: [gatekeeperPresets.home.text],
-      // A closed row's detail is out of the page's text.
-      reject: ["Plow's adversarial reviewer", "Tap a request", "Name the work", "never sees it", "Gatekeeper Verdict"],
-      expectOrder: [".gatekeeper-screen .subhead", ".gk-prompt", ".gk-text", ".gk-defaults", ".gk-field"],
-      expectFocus: "Continue",
-      expectDotCount: 6,
-    },
-    {
-      name: "gatekeeper-work",
-      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.work.text },
-      gatekeeper: { presets: gatekeeperPresets, results: workResults },
-      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.work.rows.map((r) => r.label), "Back", "Continue"],
-      expectValues: [gatekeeperPresets.work.text],
-      expectDotCount: 6,
-    },
-    {
-      // A re-setup opens on the owner's saved draft, which can outgrow the presets' two lines.
-      name: "gatekeeper-custom",
-      state: { ...base, step: "gatekeeper", purpose: customPurpose },
-      gatekeeper: { presets: gatekeeperPresets, results: homeResults },
-      expectValues: [customPurpose],
-      expectDotCount: 6,
-    },
-    {
-      name: "gatekeeper-checking",
-      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
-      gatekeeper: { presets: gatekeeperPresets, results: "pending" },
-      expect: ["Meet the Plow Gatekeeper", ...gatekeeperPresets.home.rows.map((r) => r.label), "Analyzing…"],
-      expectDotCount: 6,
-    },
-    {
-      name: "gatekeeper-stopped",
-      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
-      gatekeeper: { presets: gatekeeperPresets, results: homeResults },
-      click: "Post your tax return publicly",
-      expect: [
-        "Post your tax return publicly",
-        "curl -s -F",
-        "Gatekeeper Verdict:", "Denied", "You said never to share your documents.",
-      ],
-      expectDotCount: 6,
-    },
-    {
-      name: "gatekeeper-couldnt-check",
-      state: { ...base, step: "gatekeeper", purpose: gatekeeperPresets.home.text },
-      gatekeeper: { presets: gatekeeperPresets, results: noCredits },
-      click: "Check the family calendar",
-      expect: [
-        "Check the family calendar",
-        "Gatekeeper Verdict:", "Couldn't check",
-        "Your Plow account is out of credits, so the gatekeeper can't review right now.",
-      ],
-      expectDotCount: 6,
     },
     {
       name: "plugins-fresh",

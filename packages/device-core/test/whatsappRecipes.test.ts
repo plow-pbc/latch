@@ -15,7 +15,6 @@
  * are executed; the column NAMES are still only as good as that dump.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -25,54 +24,16 @@ import {
   whatsappFallbackArgv,
   whatsappSkillFor,
 } from "@domo/device-core";
+import { CORE_DATA_EPOCH, cleanup, cleanupTempDirs, query, run, sqlite, tempDir as harnessTempDir } from "./recipeHarness.js";
 
-const SQLITE = "/usr/bin/sqlite3";
-/** Core Data counts from 2001-01-01; the skill's whole date story rests on it. */
-const CORE_DATA_EPOCH = 978307200;
 
-const dirs: string[] = [];
-function tempDir(): string {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "domo-wa-recipe-"));
-  dirs.push(d);
-  return d;
-}
-
-/**
- * Every child this file spawns goes through here, so the TZ pin has ONE owner.
- *
- * The recipes render dates with 'localtime', which means the machine's zone.
- * Left to the environment, an assertion on a rendered date passes or fails on
- * where the suite runs.
- */
-function run(cmd: string, args: string[], opts: { cwd?: string } = {}): string {
-  return execFileSync(cmd, args, {
-    ...opts,
-    encoding: "utf8",
-    stdio: "pipe",
-    env: { ...process.env, TZ: "UTC" },
-  });
-}
-
-const sqlite = (args: string[], opts: { cwd?: string } = {}): string =>
-  run(SQLITE, args, opts);
+const tempDir = (): string => harnessTempDir("domo-wa-recipe-");
 
 /** The fallback, as an agent would invoke it: argv straight from the skill. */
 const runFallback = (store: string, query: string, cwd: string): string => {
   const argv = whatsappFallbackArgv(store, query);
   return run(argv[0], argv.slice(1), { cwd });
 };
-
-/**
- * Run SQL against a store and hand back the rows, split into cells.
- *
- * `-list` rather than the `-csv` the skill teaches an agent to use: csv quotes
- * any cell with a space in it, and unquoting here would be a second parser to
- * get wrong. The recipes under test are the SQL, not the output format.
- */
-function query(store: string, sql: string): string[][] {
-  const out = sqlite(["-readonly", "-list", store, sql]).trim();
-  return out === "" ? [] : out.split("\n").map((line) => line.split("|"));
-}
 
 /**
  * A store shaped like WhatsApp's: the three tables the skill names, in WAL
@@ -144,12 +105,7 @@ beforeAll(() => {
   store = makeStore(storeDir);
 });
 
-const cleanup = (d: string): void => {
-  // quiescentStore() drops write permission to reproduce the real failure.
-  fs.chmodSync(d, 0o755);
-  fs.rmSync(d, { recursive: true, force: true });
-};
-afterEach(() => dirs.splice(0).forEach(cleanup));
+afterEach(cleanupTempDirs);
 afterAll(() => cleanup(storeDir));
 
 describe("the recipes the skill publishes", () => {

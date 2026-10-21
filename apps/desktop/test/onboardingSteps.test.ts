@@ -7,6 +7,12 @@ import {
 } from "../src/onboardingSteps.js";
 
 describe("the setup step table", () => {
+  it("opens on the Gatekeeper, before sign-in", () => {
+    expect(SETUP_STEPS.map(({ step }) => step)).toEqual([
+      "gatekeeper", "activate", "privacy", "plugins", "access", "availability",
+    ]);
+  });
+
   it("gives every screen in the table a dot, in order", () => {
     SETUP_STEPS.forEach(({ step }, index) => {
       expect(setupProgress(step)).toEqual({ index, total: SETUP_STEPS.length });
@@ -23,15 +29,16 @@ describe("the setup step table", () => {
 
   // `activate`/`waiting` are false because the activation secret lives in
   // memory and never on disk: a resumed setup pointing there would show a code
-  // it cannot redeem.
+  // it cannot redeem. `gatekeeper` is false because it comes before sign-in,
+  // and a relaunch holding a credential is past it.
   it.each([
     ["activate", false],
     ["waiting", false],
+    ["gatekeeper", false],
     ["welcome", false],
     ["done", false],
     ["nonsense", false],
     ["privacy", true],
-    ["gatekeeper", true],
     ["plugins", true],
     ["access", true],
     ["availability", true],
@@ -40,10 +47,10 @@ describe("the setup step table", () => {
   });
 
   it.each([
-    ["activate", "welcome"],
-    ["waiting", "welcome"],
-    ["gatekeeper", "privacy"],
-    ["plugins", "gatekeeper"],
+    ["gatekeeper", "welcome"],
+    ["activate", "gatekeeper"],
+    ["waiting", "gatekeeper"],
+    ["plugins", "privacy"],
     // Access may have been skipped entirely, so Availability goes back past it.
     ["access", "plugins"],
     ["availability", "plugins"],

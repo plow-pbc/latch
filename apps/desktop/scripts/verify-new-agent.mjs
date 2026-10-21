@@ -41,7 +41,8 @@ app.whenReady().then(async () => {
   const { PlowApi } = await import(path.join(desktop, "dist/plowApi.js"));
   const { saveSettings, loadSettings } = await import(path.join(desktop, "dist/settings.js"));
   saveSettings(home, { ...loadSettings(home), relayCredential: "fixture_device_credential" });
-  let providers = [{ id: "exe:life", name: "Life", phrases: ["Start Life & café?", "alias"] }];
+  const providers = [{ id: "exe:life", name: "Life", phrases: ["Start Life & café?", "alias"] }];
+  let defaultProvider = "exe:life"; // what Plow's default phrase starts
   let agentRows = [];
   let signupDown = false; // Plow's API mid-deploy: the catalog refresh 503s
   const requests = [], opened = [];
@@ -58,7 +59,7 @@ app.whenReady().then(async () => {
       if (signupDown) return new Response("", { status: 503 });
     }
     const body = new URL(url).pathname === "/v1/signup"
-      ? { managed_phone: "+15551234567", providers } : agentRows;
+      ? { managed_phone: "+15551234567", providers, default_provider: defaultProvider } : agentRows;
     return new Response(JSON.stringify(body), { status: 200 });
   });
   let win;
@@ -71,12 +72,7 @@ app.whenReady().then(async () => {
       label: "Ash", recipients: { line: "+15557654321", members: ["+15550000001"] }, people: [],
     }] },
     lines: { list: async () => [{ uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15557654321" }] },
-    agentIndex: async () => ({
-      "exe:life": { blurb: "Runs a household.", builder: "Sam", users: 16, successRate: 88, verified: true, rank: 0, logo: null },
-      "exe:hermes": { blurb: null, builder: null, users: 0, successRate: null, verified: true, rank: 1, logo: null },
-      // Offered by Plow but not verified by the Index: the deploy modal leaves it out.
-      "exe:draft": { blurb: null, builder: null, users: 0, successRate: null, verified: false, rank: 2, logo: null },
-    }),
+    agentIndex: async () => ({ "exe:life": { logo: null } }),
   });
   await cloudAgents.refresh();
   const state = () => ({
@@ -115,32 +111,30 @@ app.whenReady().then(async () => {
     await win.loadFile(path.join(dist, "renderer/index.html"));
     await delay(800);
     const newAgent = '[...document.querySelectorAll("button")].find(b => b.textContent === "New agent")';
-    const card = (name) => `[...document.querySelectorAll(".deploy-card")].find(c => c.querySelector(".deploy-card-name").textContent === ${JSON.stringify(name)})`;
-    const deployButton = '[...document.querySelectorAll(".deploy-modal button")].find(b => b.textContent.startsWith("Deploy"))';
+    const modalButton = (label) => `[...document.querySelectorAll(".deploy-modal button")].find(b => b.textContent === ${JSON.stringify(label)})`;
+    const waitTitle = 'document.querySelector(".deploy-wait-title").textContent';
+    // One click, no picker: Messages opens with the default agent's setup text.
     await mouseClick(win, newAgent);
-    assert.equal(await win.webContents.executeJavaScript(`${deployButton}.disabled`), true);
-    assert.equal(await win.webContents.executeJavaScript(`${card("Life")}.textContent.includes("by Sam · 16 people · 88% set up")`), true);
-    await mouseClick(win, card("Life"));
-    fs.writeFileSync(path.join(out, "deploy-picker.png"), (await win.webContents.capturePage()).toPNG());
+    assert.equal(opened.at(-1), "sms:+15551234567?&body=Start%20Life%20%26%20caf%C3%A9%3F");
+    assert.equal(await win.webContents.executeJavaScript(waitTitle), "Send the text in Messages");
+    fs.writeFileSync(path.join(out, "deploy-waiting.png"), (await win.webContents.capturePage()).toPNG());
+    console.log("PASS: New agent opens Messages with the default agent's setup text and waits");
 
-    // Plow goes down while the modal is open: a refresh drops the catalog, so
-    // Deploy has no setup text. It must say so, visibly, and open nothing.
+    // Plow goes down while the modal waits: a refresh drops the catalog, so a
+    // retry has no setup text. It must say so, visibly, and open nothing.
     signupDown = true;
     await cloudAgents.refresh();
     const openedBefore = opened.length;
-    await mouseClick(win, deployButton);
+    await mouseClick(win, modalButton("Open Messages again"));
     assert.equal(opened.length, openedBefore);
-    assert.deepEqual(await win.webContents.executeJavaScript('(n => [n.textContent, n.classList.contains("error")])(document.querySelector(".deploy-note"))'),
-      ["Plow isn't answering right now. Try again in a minute.", true]);
+    assert.equal(await win.webContents.executeJavaScript(waitTitle), "Plow isn't answering right now");
     fs.writeFileSync(path.join(out, "deploy-plow-down.png"), (await win.webContents.capturePage()).toPNG());
-    console.log("PASS: with Plow's catalog down, Deploy says so in error style and opens nothing");
+    console.log("PASS: with Plow's catalog down, a retry says so and opens nothing");
     signupDown = false;
     await cloudAgents.refresh();
-    await mouseClick(win, deployButton);
-    assert.equal(opened.at(-1), "sms:+15551234567?&body=Start%20Life%20%26%20caf%C3%A9%3F");
-    assert.equal(await win.webContents.executeJavaScript('!!document.querySelector(".deploy-wait")'), true);
-    fs.writeFileSync(path.join(out, "deploy-waiting.png"), (await win.webContents.capturePage()).toPNG());
-    console.log("PASS: New agent opens the deploy modal; Deploy opens the encoded phrase and waits");
+    await mouseClick(win, modalButton("Try again"));
+    assert.equal(opened.length, openedBefore + 1);
+    assert.equal(await win.webContents.executeJavaScript(waitTitle), "Send the text in Messages");
 
     agentRows = [{ uid: "agent_new", name: "Life", provider: "exe:life", status: "provisioning",
       line: { uid: "lin_willow", display_name: "Willow", provider_key: "+15551111111" } }];
@@ -150,22 +144,13 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(out, "deploy-arrived.png"), (await win.webContents.capturePage()).toPNG());
     console.log("PASS: the wait finds the new agent, closes the modal and highlights its row");
 
-    providers = [...providers, { id: "exe:draft", name: "Draft", phrases: ["Start Draft"] }, { id: "exe:hermes", name: "Hermes", phrases: ["Start Hermes"] }];
+    // A Plow that names no default agent leaves New agent nothing to deploy.
+    defaultProvider = null;
     await cloudAgents.refresh();
     await delay(250);
-    await mouseClick(win, newAgent);
-    assert.deepEqual(await win.webContents.executeJavaScript('[...document.querySelectorAll(".deploy-card-name")].map(n => n.textContent)'), ["Life", "Hermes"]);
-    await win.webContents.executeJavaScript(`${card("Hermes")}.focus()`);
-    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
-    win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
-    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
-    await delay(150);
-    assert.equal(await win.webContents.executeJavaScript(`${deployButton}.textContent`), "Deploy Hermes");
-    await mouseClick(win, deployButton);
-    assert.equal(opened.at(-1), "sms:+15551234567?&body=Start%20Hermes");
-    await mouseClick(win, '[...document.querySelectorAll(".deploy-modal button")].find(b => b.textContent === "Close")');
+    assert.equal(await win.webContents.executeJavaScript(`${newAgent}.disabled`), true);
     assert(requests.every((request) => request.startsWith("GET ")));
-    console.log("PASS: keyboard selection deploys Hermes; no API mutations", JSON.stringify(requests));
+    console.log("PASS: without a default agent New agent is disabled; no API mutations", JSON.stringify(requests));
 
     agentRows = [{ uid: "agent_1", name: "Life", provider: "exe:life", status: "running",
       line: { uid: "lin_willow", display_name: "Willow", provider_key: "+15551111111" } }];

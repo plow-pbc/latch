@@ -10,10 +10,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { Executor, SandboxProfile, sandboxGrants, userTempDir } from "@domo/device-core";
+import { scratchDir } from "./pluginFixtures.js";
 
 const fixturesDir = path.join(__dirname, "../../../fixtures");
 const sbpl = JSON.parse(fs.readFileSync(path.join(fixturesDir, "sbpl.json"), "utf8"));
@@ -22,11 +22,7 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-sbx-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-sbx-", cleanups);
 
 const ON_MAC = process.platform === "darwin";
 

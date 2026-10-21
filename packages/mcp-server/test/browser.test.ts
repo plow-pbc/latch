@@ -9,13 +9,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
 import { BROWSER_PLUGIN, DeviceAgent, HeadlessPolicy, PolicyDelegate, ResolvedBrowserRuntime } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer, RelayAuth, SKILL_FOOTER } from "@domo/mcp-server";
 import { callTool, parse, pollUntil, rpc } from "./client.js";
+import { scratchDir } from "./scratch.js";
 
 const fixtures = fileURLToPath(new URL("../../../e2e/fixtures", import.meta.url));
 const FAKE_SERVER = path.join(fixtures, "fakeBrowserServer.cjs");
@@ -28,11 +28,7 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
 
-function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-br-"));
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
+const tempDir = (): string => scratchDir("domo-br-", cleanups);
 
 function writeVault(dir: string): string {
   const vaultPath = path.join(dir, "vault.json");

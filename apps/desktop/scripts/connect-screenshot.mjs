@@ -115,6 +115,7 @@ const CLOUD_EMPTY = {
     { id: "exe:life", name: "Life", phrase: "Start Life" },
   ],
   cloudProvidersError: null,
+  cloudDefaultProvider: { id: "exe:life", name: "Life", phrase: "Start Life" },
   cloudFreeLines: [],
   cloudAgentsError: null,
   cloudChatsError: null,

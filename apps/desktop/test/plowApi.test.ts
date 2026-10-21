@@ -151,10 +151,12 @@ describe("PlowApi", () => {
       "plow_secret",
       "device/one",
       "mbp",
+      "0.1.202610052248",
     );
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices/device%2Fone");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ hostname: "mbp" });
+    // The build rides along so the device row says which Latch this Mac runs (#357).
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ hostname: "mbp", app_version: "0.1.202610052248" });
     expect(device).toEqual({ mcpUrl: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp" });
   });
 
@@ -228,6 +230,19 @@ describe("PlowApi", () => {
       activationSecret: "act_secret_xyz",
       sendTo: "+15551230000",
     });
+  });
+
+  it("asks the public Gatekeeper demo without a credential", async () => {
+    const results = [{ verdict: "ALLOWED", reason: "Fits what you asked.", confidence: 1 }];
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { results, degraded: false } }]);
+    const requests = [{ capabilities: ["Run: gh pr view 482", "Network: allowed"] }];
+    const answer = await new PlowApi("https://api.plow.co", fetchImpl).gatekeeperDemo("Allow GitHub.", requests);
+
+    expect(calls[0].url).toBe("https://api.plow.co/v1/latch/gatekeeper/demo");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ task: "Allow GitHub.", requests });
+    // Setup shows the Gatekeeper before sign-in, so there is no credential to send.
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBeUndefined();
+    expect(answer).toEqual({ results, degraded: false });
   });
 
   it("reads a redeem poll, including the verified answer that omits the token", async () => {
@@ -460,19 +475,22 @@ describe("PlowApi", () => {
     }[why]);
   });
 
-  it("reads the public signup catalog without authentication and normalizes phrases", async () => {
+  it.each([
+    ["the provider Plow's default phrase starts", "exe:life", "exe:life"],
+    ["no default from a Plow that names none", undefined, null],
+  ])("reads the public signup catalog without authentication, normalizing phrases, with %s", async (_case, named, defaultProvider) => {
     const providers = [
       { id: "exe:life", name: "Life", phrases: ["Start Life", "Life alias"] },
       { id: "self_hosted", name: "Self-hosted", phrases: [] },
     ];
     const { fetchImpl, calls } = recordingFetch([{ status: 200, body: {
-      managed_phone: "+15551234567", providers,
+      managed_phone: "+15551234567", providers, default_provider: named,
     } }]);
     const result = await new PlowApi("https://stub.invalid", fetchImpl).listCloudAgentProviders();
     expect(result).toEqual({ managedPhone: "+15551234567", providers: [
       { id: "exe:life", name: "Life", phrase: "Start Life" },
       { id: "self_hosted", name: "Self-hosted", phrase: null },
-    ] });
+    ], defaultProvider });
     expect(calls[0].url).toBe("https://stub.invalid/v1/signup");
     expect(calls[0].init.headers.authorization).toBeUndefined();
   });
