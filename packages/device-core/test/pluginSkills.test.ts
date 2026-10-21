@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { classifyArgv } from "../src/plugins/argvRules.js";
+import { classifyArgv, ruleArgv } from "../src/plugins/argvRules.js";
 import { parseManifest, type PluginManifest } from "../src/plugins/manifest.js";
 
 const PLUGINS_DIR = fileURLToPath(new URL("../../../apps/desktop/plugins", import.meta.url));
@@ -51,13 +51,28 @@ for (const { name, manifest, skill } of PLUGINS) {
 }
 
 describe("messages plugin", () => {
+  const manifest = PLUGINS.find((p) => p.name === "messages")!.manifest;
+
   it("carries the owner-authority rule itself — its page is loadable without the imessage skill", () => {
     expect(PLUGINS.find((p) => p.name === "messages")?.skill).toMatch(/carries the owner's authority in this\s+conversation/);
   });
 
-  it("refuses --store: the CLI accepts it only ahead of the subcommand, and the allowlist requires the agent's tail to start with one", () => {
-    const messages = PLUGINS.find((p) => p.name === "messages");
-    expect(messages).toBeDefined();
-    expect(classifyArgv(messages!.manifest, ["plow-messages", "--store", "/x", "chats"]).kind).toBe("refused");
+  it("refuses --store and --app except as a pinned prefix ahead of the verb", () => {
+    expect(classifyArgv(manifest, ["plow-messages", "--store", "/x", "chats"]).kind).toBe("refused");
+    expect(classifyArgv(manifest, ["plow-messages", "chats", "--store", "/x"]).kind).toBe("refused");
+    expect(classifyArgv(manifest, ["plow-messages", "chats", "--app", "whatsapp"]).kind).toBe("refused");
+    expect(classifyArgv(manifest, ["plow-messages", "--app", "whatsapp", "chats"]).kind).toBe("read");
+    expect(classifyArgv(manifest, ["plow-messages", "--app", "/tmp/ChatStorage.sqlite", "chats"]).kind).toBe("refused");
+  });
+
+  it.each(["search", "thread", "chats", "unreplied", "--help"])("keeps %s read rules scoped to the selected app", (verb) => {
+    expect(ruleArgv(manifest, ["plow-messages", verb, "query"])).toEqual(["plow-messages", verb]);
+    for (const app of ["imessage", "whatsapp"]) {
+      const prefix = ["plow-messages", "--app", app, verb];
+      expect(ruleArgv(manifest, [...prefix, "query"])).toEqual(prefix);
+      for (const flag of ["--app", "--store"]) {
+        expect(classifyArgv(manifest, [...prefix, flag, "elsewhere"]).kind).toBe("refused");
+      }
+    }
   });
 });

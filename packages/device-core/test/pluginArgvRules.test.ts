@@ -14,6 +14,7 @@ describe("classifyArgv", () => {
     [["fix", "serve"], { kind: "refused", reason: "fix allows: query, get page, put" }],
     [["fix"], { kind: "refused", reason: "fix allows: query, get page, put" }],
     [["fix", "--json", "query"], { kind: "refused", reason: "fix allows: query, get page, put" }],
+    [["fix", "query", "--store", "/x"], { kind: "refused", reason: "fix allows: query, get page, put" }],
   ])("%j", (argv, verdict) => {
     expect(classifyArgv(m, argv)).toEqual(verdict);
   });

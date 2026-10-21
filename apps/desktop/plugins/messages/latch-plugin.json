@@ -1,7 +1,7 @@
 {
   "name": "messages",
-  "title": "iMessage history",
-  "summary": "Find and read your texts, right on this Mac.",
+  "title": "Message history",
+  "summary": "Find and read your texts and WhatsApp, right on this Mac.",
   "version": "0.1.0",
   "command": "plow-messages",
   "runtime": {
@@ -23,7 +23,23 @@
   "exec": { "argv": ["plow-messages"] },
   "env": {},
   "argv": {
-    "read": [["search"], ["thread"], ["chats"], ["unreplied"], ["--help"]],
+    "read": [
+      ["search"],
+      ["thread"],
+      ["chats"],
+      ["unreplied"],
+      ["--help"],
+      ["--app", "imessage", "search"],
+      ["--app", "imessage", "thread"],
+      ["--app", "imessage", "chats"],
+      ["--app", "imessage", "unreplied"],
+      ["--app", "imessage", "--help"],
+      ["--app", "whatsapp", "search"],
+      ["--app", "whatsapp", "thread"],
+      ["--app", "whatsapp", "chats"],
+      ["--app", "whatsapp", "unreplied"],
+      ["--app", "whatsapp", "--help"]
+    ],
     "write": []
   },
   "skill": "skill.md"

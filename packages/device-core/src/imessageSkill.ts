@@ -2,16 +2,14 @@
  * The built-in iMessage skill — how an agent reads and sends the owner's own
  * iMessages, which this Mac keeps in `chat.db` and sends through Messages.app.
  *
- * Same reasoning as the WhatsApp recipe next to this file (see
- * `whatsappSkill.ts`'s header): this schema is versioned with macOS Messages,
- * not with the Plow repo. The store path is written as a RESOLVED
- * `/Users/<owner>/…` rather than `~`-relative: an absolute path is the only one
- * that cannot be lost when an agent runtime drops the optional `cwd` argument
- * (see `imessageSkillFor` for the failure that cost). iMessage adds one thing
- * WhatsApp does not need: a send
- * path. Reading is a query; sending is a script through
- * `plow_run_applescript`, outside the sandbox, because Messages refuses Apple
- * events from a sandboxed sender (-10004, `app_refuses_sandboxed_sender`).
+ * The schema is versioned with macOS Messages, not with the Plow repo. The
+ * store path is written as a RESOLVED `/Users/<owner>/…` rather than
+ * `~`-relative: an absolute path is the only one that cannot be lost when an
+ * agent runtime drops the optional `cwd` argument (see `imessageSkillFor` for
+ * the failure that cost). Reading is a query through `plow-messages`. Sending
+ * is a script through `plow_run_applescript`, outside the sandbox, because
+ * Messages refuses Apple events from a sandboxed sender (-10004,
+ * `app_refuses_sandboxed_sender`).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -36,10 +34,9 @@ export const IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER = "MAX_ROWID_BEFORE_THE_SEND";
  * send land?" — they read delivery bookkeeping, never a body, so they need
  * nothing the CLI provides and belong beside the send recipes they serve.
  *
- * Hoisted out of the prose for the same reason `WHATSAPP_QUERIES` is: a test
- * that asserts a recipe contains some text cannot tell whether the recipe
- * works, and Task 5's fixture executes these constants against a real schema
- * rather than a paraphrase of them.
+ * Hoisted out of the prose so a test that asserts a recipe contains some text
+ * cannot tell whether the recipe works, and the fixture executes these
+ * constants against a real schema rather than a paraphrase of them.
  *
  * Apple's own epoch is nanoseconds since 2001-01-01 on `message.date`
  * (`ZWAMESSAGE.ZMESSAGEDATE` next door is *seconds* since the same epoch —
@@ -307,11 +304,9 @@ never a rule.`,
 }
 
 /**
- * Publish the recipe only where the archive actually is.
- *
- * Same rule `registerWhatsappSkill` follows: a skill naming a capability this
- * Mac does not have is a guaranteed denial. Sampled once, by whoever calls
- * this — `DeviceAgent` does it at construction.
+ * Publish the recipe only where the archive actually is. A skill naming a
+ * capability this Mac does not have is a guaranteed denial. Sampled once, by
+ * whoever calls this — `DeviceAgent` does it at construction.
  */
 export function registerImessageSkill(registry: SkillRegistry, home: string): void {
   if (!fs.existsSync(imessageStorePath(home))) return;
