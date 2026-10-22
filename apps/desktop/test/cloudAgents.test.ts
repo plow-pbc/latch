@@ -285,11 +285,11 @@ describe("CloudAgentsClient polling", () => {
     await expect(polling).rejects.toMatchObject({ name: "AbortError" });
   });
 
-  it("classifies only provisioning and upgrading as non-terminal", () => {
-    expect(isTerminalCloudAgent({ status: "provisioning" })).toBe(false);
-    expect(isTerminalCloudAgent({ status: "upgrading" })).toBe(false);
-    expect(isTerminalCloudAgent({ status: "running" })).toBe(true);
-    expect(isTerminalCloudAgent({ status: "failed" })).toBe(true);
-    expect(isTerminalCloudAgent({ status: "future_status" })).toBe(true);
+  it.each([
+    ["provisioning", false], ["upgrading", false],
+    ["running", true], ["failed", true], ["teardown", true],
+    ["future_status", true], ["provider_verifying", true],
+  ] as const)("classifies %s terminal=%s", (status, terminal) => {
+    expect(isTerminalCloudAgent({ status })).toBe(terminal);
   });
 });
