@@ -209,6 +209,10 @@ async function bankSession(): Promise<string> {
   return handle;
 }
 
+/** `fill_secret` in the session, with whatever else the test sets. */
+const fillSecret = (handle: string, args: { [key: string]: JSONValue | undefined }): Promise<JSONValue> =>
+  ctx.sessions.command(handle, { action: "fill_secret", ...args });
+
 /** The broker's own audit lines that mean it was asked for, and handed over, a
  * value — proof the vault WAS (or was not) reached. */
 const released = (): string[] =>
@@ -258,24 +262,14 @@ afterEach(async () => {
 describe("fill_secret marking", () => {
   it("asks the browser to mark a field the vault masks", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "L1",
-      field: "password",
-    });
+    const result = await fillSecret(handle, { selector: "#pass", item: "L1", field: "password" });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
     expect(fills()).toEqual([{ selector: "#pass", mask: true }]);
   });
 
   it("adds nothing to the page for a field the vault does not mask", async () => {
     const handle = await session();
-    await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#addr",
-      item: "L1",
-      field: "shipping address",
-    });
+    await fillSecret(handle, { selector: "#addr", item: "L1", field: "shipping address" });
     const [fill] = fills();
     expect(fill.selector).toBe("#addr");
     expect("mask" in fill).toBe(false);
@@ -288,24 +282,14 @@ describe("fill_secret marking", () => {
       ["#card-cvc", "code"],
       ["#card-name", "cardholder name"],
     ]) {
-      await ctx.sessions.command(handle, {
-        action: "fill_secret",
-        selector,
-        item: "C1",
-        field,
-      });
+      await fillSecret(handle, { selector, item: "C1", field });
     }
     expect(fills().map((f) => f.mask === true)).toEqual([true, true, false]);
   });
 
   it("refuses a field the vault does not offer instead of masking it", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "L1",
-      field: "who-knows",
-    });
+    const result = await fillSecret(handle, { selector: "#pass", item: "L1", field: "who-knows" });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("does not offer a field called who-knows");
     // Refused before anything was typed: no fill reached the browser.
@@ -348,12 +332,7 @@ describe("fill_secret marking", () => {
     // question to cache the answer to and no describe in the release path.
     const handle = await session();
     for (const selector of ["#pass", "#pass2", "#pass3"]) {
-      await ctx.sessions.command(handle, {
-        action: "fill_secret",
-        selector,
-        item: "L1",
-        field: "password",
-      });
+      await fillSecret(handle, { selector, item: "L1", field: "password" });
     }
     const lines = fs.readFileSync(ctx.brokerLog, "utf8").trim().split("\n");
     expect(fills().length).toBe(3);
@@ -371,12 +350,7 @@ describe("fill_secret marking", () => {
       ["#city", "city"],
     ];
     for (const [selector, field] of wanted) {
-      const result = await ctx.sessions.command(handle, {
-        action: "fill_secret",
-        selector,
-        item: "I1",
-        field,
-      });
+      const result = await fillSecret(handle, { selector, item: "I1", field });
       // Every one of them releases: an identity is not a listable-but-unusable
       // item any more.
       expect(jv(result).get("ok").bool, `${field} should have filled`).toBe(true);
@@ -397,12 +371,7 @@ describe("fill_secret marking", () => {
     ctx = makeCtx({ FAKE_CSP_BLOCKS_MASK: "1" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "L1",
-      field: "password",
-    });
+    const result = await fillSecret(handle, { selector: "#pass", item: "L1", field: "password" });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("stops the value from being hidden on screen");
     expect(ctx.events.slice(before)).toEqual([
@@ -430,12 +399,7 @@ describe("fill_secret marking", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_CSP_BLOCKS_MASK: "1" });
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#addr",
-      item: "L1",
-      field: "shipping address",
-    });
+    const result = await fillSecret(handle, { selector: "#addr", item: "L1", field: "shipping address" });
     expect(jv(result).get("ok").bool).toBe(true);
   });
 
@@ -448,9 +412,7 @@ describe("fill_secret marking", () => {
     ctx = makeCtx({ FAKE_NO_IDENTITY: "1" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#pass", item: "L1", field: "password",
-    });
+    const result = await fillSecret(handle, { selector: "#pass", item: "L1", field: "password" });
     expect(jv(result).get("status").str).toBe("error");
     const error = jv(result).get("error").str ?? "";
     expect(error).toContain("will not say which document");
@@ -470,9 +432,7 @@ describe("fill_secret marking", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_REMASK_FAILS: "1" });
     const handle = await session();
-    await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#pass", item: "L1", field: "password",
-    });
+    await fillSecret(handle, { selector: "#pass", item: "L1", field: "password" });
     for (const action of ["screenshot", "forms"]) {
       const result = await ctx.sessions.command(handle, { action });
       expect(jv(result).get("status").str, action).toBe("error");
@@ -496,9 +456,7 @@ describe("fill_secret marking", () => {
 
   it("tells the browser which document it approved", async () => {
     const handle = await session();
-    await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
-    });
+    await fillSecret(handle, { selector: "#card-number", item: "C1", field: "number" });
     // The fill carries the document's token, not just the frame index — an
     // index is not an identity once the site can swap the frame out, and a URL
     // is not one either once an SPA can rewrite it.
@@ -529,9 +487,7 @@ describe("fill_secret marking", () => {
     ctx = makeCtx(env);
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
-    });
+    const result = await fillSecret(handle, { selector: "#card-number", item: "C1", field: "number" });
     expect(jv(result).get("status").str).toBe("error");
     const error = jv(result).get("error").str ?? "";
     for (const text of says) expect(error).toContain(text);
@@ -555,9 +511,7 @@ describe("fill_secret marking", () => {
     ctx = makeCtx({ FAKE_DROPPED_BREAKS: "1" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
-    });
+    const result = await fillSecret(handle, { selector: "#card-number", item: "C1", field: "number" });
     expect(result).toEqual({ status: "completed", ok: true, frame: 1 });
     expect(ctx.events.slice(before)).toEqual([
       {
@@ -574,9 +528,7 @@ describe("fill_secret marking", () => {
     ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
-    });
+    const result = await fillSecret(handle, { selector: "#card-number", item: "C1", field: "number" });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("was replaced while the vault");
     expect(ctx.events.slice(before).at(-1)).toEqual({
@@ -600,9 +552,7 @@ describe("fill_secret marking", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({}, { FAKE_BROKER_DELAY_MS: "600" });
     const handle = await session();
-    const inFlight = ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#pass", item: "L1", field: "password",
-    });
+    const inFlight = fillSecret(handle, { selector: "#pass", item: "L1", field: "password" });
     await new Promise((r) => setTimeout(r, 150));
     await ctx.sessions.close(handle, "agent");
     const reopened = await ctx.sessions.open("i9", "agent-2", ["other.example"]);
@@ -630,12 +580,7 @@ describe("fill_secret marking", () => {
 
   it("keeps the filled value out of the fixture's own command log", async () => {
     const handle = await session();
-    await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "L1",
-      field: "password",
-    });
+    await fillSecret(handle, { selector: "#pass", item: "L1", field: "password" });
     // The log is written by the fake browser server. A credential value may not
     // reach a log line, and a fixture's log is still a log line.
     const raw = fs.readFileSync(ctx.cmdLog, "utf8");
@@ -646,18 +591,8 @@ describe("fill_secret marking", () => {
   it("leaves the result and the audit record exactly as they were", async () => {
     const handle = await session();
     const before = ctx.events.length;
-    const masked = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "L1",
-      field: "password",
-    });
-    const plain = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#addr",
-      item: "L1",
-      field: "shipping address",
-    });
+    const masked = await fillSecret(handle, { selector: "#pass", item: "L1", field: "password" });
+    const plain = await fillSecret(handle, { selector: "#addr", item: "L1", field: "shipping address" });
     // Byte-identical results, mark or no mark: nothing about the mask reaches
     // the agent.
     expect(JSON.stringify(masked)).toBe('{"status":"completed","ok":true,"frame":0}');
@@ -690,8 +625,8 @@ describe("fill_secret formats a date field", () => {
     { ...expiry, format: "YYYY", want: "2031" },
   ])("types $field as $format", async ({ selector, item, field, format, want }) => {
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector, item, field,
+    const result = await fillSecret(handle, {
+      selector, item, field,
       ...(format === undefined ? {} : { format }),
     });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
@@ -700,9 +635,7 @@ describe("fill_secret formats a date field", () => {
 
   it("refuses a format for a field that is not a date, before asking the vault", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#city", item: "I1", field: "city", format: "MM",
-    });
+    const result = await fillSecret(handle, { selector: "#city", item: "I1", field: "city", format: "MM" });
     expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/format applies only to a date field/) });
     expect(released()).toEqual([]);
     expect(typed()).toEqual([]);
@@ -710,8 +643,8 @@ describe("fill_secret formats a date field", () => {
 
   it("refuses a pattern with a letter that is not a token, before asking the vault", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#dob", item: "I1", field: "date of birth", format: "MM/DD/YYYY hh",
+    const result = await fillSecret(handle, {
+      selector: "#dob", item: "I1", field: "date of birth", format: "MM/DD/YYYY hh",
     });
     expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/'h' is not a date token/) });
     expect(released()).toEqual([]);
@@ -725,8 +658,8 @@ describe("fill_secret formats a date field", () => {
     // birthDate does.
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#dob", item: "L1", field: "date of birth", format: "MM",
+    const result = await fillSecret(handle, {
+      selector: "#dob", item: "L1", field: "date of birth", format: "MM",
     });
     expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/not a date/) });
     expect(typed()).toEqual([]);
@@ -746,9 +679,7 @@ describe("fill_secret formats a date field", () => {
     // stored", so a non-date value fills fine — only a given format asks it
     // to be reshaped into something it isn't.
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#dob", item: "L1", field: "date of birth",
-    });
+    const result = await fillSecret(handle, { selector: "#dob", item: "L1", field: "date of birth" });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
     expect(typed()).toEqual(["#dob\tunknown\t0"]);
   });
@@ -757,8 +688,8 @@ describe("fill_secret formats a date field", () => {
 describe("fill_secret refuses what a month-only date cannot be", () => {
   it("refuses a day token for a month-only date before asking the vault", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#exp", item: "C1", field: "expiry", format: "MM/DD/YY",
+    const result = await fillSecret(handle, {
+      selector: "#exp", item: "C1", field: "expiry", format: "MM/DD/YY",
     });
     expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/no day/) });
     expect(released()).toEqual([]);
@@ -770,9 +701,7 @@ describe("fill_secret refuses what a month-only date cannot be", () => {
     // empty, so omitting format never skips the reshape — "fill it without
     // format" would be advice the caller already followed.
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#exp", item: "L1", field: "expiry",
-    });
+    const result = await fillSecret(handle, { selector: "#exp", item: "L1", field: "expiry" });
     expect(result).toMatchObject({
       status: "error",
       error: expect.stringMatching(/not a date.*rename the field/),
@@ -793,9 +722,7 @@ describe("fill_secret split across single-character boxes", () => {
 
   it("splits a code across its boxes: one release, one masked character each", async () => {
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selectors: BOXES, item: "L1", field: "totp",
-    });
+    const result = await fillSecret(handle, { selectors: BOXES, item: "L1", field: "totp" });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
     // Six one-character fills, each masked, each pinned to the one approved
     // document, in the order the code is read.
@@ -819,8 +746,8 @@ describe("fill_secret split across single-character boxes", () => {
   it("splits a formatted date of birth across its boxes, one digit each", async () => {
     const DOB_BOXES = ["#d1", "#d2", "#d3", "#d4", "#d5", "#d6", "#d7", "#d8"];
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selectors: DOB_BOXES, item: "I1", field: "date of birth", format: "MMDDYYYY",
+    const result = await fillSecret(handle, {
+      selectors: DOB_BOXES, item: "I1", field: "date of birth", format: "MMDDYYYY",
     });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
     // A date of birth is not masked, so no box carries the mark, and the cmd
@@ -835,9 +762,7 @@ describe("fill_secret split across single-character boxes", () => {
   it("refuses a box count the value does not fill, and types nothing", async () => {
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selectors: BOXES.slice(0, 5), item: "L1", field: "totp",
-    });
+    const result = await fillSecret(handle, { selectors: BOXES.slice(0, 5), item: "L1", field: "totp" });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("does not split into 5 one-character boxes");
     expect(fills()).toEqual([]);
@@ -868,9 +793,7 @@ describe("fill_secret split across single-character boxes", () => {
     },
   ])("refuses $what before anything is located or released", async ({ params, says }) => {
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", item: "L1", field: "totp", ...params,
-    });
+    const result = await fillSecret(handle, { item: "L1", field: "totp", ...params });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain(says);
     expect(commands().some((c) => c.action === "locate" || c.action === "fill")).toBe(false);
@@ -882,9 +805,7 @@ describe("fill_secret split across single-character boxes", () => {
     // else in the top document — so this pair straddles two documents.
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selectors: ["#c1", "#card-2"], item: "L1", field: "totp",
-    });
+    const result = await fillSecret(handle, { selectors: ["#c1", "#card-2"], item: "L1", field: "totp" });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("#card-2 is in a different document than #c1");
     expect(fills()).toEqual([]);
@@ -904,9 +825,7 @@ describe("fill_secret split across single-character boxes", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_DROPPED_BREAKS: "1" });
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selectors: BOXES, item: "L1", field: "totp",
-    });
+    const result = await fillSecret(handle, { selectors: BOXES, item: "L1", field: "totp" });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("#c1 rewrote the character");
   });
@@ -916,9 +835,7 @@ describe("fill_secret split across single-character boxes", () => {
     ctx = makeCtx({ FAKE_ALTERED_SELECTOR: "#c3" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selectors: BOXES, item: "L1", field: "totp",
-    });
+    const result = await fillSecret(handle, { selectors: BOXES, item: "L1", field: "totp" });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("#c3 rewrote the character");
     // #c3 undoes the empty write too (the fixture alters every fill of it), the
@@ -966,9 +883,7 @@ describe("fill_secret split across single-character boxes", () => {
     ctx = makeCtx({ FAKE_ALTERED_SELECTOR: "#card-number" });
     const handle = await session();
     const before = ctx.events.length;
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
-    });
+    const result = await fillSecret(handle, { selector: "#card-number", item: "C1", field: "number" });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("holding a changed copy");
     // The fixture alters the empty write too, so the rollback owns up rather
@@ -1028,12 +943,7 @@ describe("fill_secret banking-credential gate", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({}, {}, approval);
     const handle = await bankSession();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "B1",
-      field: "password",
-    });
+    const result = await fillSecret(handle, { selector: "#pass", item: "B1", field: "password" });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("requires a payment authorization requested through plow_request_payment");
     // The vault was never asked for the value, and nothing was typed.
@@ -1050,12 +960,7 @@ describe("fill_secret banking-credential gate", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({}, {}, { approved: true });
     const handle = await bankSession();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "B1",
-      field: "password",
-    });
+    const result = await fillSecret(handle, { selector: "#pass", item: "B1", field: "password" });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
     // The single-use approval was consumed for THIS session + destination.
     expect(ctx.approvalCalls).toHaveLength(1);
@@ -1076,12 +981,7 @@ describe("fill_secret banking-credential gate", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({}, {}, { approved: false });
     const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#pass",
-      item: "L1",
-      field: "password",
-    });
+    const result = await fillSecret(handle, { selector: "#pass", item: "L1", field: "password" });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
     expect(ctx.approvalCalls).toEqual([]);
     expect(released().length).toBe(1);
@@ -1097,12 +997,7 @@ describe("fill_secret banking-credential gate", () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_CARD_FRAME_URL: "not-a-url" }, {}, { approved: true });
     const handle = await bankSession();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret",
-      selector: "#card-x",
-      item: "B1",
-      field: "password",
-    });
+    const result = await fillSecret(handle, { selector: "#card-x", item: "B1", field: "password" });
     expect(jv(result).get("status").str).toBe("error");
     expect(released()).toEqual([]);
     expect(fills()).toEqual([]);
