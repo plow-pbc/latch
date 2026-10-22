@@ -57,8 +57,9 @@ describe("cloud-agent pure mappings", () => {
     expect(encodedCredential.failureReason).toBe("Agent operation failed");
   });
 
-  it("keeps provisioning non-terminal and treats every returned status as terminal", () => {
+  it("keeps provisioning and upgrading non-terminal and treats every other status as terminal", () => {
     expect(isTerminalCloudAgent(agent({ status: "provisioning" }))).toBe(false);
+    expect(isTerminalCloudAgent(agent({ status: "upgrading" }))).toBe(false);
     expect(isTerminalCloudAgent(agent({ status: "running" }))).toBe(true);
     expect(isTerminalCloudAgent(agent({ status: "teardown" }))).toBe(true);
     expect(isTerminalCloudAgent(agent({ status: "provider_verifying" }))).toBe(true);

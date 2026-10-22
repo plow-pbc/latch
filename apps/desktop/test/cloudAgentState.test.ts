@@ -662,9 +662,9 @@ describe("CloudAgentState text-to-start", () => {
     expect(state.state().cloudAgents[0].line?.uid).toBe("lin_willow");
   });
 
-  it("polls an agent discovered provisioning until ready", async () => {
+  it.each(["provisioning", "upgrading"])("polls an agent discovered %s until ready", async (status) => {
     const running = deferred<CloudAgentResource>();
-    let current = agent({ status: "provisioning" });
+    let current = agent({ status });
     const { state, calls } = build({
       listAgents: async () => [current],
       pollAgent: async (_receipt, transition) => {
@@ -674,7 +674,7 @@ describe("CloudAgentState text-to-start", () => {
       },
     });
     await state.refresh();
-    expect(state.state().cloudAgents[0].status).toBe("provisioning");
+    expect(state.state().cloudAgents[0].status).toBe(status);
     running.resolve(agent());
     await vi.waitFor(() => expect(state.state().cloudAgents[0].status).toBe("running"));
     expect(calls.filter((call) => call === "poll:agent_1")).toHaveLength(1);
