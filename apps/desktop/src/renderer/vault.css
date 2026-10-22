@@ -222,9 +222,6 @@
 .vaultui .imp-actions .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 12px; }
 .vaultui .imp-actions .btn svg { width: 15px; height: 15px; }
 .vaultui .imp-actions textarea.inp { font-family: var(--mono); font-size: 12px; min-height: 92px; }
-.vaultui .imp-or { display: flex; align-items: center; gap: 10px; text-transform: uppercase;
-    font-size: 11px; letter-spacing: 0.04em; color: var(--faint); }
-.vaultui .imp-or::before, .vaultui .imp-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .vaultui .imp-err { font-size: 12px; color: var(--red-fg); line-height: 1.5; margin: 10px 0 0; }
 .vaultui .imp-err:empty { display: none; }
 .vaultui .imp-note { display: flex; align-items: flex-start; gap: 9px; font-size: 11.5px; line-height: 1.55;
