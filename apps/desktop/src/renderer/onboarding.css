@@ -665,10 +665,6 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   pointer-events: none;
 }
 
-.verify-actions .alternate {
-  margin-top: 12px;
-}
-
 .verify-recovery {
   margin-top: 44px;
   gap: 16px;
@@ -712,13 +708,6 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
 .link-button:hover {
   border-bottom-color: rgba(213, 239, 138, 0.5);
   color: var(--volt);
-}
-
-.inline-actions {
-  display: flex;
-  justify-content: center;
-  gap: 18px;
-  margin-top: 18px;
 }
 
 .state-note {
