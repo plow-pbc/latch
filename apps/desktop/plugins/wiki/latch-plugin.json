@@ -2,19 +2,19 @@
   "name": "wiki",
   "title": "Obsidian-style wiki",
   "summary": "A notebook your agents keep about the people and projects in your life.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "command": "wiki",
   "runtime": {
     "binaries": [
       {
         "name": "wiki",
         "url": {
-          "arm64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.2/wiki_0.2.2_darwin_arm64.tar.gz",
-          "x64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.2/wiki_0.2.2_darwin_amd64.tar.gz"
+          "arm64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.3/wiki_0.2.3_darwin_arm64.tar.gz",
+          "x64": "https://github.com/plow-pbc/plow-wiki/releases/download/v0.2.3/wiki_0.2.3_darwin_amd64.tar.gz"
         },
         "sha256": {
-          "arm64": "29e7d38f7a304b5e60908835ea6d2a0e10a08f32d729c17873f1894292bdcad9",
-          "x64": "6fd916551ceffd71166dce7a01dc313a60ca9c4e5949db7c109ca5aa48954cca"
+          "arm64": "ecf8f74285bbc8d1bc867d2ee819589f653d209a43c2ca4efa901c3154fdc871",
+          "x64": "9bf5fd03f4391300405d4069f60839385bfc83242e04e93a7d84add3cc2b01a2"
         }
       }
     ]
