@@ -31,6 +31,8 @@ const account = (
   capabilities: { mail_read: true, mail_write: true, calendar_read: true, calendar_write: true },
   ...overrides,
 });
+const audited = (event: string, email: string) =>
+  ({ event, fields: { provider: "google", account: email } });
 
 class FakePlow {
   listAnswers: ConnectorsOverview[] = [overview()];
@@ -131,10 +133,7 @@ const ADA_CONNECTED = {
     connecting: false,
   },
 };
-const ADA_CONNECTED_AUDIT = [{
-  event: "connector_connected",
-  fields: { provider: "google", account: "ada@example.com" },
-}];
+const ADA_CONNECTED_AUDIT = [audited("connector_connected", "ada@example.com")];
 
 describe("connecting a Google account", () => {
   it("publishes changed grants when an existing account is reconnected", async () => {
@@ -193,9 +192,9 @@ describe("connecting a Google account", () => {
     expect(second.google.accounts).toEqual([one, two]);
     expect(third.google.accounts).toEqual([one, two, three]);
     expect(audits).toEqual([
-      { event: "connector_connected", fields: { provider: "google", account: "one@example.com" } },
-      { event: "connector_connected", fields: { provider: "google", account: "two@example.com" } },
-      { event: "connector_connected", fields: { provider: "google", account: "three@example.com" } },
+      audited("connector_connected", "one@example.com"),
+      audited("connector_connected", "two@example.com"),
+      audited("connector_connected", "three@example.com"),
     ]);
   });
 
@@ -330,10 +329,7 @@ describe("connector account actions", () => {
       credential: CREDENTIAL,
       account: "ada@example.com",
     }]);
-    expect(audits).toEqual([{
-      event: "connector_disconnected",
-      fields: { provider: "google", account: "ada@example.com" },
-    }]);
+    expect(audits).toEqual([audited("connector_disconnected", "ada@example.com")]);
     expect(state.google.accounts).toEqual([account("grace@example.com", { isDefault: true })]);
   });
 
@@ -364,10 +360,7 @@ describe("connector account actions", () => {
       credential: CREDENTIAL,
       account: "grace@example.com",
     }]);
-    expect(audits).toEqual([{
-      event: "connector_default_changed",
-      fields: { provider: "google", account: "grace@example.com" },
-    }]);
+    expect(audits).toEqual([audited("connector_default_changed", "grace@example.com")]);
     expect(state.google.accounts[1].isDefault).toBe(true);
   });
 });
@@ -448,10 +441,7 @@ describe("a background poll", () => {
 
     await connectors.poll();
     expect(connectors.state().google.accounts).toEqual([one, two]);
-    expect(audits).toEqual([{
-      event: "connector_connected",
-      fields: { provider: "google", account: "two@example.com" },
-    }]);
+    expect(audits).toEqual([audited("connector_connected", "two@example.com")]);
   });
 
   it("discards an older background answer after a newer poll connects an account", async () => {
@@ -471,10 +461,7 @@ describe("a background poll", () => {
     await connectors.poll();
 
     expect(connectors.state().google.accounts).toEqual([ada]);
-    expect(audits).toEqual([{
-      event: "connector_connected",
-      fields: { provider: "google", account: "ada@example.com" },
-    }]);
+    expect(audits).toEqual([audited("connector_connected", "ada@example.com")]);
   });
 
   it("reconciles accounts connected after a timeout without a busy flicker", async () => {
@@ -504,14 +491,8 @@ describe("a background poll", () => {
       },
     });
     expect(audits).toEqual([
-      {
-        event: "connector_connected",
-        fields: { provider: "google", account: "ada@example.com" },
-      },
-      {
-        event: "connector_connected",
-        fields: { provider: "google", account: "grace@example.com" },
-      },
+      audited("connector_connected", "ada@example.com"),
+      audited("connector_connected", "grace@example.com"),
     ]);
     // Once for the changed account list; the unchanged second answer says nothing.
     expect(published).toBe(1);
@@ -528,10 +509,7 @@ describe("a background poll", () => {
 
     expect(connectors.state().message).toBe("Plow couldn't open the connection page.");
     expect(connectors.state().noteKind).toBe("error");
-    expect(audits).toEqual([{
-      event: "connector_connected",
-      fields: { provider: "google", account: "ada@example.com" },
-    }]);
+    expect(audits).toEqual([audited("connector_connected", "ada@example.com")]);
   });
 
   it("does not treat a known email as a newly connected account", async () => {
