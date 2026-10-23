@@ -163,6 +163,9 @@ const MAX_WAIT_SECONDS = 12;
 const MIN_CLICK_TIMEOUT_MS = 500;
 /** Exported because the agent-facing copy quotes it; one number, one source. */
 export const MAX_CLICK_TIMEOUT_MS = (MAX_WAIT_SECONDS - 1) * 1000;
+/** How long a `click_at` may hold the button down. The press, hold and release
+ * are one exchange, so the hold pays the same ceiling, less the 1 s settle. */
+export const MAX_HOLD_MS = MAX_CLICK_TIMEOUT_MS - 1000;
 
 /**
  * The most single-character boxes one split `fill_secret` will type into. A
@@ -744,6 +747,8 @@ export class BrowserSessions {
       const y = p.get("y").num;
       if (x !== null) knobs.x = x;
       if (y !== null) knobs.y = y;
+      const hold = p.get("hold_ms").num;
+      if (hold !== null) knobs.hold_ms = Math.min(Math.max(Math.round(hold), 1), MAX_HOLD_MS);
     }
 
     try {

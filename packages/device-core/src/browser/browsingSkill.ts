@@ -5,7 +5,7 @@
  * vendor/browser-server/UPSTREAM.md).
  */
 import { Skill } from "../skills.js";
-import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
+import { MAX_CLICK_TIMEOUT_MS, MAX_HOLD_MS } from "./browserSessions.js";
 
 /**
  * Why this Mac's browser is the one that answers a live-web question, in ONE
@@ -109,7 +109,10 @@ url, title, links, forms, tables, pages.
 - **Interactive verification is part of the browser task.** ${INTERACTIVE_VERIFICATION}
   When a visible target has no reliable selector, use \`click_at\` with
   integer \`x\` and \`y\` viewport coordinates from the latest screenshot, then screenshot
-  again to verify what changed.
+  again to verify what changed. A "press and hold" check takes \`click_at\` with
+  \`hold_ms\` (up to ${MAX_HOLD_MS}): the press, the hold and the release all happen on this
+  Mac in one action, so your own round trip never interrupts it. Screenshot after; hold
+  again, longer, if the check is still there.
 - **\`back\` does not work in this browser** — it honestly reports \`moved: false\`. Navigate
   with \`goto\` instead; cookies and the session survive.
 - **An action that "worked" but changed nothing: read \`failed_requests\`.** A result carries it
