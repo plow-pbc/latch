@@ -191,6 +191,10 @@ class Handle implements HandleLike {
     }
   }
 
+  async setInputFiles(): Promise<void> {
+    this.trace.push("handle.setInputFiles");
+  }
+
   async selectOption(wanted: string): Promise<unknown> {
     this.trace.push("handle.select");
     const hit = (this.o.options ?? []).find(([v, l]) => v === wanted || l === wanted);

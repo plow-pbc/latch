@@ -132,6 +132,27 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     expect(r).toMatchObject({ ok: true, altered: true, dropped_breaks: true });
   }, 30_000);
 
+  // #163: the upload button opens the native picker, which nothing here can
+  // drive; the hidden input behind it takes the file directly.
+  it("uploads a file to a hidden input without opening the picker", async () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "up-")), "clip.mov");
+    fs.writeFileSync(file, Buffer.alloc(2048, 7));
+    // A real host: the browser holds the frame's origin to the approved ones.
+    await browser.page.route("https://upload.example/**", (r: any) => r.fulfill({
+      contentType: "text/html",
+      body: `<button onclick="f.click()">Upload</button><input id=f type=file style="display:none" ` +
+        `onchange="document.title=this.files[0].name+':'+this.files[0].size">`,
+    }));
+    await browser.page.goto("https://upload.example/post");
+
+    const elsewhere = await session.handle({ action: "upload", selector: "input[type=file]", path: file, origins: ["other.example"] });
+    const r = await session.handle({ action: "upload", selector: "input[type=file]", path: file, origins: ["upload.example"] });
+
+    expect(elsewhere).toMatchObject({ ok: false, mask: "moved" });
+    expect(r).toMatchObject({ ok: true });
+    expect(await browser.page.title()).toBe("clip.mov:2048");
+  }, 30_000);
+
   it("gives real document tokens and typing kinds (not undefined)", async () => {
     await browser.page.goto("data:text/html,<input id=a type=text><textarea id=b></textarea>");
     const tok = await browser.page.evaluate(

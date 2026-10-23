@@ -12,7 +12,7 @@
  * A filled value is never traced, logged, or returned; masking keeps it out of
  * screenshots and `forms`.
  */
-import { JSONValue } from "@domo/protocol";
+import { JSONValue, originMatches } from "@domo/protocol";
 import {
   DOC_TOKEN_JS,
   FIELD_CAP_JS,
@@ -51,13 +51,15 @@ export interface HandleLike {
   type(text: string, opts?: { delay?: number; timeout?: number }): Promise<void>;
   /** Choose an option by value or label; Playwright throws when none matches. */
   selectOption(value: string, opts?: { timeout?: number }): Promise<unknown>;
+  /** Set a file input's files; Playwright throws on anything else. */
+  setInputFiles(files: string, opts?: { timeout?: number }): Promise<void>;
 }
 export interface FrameLike {
   url(): string;
   evaluate(pageFunction: PageFunction, arg?: unknown): Promise<unknown>;
   /** querySelector — Playwright names it `$`, NOT `querySelector`. */
   $(selector: string): Promise<HandleLike | null>;
-  waitForSelector(selector: string, opts?: { timeout?: number }): Promise<HandleLike | null>;
+  waitForSelector(selector: string, opts?: { state?: "attached"; timeout?: number }): Promise<HandleLike | null>;
   click(selector: string, opts?: { timeout?: number }): Promise<void>;
   isDetached(): boolean;
   parentFrame(): FrameLike | null;
@@ -144,6 +146,15 @@ export function origin(url: string): string {
 export function asReceived(value: string, kind: string): string {
   const received = value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   return kind === "multiline" ? received : received.replace(/\n/g, "");
+}
+
+/** A url's host, or "" — which matches no approved origin. */
+function hostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
 }
 
 /** What `maxlength` counts: UTF-16 code units, not code points. */
@@ -511,6 +522,49 @@ export class Session {
     throw last ?? new Error(`selector not found: ${sel}`);
   }
 
+  /**
+   * Put a file on a page's file input without opening the native picker, which
+   * nothing driving this browser can operate (#163). Sites hide the input
+   * behind a button, so it is found attached, not visible. The device only
+   * sends a file the owner approved for this session, to the frame whose
+   * origin it checked.
+   */
+  private async upload(cmd: Obj): Promise<Obj> {
+    const sel = String(cmd.selector);
+    // One budget for finding the input and handing it the file, so the upload
+    // is over before the device stops waiting and lets go of the file.
+    const deadline = now() + DEFAULT_ACTION_TIMEOUT_MS;
+    let last: Error | null = null;
+    for (const [i, fr] of this.indexedFrames(cmd)) {
+      const left = deadline - now();
+      if (left <= 0) break;
+      let el: HandleLike | null;
+      try {
+        el = await fr.waitForSelector(sel, { state: "attached", timeout: left });
+      } catch (exc) {
+        last = exc as Error;
+        continue;
+      }
+      if (el === null) continue;
+      // A document the site swapped in since the device checked its origin is
+      // not the one approved, and gets nothing. The token alone cannot say so —
+      // a page can plant the one it wants — so the frame's url, which the page
+      // cannot write, is held to the approved origins here too. A navigation
+      // after this detaches `el`, and setInputFiles then throws.
+      const expected = cmd.frame_token;
+      if (expected !== undefined && expected !== null && (await el.evaluate(DOC_TOKEN_JS)) !== expected) {
+        return { ok: false, mask: "moved", frame: i };
+      }
+      const origins = Array.isArray(cmd.origins) ? cmd.origins.map(String) : [];
+      if (!originMatches(hostname(fr.url()), origins)) return { ok: false, mask: "moved", frame: i };
+      // 0 would mean no timeout at all to Playwright.
+      await el.setInputFiles(String(cmd.path), { timeout: Math.max(1, deadline - now()) });
+      await this.page.waitForTimeout(SETTLE_MS);
+      return { ok: true, frame: i };
+    }
+    throw last ?? new Error(`no frame has ${sel}`);
+  }
+
   private async clickAt(cmd: Obj): Promise<Obj> {
     const x = cmd.x;
     const y = cmd.y;
@@ -712,6 +766,7 @@ export class Session {
     if (action === "click") return this.click(cmd);
     if (action === "click_at") return this.clickAt(cmd);
     if (action === "fill") return this.fill(cmd);
+    if (action === "upload") return this.upload(cmd);
 
     if (action === "locate") {
       const sel = String(cmd.selector);

@@ -98,7 +98,7 @@ session closes, so it is still signed in for the next browser — and browsers o
 same time do not overwrite each other. When you do have to sign in, use \`fill_secret\`.
 
 \`plow_browser {session, action, ...}\` — actions:
-goto, click, click_at, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
+goto, click, click_at, fill, fill_secret, upload, scroll, wait, back, eval, use_page, screenshot, text,
 url, title, links, forms, tables, pages.
 
 1. \`goto\` a URL → 2. \`wait\` 2–3 s → 3. \`screenshot\` (you receive the image — LOOK at it)
@@ -129,6 +129,12 @@ url, title, links, forms, tables, pages.
   screenshot the field and decide. One shape of it has a fix: a code the page
   takes as separate one-character boxes keeps only the first character of a
   whole-value \`fill_secret\` — pass \`selectors\` instead (see Credentials).
+- **Uploading a file: never click the upload button.** It opens the Mac's own file picker,
+  which no tool here can operate. Ask for the file first —
+  \`plow_browser_request {session, files: ["~/Downloads/clip.mov"]}\`, approved like a read
+  of that file because the site receives it — then set it on the page's file input:
+  \`plow_browser {action: "upload", selector: "input[type=file]", path: "~/Downloads/clip.mov"}\`.
+  The input is usually hidden behind the button; \`forms\` lists it with type \`file\`.
 - **A popup is not the active page.** Every result includes \`page_count\`; when it grows,
   run \`pages\` and switch with \`use_page\`.
 - \`eval\` runs a JS expression in the top frame — use it to extract structured data after

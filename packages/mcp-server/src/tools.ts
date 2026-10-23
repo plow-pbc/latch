@@ -945,8 +945,10 @@ export const TOOLS: ToolSpec[] = [
     title: "Ask to widen the browser session",
     description:
       "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
-      "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
-      "(find item ids with plow_vault's 'list' action). A secret is never returned to you by " +
+      "popup went to paypal.com), permission to fill specific vault items into pages " +
+      "(find item ids with plow_vault's 'list' action), and/or files on this Mac that " +
+      "plow_browser's 'upload' may put into a page's file input — each one is approved like " +
+      "a read of that file, because the site receives it. A secret is never returned to you by " +
       "these tools; it is typed into the page on this Mac, where it is page content like " +
       `anything else, except that ${EVAL_REFUSED}.`,
     inputSchema: {
@@ -959,6 +961,11 @@ export const TOOLS: ToolSpec[] = [
           type: "array",
           items: { type: "string" },
           description: "vault item ids to make fillable",
+        },
+        files: {
+          type: "array",
+          items: { type: "string" },
+          description: "absolute paths (~ allowed) of files on this Mac to make uploadable",
         },
         goal: GOAL,
       },
@@ -976,15 +983,22 @@ export const TOOLS: ToolSpec[] = [
       if (refusal !== null) throw new ToolError(refusal);
       const origins = strings(a.get("origins").arr);
       const items = strings(a.get("credential_items").arr);
+      // Resolved before the owner sees them, as plow_read_file's are: the
+      // approval names the file that will be sent, not a link to it.
+      const files = await Promise.all(strings(a.get("files").arr).map((f) => resolved(f)));
       const capabilities: Capability[] = [];
       if (origins.length > 0) capabilities.push({ kind: "browser", origins });
       if (items.length > 0) capabilities.push({ kind: "credential", access: "fill", items });
+      // An upload hands the site the file's bytes, so it is asked for as a
+      // read of that file — the same capability, rule and Plow-folder default.
+      if (files.length > 0) capabilities.push({ kind: "fs.read", paths: files });
       if (capabilities.length === 0) {
-        throw new ToolError("plow_browser_request needs origins and/or credential_items");
+        throw new ToolError("plow_browser_request needs origins, credential_items and/or files");
       }
       const parts = [
         ...(origins.length ? [`browse: ${origins.join(", ")}`] : []),
         ...(items.length ? [`fill credentials: ${items.join(", ")}`] : []),
+        ...(files.length ? [`upload files: ${files.join(", ")}`] : []),
       ];
       const response = await decideAndRun(
         ctx,
@@ -1005,7 +1019,8 @@ export const TOOLS: ToolSpec[] = [
         session,
         origins: r.get("origins").value ?? null,
         items: r.get("items").value ?? null,
-        note: "approved — this session now reaches these origins and items; continue with plow_browser on the same session handle",
+        files: r.get("files").value ?? null,
+        note: "approved — this session now reaches these origins, items and files; continue with plow_browser on the same session handle",
       };
     },
   },
@@ -1013,8 +1028,11 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser",
     title: "Drive the user's browser",
     description:
-      "Act within an approved browser session. Actions: goto, click, click_at, fill, fill_secret, scroll, " +
+      "Act within an approved browser session. Actions: goto, click, click_at, fill, fill_secret, upload, scroll, " +
       "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
+      "'upload' sets a file from this Mac on the page's <input type=file> (usually hidden; find it " +
+      "with 'forms'), so the native file picker never opens — the file must first be approved " +
+      "with plow_browser_request's 'files'. " +
       "'screenshot' returns an image of the page — take one after " +
       "every navigation to see where you are. When a 'click' fails, give it a longer " +
       "'timeout_ms' — never synthesize the click with 'eval', which sites detect. A click " +
@@ -1057,12 +1075,13 @@ export const TOOLS: ToolSpec[] = [
         action: {
           type: "string",
           enum: [
-            "goto", "click", "click_at", "fill", "fill_secret", "scroll", "wait", "back", "eval", "use_page",
+            "goto", "click", "click_at", "fill", "fill_secret", "upload", "scroll", "wait", "back", "eval", "use_page",
             "screenshot", "text", "url", "title", "links", "forms", "tables", "pages",
           ],
         },
         url: { type: "string", description: "goto: target URL (within approved origins)" },
-        selector: { type: "string", description: "click / fill / fill_secret: CSS selector" },
+        selector: { type: "string", description: "click / fill / fill_secret / upload: CSS selector" },
+        path: { type: "string", description: "upload: a file approved through plow_browser_request's 'files'" },
         x: { type: "integer", description: "click_at: horizontal viewport coordinate from the latest screenshot" },
         y: { type: "integer", description: "click_at: vertical viewport coordinate from the latest screenshot" },
         selectors: {
@@ -1095,6 +1114,7 @@ export const TOOLS: ToolSpec[] = [
       goto: ["url"],
       click: ["selector"],
       click_at: ["x", "y"],
+      upload: ["selector", "path"],
       // fill_secret's selector-or-selectors, item and field are checked where it runs.
       fill: ["selector", "value"],
       eval: ["expression"],
@@ -1114,6 +1134,9 @@ export const TOOLS: ToolSpec[] = [
         const v = a.get(key).value;
         if (v !== null && v !== undefined) params[key] = v;
       }
+      // Resolved the way the approval resolved it, so the two compare equal.
+      const uploadPath = a.get("path").str;
+      if (uploadPath !== null) params.path = await resolved(uploadPath);
       const maxChars = a.get("max_chars").int;
       if (maxChars !== null) params.max = maxChars;
 
