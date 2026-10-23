@@ -93,6 +93,38 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     expect(result).not.toHaveProperty("altered", true);
   });
 
+  // #338: on PayPal's review page `text=Send` matched the "Send and Request" nav
+  // link first, the click reported ok, and the payment was never submitted.
+  it("refuses an ambiguous click instead of pressing the first match", async () => {
+    const html = `<!doctype html><nav><a href="#home">Send and Request</a></nav>
+      <main><button onclick="document.title='SUBMITTED'">Send</button></main>`;
+    await browser.page.goto(`data:text/html,${encodeURIComponent(html)}`);
+
+    await expect(session.handle({ action: "click", selector: "text=Send" })).rejects.toThrow(
+      /matches 2 elements[^]*frame 0 #0: <a> "Send and Request" \(visible\)\n {2}frame 0 #1: <button> "Send" \(visible\)/,
+    );
+    expect(await browser.page.title()).toBe("");
+    expect(browser.page.url()).not.toContain("#home");
+
+    await session.handle({ action: "click", selector: 'role=button[name="Send"]' });
+    expect(await browser.page.title()).toBe("SUBMITTED");
+  }, 30_000);
+
+  // A vault-filled contenteditable's secret IS its text. Its selector stops
+  // matching once filled (`:empty`) and a re-render can drop its mark, so the
+  // list goes by the ledger: no text while a filled value is held.
+  it("lists candidates without text while a concealed value is held", async () => {
+    await browser.page.goto("data:text/html,<div contenteditable></div><div>Plain</div>");
+    await session.handle({ action: "fill", selector: "[contenteditable]:empty", value: "hunter2", mask: true, frame: 0 });
+    await browser.page.evaluate(() =>
+      (globalThis as any).document.querySelector("[contenteditable]").removeAttribute("data-domo-secret"),
+    );
+
+    const refusal = session.handle({ action: "click", selector: "div" });
+    await expect(refusal).rejects.toThrow(/no text shown[^]*frame 0 #0: <div> \(visible\)/);
+    await expect(refusal).rejects.not.toThrow(/hunter2/);
+  }, 30_000);
+
   it("actually masks a filled secret (would be UNMASKED with string scripts)", async () => {
     await browser.page.goto("data:text/html,<input id=pw type=text value=''>");
     const r = (await session.handle(
