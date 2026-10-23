@@ -17,6 +17,7 @@ import {
 } from "./cloudAgentMapper.js";
 import {
   CloudAgentResource,
+  isTerminalCloudAgent,
 } from "./cloudAgents.js";
 import type { AgentIndex } from "./agentIndex.js";
 import {
@@ -596,7 +597,7 @@ export class CloudAgentState {
       // failed provider-side and is waiting to be asked again. Nothing else
       // will ask, so this does, from whichever refresh sees it.
       for (const agent of agents) {
-        if (agent.status === "provisioning" && !this.polls.has(agent.agentId)) {
+        if (!isTerminalCloudAgent(agent) && !this.polls.has(agent.agentId)) {
           this.startAgentPoll(credential, agent, generation);
         }
         if (isTeardown(agent.status)) this.retryTeardown(credential, agent.agentId, generation);

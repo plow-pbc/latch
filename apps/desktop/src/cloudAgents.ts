@@ -8,6 +8,7 @@ export type CloudAgentStatus =
   | "running"
   | "failed"
   | "teardown"
+  | "upgrading"
   | (string & {});
 
 export interface CloudAgentResource {
@@ -52,9 +53,12 @@ type Wait = (milliseconds: number) => Promise<void>;
 const defaultWait: Wait = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-/** Is this the last resource the provisioning loop needs to publish? */
+/**
+ * Is this the last resource the polling loop needs to publish? Provisioning
+ * and an in-place upgrade both move on by themselves, so both are watched.
+ */
 export function isTerminalCloudAgent(agent: Pick<CloudAgentResource, "status">): boolean {
-  return agent.status !== "provisioning";
+  return agent.status !== "provisioning" && agent.status !== "upgrading";
 }
 
 /**
@@ -108,7 +112,7 @@ export class CloudAgentsClient {
     }
   }
 
-  /** Continue an existing receipt until Plow leaves `provisioning`. */
+  /** Continue an existing receipt until Plow leaves `provisioning` or `upgrading`. */
   async poll(
     deviceCredential: string,
     receipt: CloudAgentResource,

@@ -1673,6 +1673,7 @@ function openCloudModal(trigger, children, focus, onDismiss = closeCloudModal) {
 function cloudStatus(status, failureReason) {
   if (status === "running") return { tone: "green", label: "Ready" };
   if (status === "provisioning") return { tone: "amber", label: "Setting up…" };
+  if (status === "upgrading") return { tone: "amber", label: "Upgrading…" };
   if (status === "teardown") return { tone: "amber", label: "Removing…" };
   if (status === "failed") {
     return { tone: "red", label: `Failed · ${failureReason ?? "Reason unavailable"}` };
@@ -1973,7 +1974,7 @@ function cloudContext(agent, state) {
 function cloudStatusNode(agent) {
   if (agent?.status === null) return badge(agent.connected ? "green" : "faint", agent.connected ? "Connected" : "Offline");
   const status = cloudStatus(agent?.status, agent?.failureReason);
-  if (agent?.status === "provisioning") {
+  if (agent?.status === "provisioning" || agent?.status === "upgrading") {
     return el("span", { class: "status-setting" }, [
       el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
       el("span", { text: status.label }),

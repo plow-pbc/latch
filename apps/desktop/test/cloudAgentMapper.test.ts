@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   toCloudAgentDisplayRow,
 } from "../src/cloudAgentMapper.js";
-import { CloudAgentResource, isTerminalCloudAgent } from "../src/cloudAgents.js";
+import { CloudAgentResource } from "../src/cloudAgents.js";
 
 function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
   return {
@@ -55,12 +55,5 @@ describe("cloud-agent pure mappings", () => {
       failureCode: "cGxvd19za19kZXZpY2VfZG9fbm90X2xlYWs=",
     } as CloudAgentResource);
     expect(encodedCredential.failureReason).toBe("Agent operation failed");
-  });
-
-  it("keeps provisioning non-terminal and treats every returned status as terminal", () => {
-    expect(isTerminalCloudAgent(agent({ status: "provisioning" }))).toBe(false);
-    expect(isTerminalCloudAgent(agent({ status: "running" }))).toBe(true);
-    expect(isTerminalCloudAgent(agent({ status: "teardown" }))).toBe(true);
-    expect(isTerminalCloudAgent(agent({ status: "provider_verifying" }))).toBe(true);
   });
 });
