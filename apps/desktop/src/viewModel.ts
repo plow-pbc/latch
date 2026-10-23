@@ -23,11 +23,8 @@ export {
 export type {
   AuditActivity,
   AuditActivityRow,
-  AuditStep,
-  BadgeTone,
   DecisionKind,
   StatusKind,
-  StepState,
 } from "@domo/device-core";
 export interface ApprovalViewModel {
   intentId: string;
