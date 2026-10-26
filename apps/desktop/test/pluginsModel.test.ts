@@ -125,6 +125,14 @@ describe("the shipped plugins", () => {
   const shipped = (name: string): PluginManifest =>
     parseManifest(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", name, "latch-plugin.json"), "utf8"));
 
+  it.each([true, false])("lists the Screenpipe adapter with its owner-facing title when enabled=%s", (enabled) => {
+    const [row] = pluginRows({ plugins: [{ manifest: shipped("screenpipe"), enabled }], connectedAccounts: [], grantedPermissions: [], relaunchPending: [] });
+    expect(row).toMatchObject({
+      name: "screenpipe", title: "Screenpipe history", kind: "CLI", status: enabled ? "ready" : "off",
+      summary: "Find what you saw and heard with Screenpipe running on this Mac.", requirements: [],
+    });
+  });
+
   it.each([
     { connected: [] as string[], status: "needs-setup", requirements: [{ id: "account:google", action: "Connect Google", status: "open" }] },
     { connected: ["google"], status: "ready", requirements: [{ id: "account:google", action: "Connect Google", status: "met" }] },
