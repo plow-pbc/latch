@@ -826,7 +826,11 @@ export const TOOLS: ToolSpec[] = [
     async run(args, ctx) {
       const name = requiredStr(jv(args), "name");
       const skill = ctx.device.skills.skill(name);
-      if (skill === null) throw new ToolError(`no skill named '${name}' on this Mac`);
+      if (skill === null) {
+        // The names, so a wrong guess turns into the right read on the next call.
+        const names = ctx.device.skills.manifest().map((s) => s.name).join(", ");
+        throw new ToolError(`no skill named '${name}' on this Mac; it publishes: ${names}`);
+      }
       return {
         name: skill.name,
         description: skill.description,
