@@ -232,7 +232,8 @@ const GOAL = {
  * in device-core's executor.ts.
  */
 export const MACOS_TOOLING =
-  "mdfind for Spotlight search across their files, sips for images, " +
+  "mdfind for Spotlight search across their files, sips for images (convert, resize, HEIC to " +
+  "JPEG; not qlmanage, which sandboxes itself and so cannot start inside this one), " +
   "pbcopy and pbpaste for the clipboard, say to speak text aloud through the Mac's speakers " +
   "(a clean exit is not evidence it was heard — a Latch running in the wrong macOS login session " +
   "speaks silently, and the user quitting it and reopening it from Finder is the fix), " +
@@ -424,7 +425,8 @@ export const TOOLS: ToolSpec[] = [
       "A command that declares neither write_paths nor network can be killed if it has produced no " +
       "output at all after 15 minutes — so if long silent work is expected, have it print progress — " +
       "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
-      "when it is killed. Declare a write path (or " +
+      "when it is killed — apart from the UUID-named scratch files macOS's image tools (sips) keep in " +
+      "the user's own temp folder, which are not deleted with it. Declare a write path (or " +
       "network, or apple_events) and it is never killed that way, because it could be mid-work and a " +
       "truncated file — or a message already sent — is worse than the wait. A provider command counts as having declared network even " +
       "though you did not — so it is never killed that way either, and the `$TMPDIR` exchange is " +

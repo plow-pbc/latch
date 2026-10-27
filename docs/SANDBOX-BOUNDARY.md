@@ -57,6 +57,16 @@ exactly the approved capabilities**".
   same reason writes and network do: an Apple event is a side effect — a sent message — that a
   15-minute kill must not truncate, so such a run is never reaped and keeps the housekeeping writes.)
 
+- **ImageIO's scratch in the per-user temp dir, and IOSurface** (#372) — `sips` writes its scratch
+  into `DARWIN_USER_TEMP_DIR` whatever `TMPDIR` says, as `.<UUID>-<random>` renamed to `<UUID>`, and
+  hands decoded pixels over in IOSurfaces. Every run gets read/write on exactly those two name shapes
+  directly in that dir, and only as regular files (`require-all` of a `regex` and `vnode-type
+  REGULAR-FILE`: no other name, no subfolder, and no symlink, directory or hard link — the folder is
+  every app's), plus `iokit-open` on `IOSurfaceRootUserClient` only. Because nothing a run makes there
+  can point anywhere else, the file-operation guard does not treat the folder as writable. A reaped
+  run's scratch dir is deleted with it; a UUID file it left in the temp dir is not, and macOS's own
+  temp cleanup is what removes it.
+
 - **`(allow ipc-sysv-sem)`, for a staged plugin's own binary only** — a PyInstaller onefile binary on
   macOS (the wiki plugin) syncs its bootloader with the Python child through a SysV semaphore, and
   `semctl` under `(deny default)` failed before Python started. The rule is emitted only when the

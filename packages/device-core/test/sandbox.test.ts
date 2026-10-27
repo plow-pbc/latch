@@ -11,7 +11,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { Executor, SandboxProfile } from "@domo/device-core";
+import crypto from "node:crypto";
+import { Executor, SandboxProfile, sandboxGrants, userTempDir } from "@domo/device-core";
 import { scratchDir } from "./pluginFixtures.js";
 
 const fixturesDir = path.join(__dirname, "../../../fixtures");
@@ -39,6 +40,25 @@ describe("SBPL profile", () => {
       expect(profile).toBe(c.profile);
     });
   }
+
+  // #372: ImageIO writes its scratch into the per-user temp dir whatever
+  // TMPDIR says. Only its own names there, never the folder every app shares.
+  it("lets a run use ImageIO's scratch names in the user temp dir, and nothing else there", () => {
+    const base = { readPaths: [], writePaths: [], network: false, appleEvents: false, scratch: "/tmp/s" };
+    const T = "/private/var/folders/ab/cd.ef/T";
+
+    expect(SandboxProfile.generate(base)).not.toContain("/var/folders");
+    expect(SandboxProfile.generate({ ...base, userTemp: T })).toContain(
+      '(allow file-read* file-write* (require-all (regex #"^/private/var/folders/ab/cd\\.ef/T/\\.?' +
+        '[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+-[0-9A-F]+(-[0-9A-Za-z]+)?$") (vnode-type REGULAR-FILE)))',
+    );
+    const grants = (target: string) => sandboxGrants({ ...base, userTemp: T }, target);
+    expect(grants(`${T}/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`)).toEqual({ read: true, write: true });
+    expect(grants(`${T}/.ECCB9013-3BF2-4A5F-BF81-E46717EF7056-UY8M`)).toEqual({ read: true, write: true });
+    expect(grants(`${T}/com.apple.mail/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`).write).toBe(false);
+    expect(grants(`${T}/notes.txt`).write).toBe(false);
+    expect(grants(`/private/var/folders/ab/cdxef/T/ECCB9013-3BF2-4A5F-BF81-E46717EF7056`).write).toBe(false);
+  });
 
   it("grants appleevent-send only when the capability was approved", () => {
     const base = { readPaths: [], writePaths: [], network: false, scratch: "/tmp/s" };
@@ -128,6 +148,55 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
     });
     expect(result.exitCode).not.toBe(0);
     expect(fs.existsSync(forbidden)).toBe(false);
+  });
+
+  // #372: under the old profile `sips` exited 13 ("Cannot write to file
+  // /var/folders/…/T/<uuid>"), and with only the temp grant it exited 0 on a
+  // 308-byte JPEG — the decoder needs IOSurface too. Checks the picture.
+  it("converts a HEIC to JPEG with sips", async () => {
+    const out = tempDir();
+    const heic = path.join(fixturesDir, "images", "tiny.heic");
+    const jpeg = path.join(out, "tiny.jpg");
+    const executor = new Executor(tempDir());
+
+    const result = await executor.run({
+      argv: ["/usr/bin/sips", "-s", "format", "jpeg", heic, "--out", jpeg],
+      readPaths: [path.dirname(heic)],
+      writePaths: [out],
+      network: false,
+      appleEvents: false,
+      waitMs: 30_000,
+    });
+
+    expect(userTempDir()).toMatch(/^\/private\/var\/folders\/.+\/T$/);
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    const size = execFileSync("/usr/bin/sips", ["-g", "pixelWidth", "-g", "pixelHeight", jpeg], { encoding: "utf8" });
+    expect(size).toMatch(/pixelWidth: 64\s+pixelHeight: 64/);
+  });
+
+  // A symlink, directory or hard link at one of those names would send an
+  // unsandboxed file operation somewhere else; the grant is for regular files.
+  it.each([
+    ["a symlink", "ln -s /etc/passwd"],
+    ["a directory", "mkdir"],
+    ["a hard link", `ln ${path.join(fixturesDir, "images", "tiny.heic")}`],
+  ])("cannot put %s at an ImageIO name in the user temp dir", async (_what, make) => {
+    const name = path.join(userTempDir()!, crypto.randomUUID().toUpperCase());
+    // A regression would leave it in a folder every app shares.
+    cleanups.push(() => fs.rmSync(name, { recursive: true, force: true }));
+    const executor = new Executor(tempDir());
+
+    const result = await executor.run({
+      argv: ["/bin/sh", "-c", `${make} ${name}`],
+      readPaths: [fixturesDir],
+      writePaths: [],
+      network: false,
+      appleEvents: false,
+      waitMs: 10_000,
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(fs.existsSync(name) || fs.lstatSync(name, { throwIfNoEntry: false }) !== undefined).toBe(false);
   });
 
   it("allows a write inside the approved scope", async () => {
