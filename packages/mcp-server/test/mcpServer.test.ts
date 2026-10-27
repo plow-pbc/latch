@@ -116,6 +116,14 @@ describe("the reduced tool surface (§4.5)", () => {
     }
   });
 
+  it("an unknown skill name answers with the skills this Mac does publish", async () => {
+    const { server, device } = makeServer();
+    const { isError, payload } = await callTool(server, "plow_read_skill", { name: "owners-mac" }, AGENT);
+    expect(isError).toBe(true);
+    const names = device.skills.manifest().map((s) => s.name);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(String(payload.error)).toContain(name);
+  });
 });
 
 describe("plow_history", () => {
