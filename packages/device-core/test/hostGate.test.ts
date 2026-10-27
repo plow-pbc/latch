@@ -47,6 +47,7 @@ function facts(overrides: Partial<HostFacts> = {}): HostFacts {
     path: "~/Documents/report.txt",
     paths_examined: ["~/Documents/report.txt"],
     path_exists: true,
+    unexpanded_tilde: false,
     is_directory: false,
     posix_readable: true,
     posix_writable: true,
@@ -503,6 +504,32 @@ describe("collectFacts — the battery over scripted probes", () => {
     expect(probes.calls.filter((c) => c.startsWith("openAsApp"))).toHaveLength(2);
     expect(probes.calls).toContain("fullDiskAccess");
     expect(diagnose(f).cause).toBe("macos_permission");
+  });
+
+  it.each([
+    // No shell: sqlite3 was handed "~" and looked for a folder by that name.
+    [["sqlite3", "~/Library/Messages/chat.db", "SELECT 1"], true, "not_found"],
+    [["sqlite3", "--db=~/Library/Messages/chat.db"], true, "not_found"],
+    // A shell string: the shell expanded it, and the WAL bound is the story.
+    [["bash", "-c", "sqlite3 ~/Library/Messages/chat.db 'SELECT 1'"], false, "outside_approved_bound"],
+  ])("sqlite's 'unable to open' on %j: literal ~ is %s, verdict %s", async (argv, unexpanded, cause) => {
+    const db = `${HOME}/Library/Messages/chat.db`;
+    const f = await collectFacts(
+      {
+        op: "exec",
+        paths: [db],
+        argv,
+        stderr: 'Error: unable to open database "~/Library/Messages/chat.db": unable to open database file',
+        ranSandboxed: true,
+        sandbox: () => ({ read: true, write: false }),
+      },
+      scriptedProbes({}),
+      HOME,
+    );
+    const d = diagnose(f);
+    expect(d.cause).toBe(cause);
+    expect(f.unexpanded_tilde).toBe(unexpanded);
+    expect(d.evidence.join(" ")).toMatch(unexpanded ? /literal ~/ : /-shm/);
   });
 
   it("keeps a named path whole and mines argv text for more", async () => {

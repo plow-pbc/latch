@@ -99,6 +99,10 @@ export interface HostFacts {
   /** Every path that was examined, `~`-relative, in the order it was tried. */
   paths_examined: string[];
   path_exists: boolean | null;
+  /** The command was handed the path with a literal `~` in an argv word.
+   *  No shell runs argv, so the program looked for a directory named "~",
+   *  whatever the facts about the owner's real path say. */
+  unexpanded_tilde: boolean;
   is_directory: boolean | null;
   posix_readable: boolean | null;
   posix_writable: boolean | null;
@@ -272,6 +276,12 @@ export async function collectFacts(
   const rewritable = (p: string) =>
     (ctx.mutable?.() ?? []).some((r) => overlapsRoot(p, path.resolve(expandHome(r, ownerHome))));
   const hold = ctx.hold ?? (<T>(fn: () => Promise<T>) => fn());
+  // A `~` path that is a whole argv word or glued to a flag (`--db=~/x`).
+  // A word with whitespace in it is a shell string, and a shell expands its own.
+  const tildeWords = new Set(
+    (ctx.argv ?? []).filter((w) => !/\s/.test(w)).flatMap((w) => w.match(/(?:^|[=:])(~(?:\/.*)?)$/)?.[1] ?? []),
+  );
+  const unexpanded = new Set<string>();
   const sourced: [string, Source][] = [
     ...(parsed.path ? [[parsed.path, "error"] as [string, Source]] : []),
     ...candidatePaths(ctx.stderr ? [ctx.stderr] : []).map((p): [string, Source] => [p, "error"]),
@@ -317,6 +327,7 @@ export async function collectFacts(
     const approved = contained(named) && contained(canonical);
     const probe = approved && stable && !rewritable(canonical);
     const withheld = approved && !probe;
+    if (source === "argv" && tildeWords.has(raw)) unexpanded.add(canonical);
     const known = bySource.get(canonical);
     if (known === undefined) bySource.set(canonical, { source, probe, withheld });
     else if (probe && !known.probe) { known.probe = true; known.withheld = false; }
@@ -396,6 +407,7 @@ export async function collectFacts(
     path_approved: chosen ? chosen.probed || chosen.withheld : null,
     probe_withheld: chosen?.withheld ?? false,
     path_exists: chosen?.probed ? chosen.info !== null : null,
+    unexpanded_tilde: chosen ? unexpanded.has(chosen.path) : false,
     is_directory: chosen?.info?.isDirectory ?? null,
     posix_readable: chosen?.info?.readable ?? null,
     posix_writable: chosen?.info?.writable ?? null,
@@ -549,6 +561,12 @@ export function diagnose(f: HostFacts): Diagnosis {
       ? f.app_process_open
       : null;
   const errno = f.errno ?? probedErrno;
+
+  // Before any fact about the owner's real path: the program never opened it.
+  if (f.unexpanded_tilde && (errno === null || errno === "ENOENT")) {
+    evidence.push(`the command was given ${where} with a literal ~, and no shell runs it, so the program looked for a folder named "~"`);
+    return verdict("not_found", "likely", null);
+  }
 
   if (f.stderr_hint === "sqlite_unable_to_open" && f.path_exists !== false && f.app_process_open === "ok") {
     // The WAL case the messaging skills document: sqlite needs to create
