@@ -24,6 +24,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { clickText, failLoudly, shootScreens, shotWindow, waitFor } from "./screenshot-harness.mjs";
 import { capabilitiesView } from "../dist/capabilitiesModel.js";
+import { gatekeeperPresets } from "../dist/gatekeeperPreview.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -244,6 +245,7 @@ async function setUp() {
   ipcMain.handle("audit:activity", async (_event, id) => id === gatekeeperActivity.id ? gatekeeperActivity : null);
   ipcMain.handle("audit:clear", async () => false);
   ipcMain.handle("rules:list", async () => RULES);
+  ipcMain.handle("onboarding:gatekeeperPresets", async () => gatekeeperPresets());
   ipcMain.handle("gatekeeperRecovery:get", async () => gatekeeperRecoveryFixture);
   ipcMain.handle("gatekeeperRecovery:dismiss", async (_event, intentId) => {
     if (gatekeeperRecoveryFixture?.intentId === intentId) gatekeeperRecoveryFixture = null;
