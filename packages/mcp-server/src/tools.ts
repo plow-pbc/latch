@@ -681,7 +681,9 @@ export const TOOLS: ToolSpec[] = [
       "problem, not a permission. A zero exit_code means the app accepted the script, not that " +
       "anything reached anyone — a send to an unreachable handle fails silently, so it is never " +
       "your evidence a message went out; for a Messages send, this Mac's iMessage skill " +
-      "(plow_list_skills) carries the check that is. And a script that sends goes out as the " +
+      "(plow_list_skills) carries the check that is. Messages' scripting cannot read message " +
+      "bodies — its dictionary has no message class, so such a script fails to compile; read texts " +
+      "with the plow-messages skill instead. And a script that sends goes out as the " +
       "owner's own account, whichever one the app is signed into — their setting, not yours to " +
       "choose — so say whose it went out as when you report it. A long script returns a job " +
       "handle for plow_get_output, and a " +
