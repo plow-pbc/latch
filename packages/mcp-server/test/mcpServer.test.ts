@@ -115,7 +115,6 @@ describe("the reduced tool surface (§4.5)", () => {
       expect(Object.keys(tool.inputSchema.properties ?? {})).not.toContain("device");
     }
   });
-
 });
 
 describe("plow_history", () => {
@@ -721,6 +720,26 @@ describe("review findings", () => {
       );
       expect(approved).toEqual([canonicalize(realDir)]);
       expect(cwd).toBe(canonicalize(realDir));
+    });
+
+    it("a ~/ argument is expanded before approval, since no shell runs argv", async () => {
+      let approvedArgv: string[] = [];
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          approvedArgv = intent.capabilities.find((c) => c.kind === "process.exec")?.argv ?? [];
+          return "deny" as const;
+        },
+      });
+      const argv = ["sqlite3", "~/Library/Messages/chat.db", "~", "--db=~/x", "SELECT 1"];
+      await callTool(server, "plow_run_command", { argv }, AGENT);
+      expect(approvedArgv).toEqual([
+        "sqlite3",
+        canonicalize("~/Library/Messages/chat.db"),
+        canonicalize("~"),
+        // Glued to a flag, as a shell would leave it too; the tool copy says so.
+        "--db=~/x",
+        "SELECT 1",
+      ]);
     });
 
     it("plow-gog file flags derive the paths the approver sees", async () => {

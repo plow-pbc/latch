@@ -416,7 +416,9 @@ export const TOOLS: ToolSpec[] = [
       "anything about them or their machine, and use your own shell only for your own work. " +
       "Their Mac is a macOS workstation, so reach for tooling your workspace does not have when " +
       `it fits the job: ${MACOS_TOOLING}. ` +
-      "It runs inside a seatbelt sandbox. Declare every path you need: " +
+      "No shell runs argv: an argument that is `~` or starts with `~/` is expanded to the owner's " +
+      "home, but a `~` inside a word (`--db=~/x`) reaches the program literally — pass that path " +
+      "absolute. It runs inside a seatbelt sandbox. Declare every path you need: " +
       "read_paths and write_paths are what the owner approves and what the audit record shows, and " +
       "write access is granted from them. They are NOT the full extent of what the command can " +
       "read — the sandbox profile permits reads more broadly than the paths declared here. " +
@@ -560,6 +562,13 @@ export const TOOLS: ToolSpec[] = [
         // The process executes the exact physical path the owner sees. This is
         // the command equivalent of plow_read_file freezing a symlink target.
         argv = normalized;
+      } else {
+        // No shell runs the argv, so nothing else would expand a `~/` word:
+        // the program would look for a directory named "~". Resolved like a
+        // declared path, so the card shows what will actually be opened.
+        // The program itself (argv[0]) is left as named.
+        argv = [argv[0]!, ...await Promise.all(argv.slice(1).map((w) =>
+          w === "~" || w.startsWith("~/") ? resolved(w) : w))];
       }
       const readPaths = unique([
         ...await resolveAll(strings(a.get("read_paths").arr)),
