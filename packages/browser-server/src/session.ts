@@ -14,6 +14,7 @@
  */
 import { JSONValue } from "@domo/protocol";
 import {
+  CANDIDATE_JS,
   DOC_TOKEN_JS,
   FIELD_CAP_JS,
   FIELD_JS,
@@ -57,8 +58,10 @@ export interface FrameLike {
   evaluate(pageFunction: PageFunction, arg?: unknown): Promise<unknown>;
   /** querySelector — Playwright names it `$`, NOT `querySelector`. */
   $(selector: string): Promise<HandleLike | null>;
+  /** querySelectorAll, likewise named `$$`. */
+  $$(selector: string): Promise<HandleLike[]>;
   waitForSelector(selector: string, opts?: { timeout?: number }): Promise<HandleLike | null>;
-  click(selector: string, opts?: { timeout?: number }): Promise<void>;
+  click(selector: string, opts?: { strict?: boolean; timeout?: number }): Promise<void>;
   isDetached(): boolean;
   parentFrame(): FrameLike | null;
 }
@@ -110,6 +113,11 @@ const FAILED_REQUEST_HEADERS = ["retry-after", "server"] as const;
 export const DEFAULT_ACTION_TIMEOUT_MS = 3000;
 /** How often a click re-scans the frames for its selector while waiting. */
 const SCAN_INTERVAL_MS = 50;
+/** How many of an ambiguous selector's matches a click refusal names. Five
+ * lines fit inside the server's error-length cut with room for the advice. */
+const MAX_CANDIDATES = 5;
+/** How many matches it looks at to find the visible ones to name first. */
+const MAX_DESCRIBED = 50;
 /** What every action that moves the page gives it to settle afterwards. */
 const SETTLE_MS = 1000;
 /** Per-character `el.type` delay — what makes a fill keystrokes, not an assign. */
@@ -489,26 +497,71 @@ export class Session {
         await this.page.waitForTimeout(SCAN_INTERVAL_MS);
       }
     }
+    // Several frames holding it is the same guess as several matches in one:
+    // a nav link up top and the Send button in an iframe each pass strictness
+    // on their own.
+    if (frames.length > 1) throw await this.ambiguous(frames, sel);
 
-    let last: Error | null = null;
-    for (let tried = 0; tried < frames.length; tried++) {
-      const [i, fr] = frames[tried];
-      const left = Math.floor((deadline - now()) / (frames.length - tried));
-      if (left <= 0) {
-        // The selector IS somewhere — the scan said so — but the budget went on
-        // waiting. Saying "not found" here would be false.
-        last = last ?? new Error(`found ${sel} with no time left to click it`);
-        break;
+    const [[i, fr]] = frames;
+    const left = deadline - now();
+    // The selector IS there — the scan said so — but the budget went on
+    // waiting. Saying "not found" here would be false.
+    if (left <= 0) throw new Error(`found ${sel} with no time left to click it`);
+    try {
+      // Strict: a selector that matches several elements is refused, never
+      // resolved to the first. `text=Send` takes any element whose text
+      // contains "send", and the first was a nav link — the click reported
+      // ok and the payment was never submitted (#338).
+      await fr.click(sel, { strict: true, timeout: left });
+    } catch (exc) {
+      if (String((exc as Error).message).includes("strict mode violation")) {
+        throw await this.ambiguous(frames, sel);
       }
-      try {
-        await fr.click(sel, { timeout: left });
-        await this.page.waitForTimeout(SETTLE_MS);
-        return { ok: true, frame: i };
-      } catch (exc) {
-        last = exc as Error;
+      throw exc;
+    }
+    await this.page.waitForTimeout(SETTLE_MS);
+    return { ok: true, frame: i };
+  }
+
+  /**
+   * The refusal for a selector that matched several elements: the advice
+   * first, then candidates by frame and match index with their tag, text and
+   * visibility, enough to write a selector that names one. Visible ones are
+   * listed first: on PayPal's sign-in `text=Log In` matched eleven hidden
+   * elements ahead of the button. Playwright's own refusal is never passed
+   * on: it previews each element's text, a vault-filled one's included.
+   *
+   * The text is read out of the page the way `eval` reads it, so it follows
+   * eval's gate: while any page of the session holds a value the vault
+   * filled, candidates are named without their text. A mark can be lost to
+   * a re-render and a filled field's selector can stop matching it, so only
+   * the ledger is trusted to say no secret is on the page.
+   */
+  private async ambiguous(frames: [number, FrameLike][], sel: string): Promise<Error> {
+    const withText = this.pages.every((p) => (this.masked.get(p)?.size ?? 0) === 0);
+    const described: string[] = [];
+    let total = 0;
+    for (const [i, fr] of frames) {
+      const found = await fr.$$(sel);
+      total += found.length;
+      for (const [n, el] of found.slice(0, MAX_DESCRIBED).entries()) {
+        described.push(`  frame ${i} #${n}: ${String(await el.evaluate(CANDIDATE_JS, withText))}`);
       }
     }
-    throw last ?? new Error(`selector not found: ${sel}`);
+    if (total < 2) {
+      return new Error(`click refused: ${sel} matched several elements, and the page changed before they could be listed`);
+    }
+    const visible = described.filter((line) => line.endsWith("(visible)"));
+    const shown = [...visible, ...described.filter((line) => !line.endsWith("(visible)"))];
+    const lines = [
+      `click refused: ${sel} matches ${total} elements` +
+        (withText ? "" : " (no text shown while a field the vault filled holds a value)") +
+        `. Use a selector that names one, ` +
+        `e.g. role=button[name="..."] or button:has-text("..."), pass frame, or click_at from a screenshot:`,
+      ...shown.slice(0, MAX_CANDIDATES),
+    ];
+    if (total > MAX_CANDIDATES) lines.push(`  …and ${total - MAX_CANDIDATES} more`);
+    return new Error(lines.join("\n"));
   }
 
   private async clickAt(cmd: Obj): Promise<Obj> {
